@@ -15,6 +15,8 @@
     - [Floating-point literals](#floating-point-literals)
     - [String literals](#string-literals)
     - [Character literals](#character-literals)
+- Type System
+- Trait System
 
 TODO:
 - Syntax structure
@@ -49,6 +51,10 @@ could be better suited. That can be found [here](https://doc.rust-lang.org/stabl
 * `newline`: U+000A, also known as '\n'
 
 * Negation: `~ Expr` implies that `Expr` cannot follow
+
+```
+hex_digit = "0" … "9" | "a" … "f" | "A" … "F"
+```
 
 ## Lexical structure
 
@@ -104,6 +110,7 @@ TODO: General idea will be that identifiers are only valid ascii letters/numbers
 There shouldn't be any reason to have other unicode values as identifiers.
 
 [Rust's take on identifiers](https://doc.rust-lang.org/stable/reference/identifiers.html)
+
 [Go's take on identifiers](https://golang.org/ref/spec#Identifiers)
 
 ### Literals
@@ -121,10 +128,40 @@ syntax we choose.
 
 #### String literals
 
-TODO: Do we allow raw strings? (particularly useful for regex) What escapes are allowed?
+There are both "normal" string literals and raw string literals. These both function as would
+be expected in many other languages, and evaluate at compile-time to a `&'static str`.
 
-A case for removing vertical tab: [https://prog21.dadgum.com/76.html](https://prog21.dadgum.com/76.html)
+```
+StringLiteral    = TODO
+
+RawStringLiteral = "`" { unicode_char } "`"
+```
+
+where escapes are any one of *byte escapes* (`ByteEscape`), *unicode escapes* (`UnicodeEscape`),
+or *character escapes* (`CharEscape`) - of which a handlful exist.
+
+```
+ByteEscape    = "\x" hex_digit hex_digit
+
+UnicodeEscape = "\u{" { hex_digit } "}"
+
+CharEscape    = "\" ( "n" | "r" | "t" | "\" | "0" )
+```
+
+Note that unicdode escapes may have **at most** 6 digits, representing a code point up to 24 bytes.
+A table has been placed below to give meaning to the character escapes.
+
+| Escape | Byte-value | Meaning          |
+|--------|------------|------------------|
+| `\n`   | 0x0A       | Newline          |
+| `\r`   | 0x0D       | Carriage-return  |
+| `\t`   | 0x09       | Tab              |
+| `\\`   | 0x5C       | Backslash        |
+| `\0`   | 0x00       | Null / Zero byte |
+
+A case for removing the vertical tab:
+[https://prog21.dadgum.com/76.html](https://prog21.dadgum.com/76.html)
 
 #### Character literals
 
-TODO: Same question about escapes
+TODO
