@@ -53,7 +53,8 @@ could be better suited. That can be found [here](https://doc.rust-lang.org/stabl
 * Negation: `~ Expr` implies that `Expr` cannot follow
 
 ```
-hex_digit = "0" … "9" | "a" … "f" | "A" … "F"
+hex_digit   = "0" … "9" | "a" … "f" | "A" … "F" .
+octal_digit = "0" … "7" .
 ```
 
 ## Lexical structure
@@ -100,7 +101,15 @@ TODO: Which operators are we going to support?
 There's some punctuation that it seems like we already know - such as ',' for tuples and ';' for
 statements.
 
+This section also must list the operators that can be overloaded.
+
 ### Delimeters
+
+Delimeters are brackets that must always be paired, and are used in various places. As such, there
+are three types: Parenthesis (`(` `)`), curly braces (`{` `}`), and square brackets (`[`, `]`).
+More information on the first two can be found in their respective sections:
+[tuple expressions](#tuple-expression) and [block expressions](#block-expression). The third is
+used for indexing, as described [here](#operators-and-punctuation).
 
 ### Indentifiers
 
@@ -115,16 +124,46 @@ There shouldn't be any reason to have other unicode values as identifiers.
 
 ### Literals
 
+```
+Literal = IntegerLiteral | FloatLiteral | StringLiteral | CharacterLiteral .
+```
+
 #### Integer literals
 
-TODO: What'll we use for integer types? I'm inclined to follow with
-[what Rust has done](https://doc.rust-lang.org/stable/reference/tokens.html#numbers), because
-they're clean, clear, and simple.
+Broadly, there are four types of integer literals: hexadecimal, decimal, octal, and binary. The
+format of each of these is given by the following BNF:
+
+```
+IntegerLiteral = DecimalLiteral | HexLiteral | OctalLiteral | BinaryLiteral .
+
+DecimalLiteral = ( "0" | ( ( "1" … "9" ) { [ "_" ] ( "0" … "9" ) } ) ) [ "_" ] IntegerType .
+HexLiteral     = "0x" [ "_" ] hex_digit     { [ "_" ] hex_digit     } [ "_" ] IntegerType .
+OctalLiteral   = "0o" [ "_" ] octal_digit   { [ "_" ] octal_digit   } [ "_" ] IntegerType .
+BinaryLiteral  = "0b" [ "_" ] ( "0" | "1" ) { [ "_" ] ( "0" | "1" ) } [ "_" ] IntegerType .
+
+IntegerType = TODO
+```
+
+where `IntegerType` is a suffix to specify the type of the value. Note that decimal literals cannot
+contain a leading `0` as part of a larger literal. This removes any possible ambiguity surrounding
+C-era octal literals, which are declared with leading zeroes.
+
+Negation is not specified here, as it not strictly part of the literal because it results from the
+unary negation operator: `-`.
+
+All of the standard integer types are available, so:
 
 #### Floating-point literals
 
-TODO: A bit more thought should go into this - it needs to be compatible with whatever integer
-syntax we choose.
+Floating-point literals are as expected. Unlike integer literals, there is only one kind:
+
+```
+FloatLiteral = ( "0" | { "0" … "9" } ) [ "_" ]
+               [ "." ( "0" … "9" ) { "_" | "0" … "9" } ]
+               [ ( "e" | "E" ) [ "+" | "-" ] ( "1" … "9" ) { "0" … "9" } ]
+```
+
+TODO: Explain this
 
 #### String literals
 
@@ -132,20 +171,17 @@ There are both "normal" string literals and raw string literals. These both func
 be expected in many other languages, and evaluate at compile-time to a `&'static str`.
 
 ```
-StringLiteral    = TODO
-
-RawStringLiteral = "`" { unicode_char } "`"
+StringLiteral    = <"> { unicode_char | ByteEscape | UnicodeEscape | CharEscape } <"> .
+RawStringLiteral = "`" { unicode_char } "`" .
 ```
 
 where escapes are any one of *byte escapes* (`ByteEscape`), *unicode escapes* (`UnicodeEscape`),
 or *character escapes* (`CharEscape`) - of which a handlful exist.
 
 ```
-ByteEscape    = "\x" hex_digit hex_digit
-
-UnicodeEscape = "\u{" { hex_digit } "}"
-
-CharEscape    = "\" ( "n" | "r" | "t" | "\" | "0" )
+ByteEscape    = "\x" hex_digit hex_digit .
+UnicodeEscape = "\u{" { hex_digit } "}" .
+CharEscape    = "\" ( "n" | "r" | "t" | "\" | "0" | <"> | "'" ) .
 ```
 
 Note that unicdode escapes may have **at most** 6 digits, representing a code point up to 24 bytes.
@@ -158,10 +194,20 @@ A table has been placed below to give meaning to the character escapes.
 | `\t`   | 0x09       | Tab              |
 | `\\`   | 0x5C       | Backslash        |
 | `\0`   | 0x00       | Null / Zero byte |
+| `\"`   | 0x22       | Double-quote     |
+| `\'`   | 0x27       | Single-quote     |
 
 A case for removing the vertical tab:
 [https://prog21.dadgum.com/76.html](https://prog21.dadgum.com/76.html)
 
 #### Character literals
 
-TODO
+A [character](#characters) constitutes a single unicode scalar value, and so character literals
+allow values within those ranges. All of the escapes available from
+[string literals](#string-literals) are available here.
+
+```
+CharacterLiteral = "'" ( unicode_char | ByteEscape | UnicodeEscape | CharEscape ) "'" .
+```
+
+Character literals evaluate to a `char`.
