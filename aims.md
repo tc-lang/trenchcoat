@@ -27,6 +27,7 @@ Now for the juicy stuff:
 - Goroutines are FANTASTIC. They should be first class, at both the high and low level; they are essential to being able to use the language in many contexts.
 - Generics are a must have, at both levels.
 
+```
 In summary: TrenchCoat LL = Go + Rust
-
             TrenchCoat HL = Python + JavaScript + Haskell + Go + Rust/10
+```
