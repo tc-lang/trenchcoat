@@ -73,8 +73,8 @@ octal_digit = "0" … "7" .
 ### Comments
 
 There are three kinds of comments, all collectively referred to by the token `Comment`:
-  1. *Line comments* (`LineComment`s) start with the sequence `//` and end at the end of the line.
-  2. *Block comments* (`BlockComment`s) start with the sequence `/*` and end with a matching `*/`.
+  1. *Line comments* (`LineComment`s) start with the sequence `//` and end at the next `newline`.
+  2. *Block comments* (`BlockComment`s) start with the sequence `/*` and end with next occurrence of `*/`.
   3. *Documentation comments* (`DocComment`s) are line comments that start with three and only three
      slashes (`///`) instead of two (or more), as line comments might.
 
@@ -87,6 +87,7 @@ Here is a table of keywords and their uses:
 | Keyword   | Type         | Uses                             |
 |-----------|--------------|----------------------------------|
 | **fn**    | Declaration  | [`FnDecl`](#fn-declaration)      |
+| **let**   | Declaration  | [`LetDecl`](#let-declaration)    |
 | **if**    | Control flow | [`IfExpr`](#if-expression)       |
 | **else**  | Control flow | [`ElseExpr`](#else-expression)   |
 | **for**   | Control flow | [`ForExpr`](#for-expression)     |
@@ -110,6 +111,21 @@ are three types: Parenthesis (`(` `)`), curly braces (`{` `}`), and square brack
 More information on the first two can be found in their respective sections:
 [tuple expressions](#tuple-expression) and [block expressions](#block-expression). The third is
 used for indexing, as described [here](#operators-and-punctuation).
+
+### Values and Tuples
+
+(Feel free to move this where it most makes sense, also, I'm aware that this has caused broken links.
+
+Every value in TrenchCoat is in fact a tuple. There is no difference between 1, (1), or ((1)) for example. A tuple can also hold multiple values such as (1, 2, "hello").
+
+```
+StatementList = OWS Statement OWS [ ";" StatementList ]
+Tuple = "(" StatementList { "," StatementList } ")"
+CurlyBlock = "{" StatementList "}"
+Indexer = "[" StatementList { "," StatementList } "]"
+```
+
+TODO: Define the values of tuples and curlyblocks
 
 ### Indentifiers
 
@@ -211,3 +227,20 @@ CharacterLiteral = "'" ( unicode_char | ByteEscape | UnicodeEscape | CharEscape 
 ```
 
 Character literals evaluate to a `char`.
+
+### Fn Declaration
+A fn declaration is used to define a function, for example:
+```
+  fn f(x) => ...  (where ... is an `expression`)
+```
+Types can be specifically annotated and multiple arguments passed with:
+```
+  fn f(x: u32, y: u16) -> u64 => ...
+```
+specifying a function which takes a tuple of 1 u32 and 1 u16, and returns a tuple of 1 u64 (note that a tuple and a single item are no different).
+When generic types are used, the syntax becomes:
+```
+  fn f<T: SomeTrait>(x: T) -> T => ...
+```
+To define a function which, for a type implementing the trait `T`, takes a value of type `T` and returns a value of type `T`.
+
