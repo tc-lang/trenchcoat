@@ -89,7 +89,7 @@ Here is a table of keywords and their uses:
 | Keyword   | Type         | Uses                              |
 |-----------|--------------|-----------------------------------|
 | **fn**    | Declaration  | [`FnDecl`](#fn-declarations)      |
-| **let**   | Declaration  | [`LetDecl`](#let-declarations)    |
+| **let**   | Expression   | [`LetDecl`](#let-declarations)    |
 | **if**    | Control flow | [`IfExpr`](#if-expressions)       |
 | **else**  | Control flow | [`ElseExpr`](#else-expressions)   |
 | **for**   | Control flow | [`ForExpr`](#for-expressions)     |
