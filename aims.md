@@ -28,4 +28,5 @@ Now for the juicy stuff:
 - Generics are a must have, at both levels.
 
 In summary: TrenchCoat LL = Go + Rust
+
             TrenchCoat HL = Python + JavaScript + Haskell + Go + Rust/10
