@@ -26,6 +26,16 @@ In the low level language, you should be able to:
 Now for the juicy stuff:
 - Goroutines are FANTASTIC. They should be first class, at both the high and low level; they are essential to being able to use the language in many contexts.
 - Generics are a must have, at both levels.
+- All the language features should eaasily readable, not only to those who know the language, but by those who know other languages.
+- Bot levels should be easy to learn. Ideally easier than Rust, but that might be hard at the low level.
+- Not only should there be memory and thread safety built in, but there should be
+- Security built in. You should be able to compile a program in a way in which you know that it cannot access the network, or the filesystem (or maybe only a preportion of the filesystem) - except through whitelisted modules.
+- Maybe you can import a module without giving it network access or access to other features, this limits the potential for malware modules.
+- Runtime errors are bad
+
+In addition to all of this, the TrenchCoat language and all TrenchCoat developed libraries should be super well documented!
+
+Blimey this is a lot to do.
 
 ```
 In summary: TrenchCoat LL = Go + Rust
@@ -35,3 +45,28 @@ In summary: TrenchCoat LL = Go + Rust
 
 
 PS: It's also got to be statically typed... Obviously...
+
+# Feature requirements
+
+To compact what was said above, for a feature to be added to the TrechCoat language, it must meet all of the folling criteria:
+- It should be easy to read both for existing TrenchCoat programmers and people coming from other languages.
+- It should be done simply, making it easy to learn.
+- It is memory safe (unless marked as unsafe).
+- It is thread sage (unless marked otherwise).
+- It does not cause runtime errors unless it REALLY has to.
+- It should not vialate security features.
+- It should not break the ability to call FFI functions.
+- It should be compilable and reasonably efficient.
+- If it can cause an error, the error message should explain the error well and make finding a solution easy.
+- Not break the ability for high level and low level functions to be used interchangably.
+
+### Specifically for the low level language
+
+- It should not hide work being done. It should be obvious how expensive (both computationally and space) an operation is.
+- Features should not differ much from the high level language. The same concepts should be used with, if possible, the same syntax.
+
+### Specifically for the high level language
+
+- It should either be easy enough for a beginner to learn, or you should be able to write a program without knowledge of it - only using it if you need to.
+- Not break the ability to treat variables and functions from another language as first class.
+
