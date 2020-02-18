@@ -15,6 +15,8 @@
     - [Floating-point literals](#floating-point-literals)
     - [String literals](#string-literals)
     - [Character literals](#character-literals)
+- [Item Declarations](#item-declarations)
+  - [Functions](#fn-declarations)
 - Type System
 - Trait System
 
@@ -84,14 +86,14 @@ character literal ([`CharacterLiteral`](#character-literals))
 ### Keywords
 
 Here is a table of keywords and their uses:
-| Keyword   | Type         | Uses                             |
-|-----------|--------------|----------------------------------|
-| **fn**    | Declaration  | [`FnDecl`](#fn-declaration)      |
-| **let**   | Declaration  | [`LetDecl`](#let-declaration)    |
-| **if**    | Control flow | [`IfExpr`](#if-expression)       |
-| **else**  | Control flow | [`ElseExpr`](#else-expression)   |
-| **for**   | Control flow | [`ForExpr`](#for-expression)     |
-| **match** | Control flow | [`MatchExpr`](#match-expression) |
+| Keyword   | Type         | Uses                              |
+|-----------|--------------|-----------------------------------|
+| **fn**    | Declaration  | [`FnDecl`](#fn-declarations)      |
+| **let**   | Declaration  | [`LetDecl`](#let-declarations)    |
+| **if**    | Control flow | [`IfExpr`](#if-expressions)       |
+| **else**  | Control flow | [`ElseExpr`](#else-expressions)   |
+| **for**   | Control flow | [`ForExpr`](#for-expressions)     |
+| **match** | Control flow | [`MatchExpr`](#match-expressions) |
 
 TODO: More keywords should due to be added, once more has been figured out.
 
@@ -228,19 +230,55 @@ CharacterLiteral = "'" ( unicode_char | ByteEscape | UnicodeEscape | CharEscape 
 
 Character literals evaluate to a `char`.
 
-### Fn Declaration
-A fn declaration is used to define a function, for example:
+## Item Declarations
+
+TODO: Tidbit about items being at the top scope
+
+### Fn Declarations
+
+TODO: This section needs to be more precise - the spec should not read like a guided tour.
+
+A function declaration defines a function, for example:
 ```
-  fn f(x) => ...  (where ... is an `expression`)
+  fn foo(x) => x + 1
 ```
-Types can be specifically annotated and multiple arguments passed with:
+where `x + 1` could be substituted for any expression with all lexical elements in scope. Note that
+blocks enclosed with curly-braces or parenthesis also form expressions, so it is equally legal to
+write
 ```
-  fn f(x: u32, y: u16) -> u64 => ...
+  fn foo(x) => {
+    x + 1
+  }
 ```
-specifying a function which takes a tuple of 1 u32 and 1 u16, and returns a tuple of 1 u64 (note that a tuple and a single item are no different).
-When generic types are used, the syntax becomes:
+or
 ```
-  fn f<T: SomeTrait>(x: T) -> T => ...
+  fn foo(x) => (
+    x + 1
+  )
 ```
-To define a function which, for a type implementing the trait `T`, takes a value of type `T` and returns a value of type `T`.
+Types can
+be specifically annotated and multiple arguments passed like so:
+```
+  fn foo(x: u32, y: u16) -> u64 => ...
+```
+which specifies a function that takes a tuple of a `u32` and a `u16`, and returns a `u64`. With
+type parameters, the syntax becomes:
+```
+  fn foo<T, S: Bar>(x: T, y: S) -> MyStruct<T, S> => ...
+```
+which defines a function taking two type parameters, `T` and `S`, where `S` is restricted to
+implementing the trait `Bar`, and returning a value of type `MyStruct` with type parameters `T`
+and `S`.
+
+Functions can also have named or repeated arguments:
+```
+  fn concat(s: &str*) -> String => ...
+  fn options(src: &str = ".", dst: &str = src) => ...
+```
+Calling these functions can be done with:
+```
+  concat("foo", "bar", "baz");
+  options(dst = "foobar");
+```
+Note that in practice, the values here would not be allowed to be discarded.
 
