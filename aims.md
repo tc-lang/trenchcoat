@@ -31,3 +31,7 @@ Now for the juicy stuff:
 In summary: TrenchCoat LL = Go + Rust
             TrenchCoat HL = Python + JavaScript + Haskell + Go + Rust/10
 ```
+
+
+
+PS: It's also got to be statically typed... Obviously...
