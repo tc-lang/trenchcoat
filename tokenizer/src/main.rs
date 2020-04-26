@@ -8,18 +8,20 @@ mod reader;
 use position::Position;
 use reader::Reader;
 
+#[derive(Debug)]
 enum Token {
-    Keyword(String),
+    Keyword(Keyword),
     TypeIdent(String),
     NameIdent(String),
-    Oper(String),
-    Punc(String),
+    Oper(Oper),
+    Punc(Punc),
     Num(String),
     Bracketed(Vec<(Position, Token)>),
     Curlied(Vec<(Position, Token)>),
     InvalidChar(char),
 }
 
+/*
 impl Token {
     /// fmt_write writes "kind(value) " to the formatter.
     fn fmt_write(f: &mut fmt::Formatter, kind: &str, value: &str) -> Result<(), fmt::Error> {
@@ -42,10 +44,10 @@ impl std::fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use Token::*;
         match self {
-            Keyword(s) => Self::fmt_write(f, "Keyword", s),
+            Keyword(kw) => Self::fmt_write(f, Keyword, fmt!("{:?}", kw)),
             TypeIdent(s) => Self::fmt_write(f, "Type", s),
             NameIdent(s) => Self::fmt_write(f, "Name", s),
-            Oper(s) => Self::fmt_write(f, "Op", s),
+            Oper(s) => Self::fmt_write(f, "Op", fmt!("{:?}", kw)),
             Punc(s) => {
                 if s == "\n" {
                     f.write_str("\n")
@@ -68,9 +70,88 @@ impl std::fmt::Debug for Token {
         }
     }
 }
+*/
 
-fn is_whitespace(ch: char) -> bool {
-    ch == ' ' || ch == '\t'
+#[derive(Debug)]
+enum Keyword {
+    Fn,
+    If,
+    Let,
+    Type,
+    Match,
+    Return,
+}
+
+impl Keyword {
+    fn parse(keyword: &str) -> Option<Keyword> {
+        use Keyword::*;
+        match keyword {
+            "fn" => Some(Fn),
+            "if" => Some(If),
+            "let" => Some(Let),
+            "type" => Some(Type),
+            "match" => Some(Match),
+            "return" => Some(Return),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug)]
+enum Oper {
+    Add,
+    Sub,
+    Astrix,
+    Div,
+    Pow,
+    Inc,
+    Dec,
+    Question,
+    Dot, // I'm not going to define syntax for ranges
+    Ref,
+    Assign,
+    Equals,
+    LT,
+    LTOrEqual,
+    GT,
+    GTOrEqual,
+    Not,
+    RightArrow,
+    LeftArrow, // they're the wrong way round, deal with it.
+    FuncArrow,
+    Or,
+    And,
+}
+
+impl Oper {
+    fn parse(oper: String) -> Option<Oper> {
+        use Oper::*;
+        match &*oper {
+            "+" => Some(Add),
+            "-" => Some(Sub),
+            "*" => Some(Astrix),
+            "**" => Some(Pow),
+            "/" => Some(Div),
+            "++" => Some(Inc),
+            "--" => Some(Dec),
+            "." => Some(Dot),
+            "&" => Some(Ref),
+            "?" => Some(Question),
+            "=" => Some(Assign),
+            "==" => Some(Equals),
+            "<" => Some(LT),
+            "<=" => Some(LTOrEqual),
+            ">" => Some(GT),
+            "<=" => Some(GTOrEqual),
+            "!" => Some(Not),
+            "->" => Some(RightArrow),
+            "<-" => Some(LeftArrow),
+            "=>" => Some(FuncArrow),
+            "||" => Some(Or),
+            "&&" => Some(And),
+            _ => None,
+        }
+    }
 }
 
 ///returns true if `ch` is an operator character.
@@ -80,12 +161,11 @@ fn is_oper(ch: char) -> bool {
         _ => false,
     }) || is_single_oper(ch) // it's a shame the match has to be in brackets :(
 }
-
-/// returns true if `ch` is a 'single' operator character. A single operator char is one where
-/// multiple characters next to eachother compounds the operator rather than referring to a
-/// different operator.
-/// For example, `+` is not a single operator char since it is distinct from `++` whereas
-///              `!` is a single operator char since `!!x` is equivilent to `!(!x)`.
+///returns true if `ch` is a 'single' operator character. A single operator char is one where
+///multiple characters next to eachother compounds the operator rather than referring to a
+///different operator.
+///For example, `+` is not a single operator char since it is distinct from `++` whereas
+///             `!` is a single operator char since `!!x` is equivilent to `!(!x)`.
 fn is_single_oper(ch: char) -> bool {
     match ch {
         '?' | '!' | '&' | '*' => true,
@@ -93,11 +173,28 @@ fn is_single_oper(ch: char) -> bool {
     }
 }
 
-fn is_keyword(s: &str) -> bool {
-    match s {
-        "fn" | "if" | "let" | "type" | "match" | "return" => true,
-        _ => false,
+#[derive(Debug)]
+enum Punc {
+    Comma,
+    //Dot? This would have to be added as a special case to the operator parser
+    Colon,
+    SemiColon,
+}
+
+impl Punc {
+    fn parse(punc: String) -> Option<Punc> {
+        use Punc::*;
+        match &*punc {
+            "," => Some(Comma),
+            ":" => Some(Colon),
+            ";" => Some(SemiColon),
+            _ => None,
+        }
     }
+}
+
+fn is_whitespace(ch: char) -> bool {
+    ch == ' ' || ch == '\t'
 }
 
 fn is_special_type(s: &str) -> bool {
@@ -170,7 +267,9 @@ impl Token {
 
     /// parses a `Token::Oper`
     fn oper(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
-        Self::consume(is_oper, is_oper, is_single_oper, 2, s).map(Token::Oper)
+        Self::consume(is_oper, is_oper, is_single_oper, 2, s)
+            .and_then(Oper::parse)
+            .map(Token::Oper)
     }
 
     /// parses a `Token::Num`
@@ -187,7 +286,9 @@ impl Token {
 
     /// parses a `Token::Punc`
     fn punc(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
-        Self::consume(is_punc, is_punc, is_single_punc, 2, s).map(Token::Punc)
+        Self::consume(is_punc, is_punc, is_single_punc, 2, s)
+            .and_then(Punc::parse)
+            .map(Token::Punc)
     }
 
     /// parses a `Token::NameIdent`, `Token::TypeIdent` or `Token::Keyword`
@@ -216,8 +317,8 @@ impl Token {
         }
         Some(if let FirstChar::Lower = fc {
             // is there a better way to do this?
-            if is_keyword(&*out) {
-                Token::Keyword(out)
+            if let Some(keyword) = Keyword::parse(&*out) {
+                Token::Keyword(keyword)
             } else if is_special_type(&*out) {
                 Token::TypeIdent(out)
             } else {
