@@ -1,15 +1,15 @@
 #![warn(clippy::pedantic)]
 #![warn(clippy::perf)]
 
-use std::io::prelude::*;
+use fmt::Debug;
 use std::char;
 use std::fmt;
-use fmt::Debug;
+use std::io::prelude::*;
 
-mod reader;
 mod position;
-use reader::Reader;
+mod reader;
 use position::Position;
+use reader::Reader;
 
 enum Token {
     Keyword(String),
@@ -48,8 +48,13 @@ impl std::fmt::Debug for Token {
             TypeIdent(s) => Self::fmt_write(f, "Type", s),
             NameIdent(s) => Self::fmt_write(f, "Name", s),
             Oper(s) => Self::fmt_write(f, "Op", s),
-            Punc(s) => if s == "\n" { f.write_str("\n") }
-                       else { Self::fmt_write(f, "Punc", s) },
+            Punc(s) => {
+                if s == "\n" {
+                    f.write_str("\n")
+                } else {
+                    Self::fmt_write(f, "Punc", s)
+                }
+            }
             Num(s) => Self::fmt_write(f, "Num", s),
             Bracketed(ts) => {
                 f.write_str("(")?;
@@ -66,7 +71,9 @@ impl std::fmt::Debug for Token {
     }
 }
 
-fn is_whitespace(ch: char) -> bool { ch == ' ' || ch == '\t' }
+fn is_whitespace(ch: char) -> bool {
+    ch == ' ' || ch == '\t'
+}
 ///returns true if `ch` is an operator character.
 fn is_oper(ch: char) -> bool {
     (match ch {
@@ -93,7 +100,8 @@ fn is_keyword(s: &str) -> bool {
 }
 fn is_special_type(s: &str) -> bool {
     match s {
-        "int" | "uint" | "bool" | "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64" | "f32" | "f64" => true,
+        "int" | "uint" | "bool" | "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64"
+        | "f32" | "f64" => true,
         _ => false,
     }
 }
@@ -115,7 +123,8 @@ fn is_single_punc(ch: char) -> bool {
 ///like s.skip(1), but returns the same type as was passed.
 ///Is there a std lib way to do this?? I couldn't find it.
 fn skip1<T: Iterator>(i: &mut T) -> &mut T {
-    i.next(); i
+    i.next();
+    i
 }
 
 impl Token {
@@ -124,24 +133,30 @@ impl Token {
     ///The token will:
     /// 1) start with a character, `c` where `start(c)` is true,
     /// 2) must only consist further of characters, `c`, for which `mid(c)` is true and
-    /// 3) if a character, `c` has `term(c)` then that will be the final character. 
+    /// 3) if a character, `c` has `term(c)` then that will be the final character.
     fn consume(
-        start: impl Fn(char)->bool,
-        mid: impl Fn(char)->bool,
-        term: impl Fn(char)->bool,
-        cap: usize, 
-        s: &mut Reader<impl Iterator<Item=char>>,
+        start: impl Fn(char) -> bool,
+        mid: impl Fn(char) -> bool,
+        term: impl Fn(char) -> bool,
+        cap: usize,
+        s: &mut Reader<impl Iterator<Item = char>>,
     ) -> Option<String> {
         let mut out = String::with_capacity(cap);
         let c = *s.peek()?;
-        if !start(c) { return None }
+        if !start(c) {
+            return None;
+        }
         out.push(s.next()?);
-        if term(c) { return Some(out) }
+        if term(c) {
+            return Some(out);
+        }
         loop {
             if let Some(&c) = s.peek() {
                 if mid(c) {
                     out.push(s.next().unwrap());
-                    if !term(c) { continue; }
+                    if !term(c) {
+                        continue;
+                    }
                 }
             }
             break;
@@ -149,36 +164,29 @@ impl Token {
         Some(out)
     }
     ///parses a `Token::Oper`
-    fn oper(s: &mut Reader<impl Iterator<Item=char>>) -> Option<Token> {
-        Self::consume(
-            is_oper,
-            is_oper,
-            is_single_oper,
-            2, s,
-        ).map(Token::Oper)
+    fn oper(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
+        Self::consume(is_oper, is_oper, is_single_oper, 2, s).map(Token::Oper)
     }
     ///parses a `Token::Num`
-    fn num(s: &mut Reader<impl Iterator<Item=char>>) -> Option<Token> {
+    fn num(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
         Self::consume(
             |c| c.is_ascii_digit(),
             |c| c.is_alphanumeric() || c == '_',
             |_| false,
-            4, s,
-        ).map(Token::Num)
+            4,
+            s,
+        )
+        .map(Token::Num)
     }
     ///parses a `Token::Punc`
-    fn punc(s: &mut Reader<impl Iterator<Item=char>>) -> Option<Token> {
-        Self::consume(
-            is_punc,
-            is_punc,
-            is_single_punc,
-            2, s,
-        ).map(Token::Punc)
+    fn punc(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
+        Self::consume(is_punc, is_punc, is_single_punc, 2, s).map(Token::Punc)
     }
     ///parses a `Token::NameIdent`, `Token::TypeIdent` or `Token::Keyword`
-    fn name(s: &mut Reader<impl Iterator<Item=char>>) -> Option<Token> {
+    fn name(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
         enum FirstChar {
-            Upper, Lower,
+            Upper,
+            Lower,
         }
         let mut out = String::with_capacity(8);
         let mut fc = FirstChar::Lower;
@@ -196,54 +204,64 @@ impl Token {
                     continue;
                 }
             }
-            break
+            break;
         }
-        Some(
-            if let FirstChar::Lower = fc { // is there a better way to do this?
-                if is_keyword(&*out) { Token::Keyword(out) }
-                else if is_special_type(&*out) { Token::TypeIdent(out) }
-                else { Token::NameIdent(out) }
-            } else { Token::TypeIdent(out) }
-        )
+        Some(if let FirstChar::Lower = fc {
+            // is there a better way to do this?
+            if is_keyword(&*out) {
+                Token::Keyword(out)
+            } else if is_special_type(&*out) {
+                Token::TypeIdent(out)
+            } else {
+                Token::NameIdent(out)
+            }
+        } else {
+            Token::TypeIdent(out)
+        })
     }
     ///parses a `Token::Bracketed` or a `Token::Curlied`
-    fn block(s: &mut Reader<impl Iterator<Item=char>>) -> Option<Token> {
+    fn block(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
         match *s.peek()? {
-            '(' => Some(Token::Bracketed(
-                        Self::parse(|c| c == ')', skip1(s)),
-                   )),
-            '{' => Some(Token::Curlied(
-                        Self::parse(|c| c == '}', skip1(s)),
-                    )),
+            '(' => Some(Token::Bracketed(Self::parse(|c| c == ')', skip1(s)))),
+            '{' => Some(Token::Curlied(Self::parse(|c| c == '}', skip1(s)))),
             _ => None,
         }
     }
     ///Parses 1 token from s. This discards leading whitespace. If stop returns true for the first
     ///non-whitespace character then it is consumed and None is returned.
-    fn parse_next(stop: impl Fn(char) -> bool, s: &mut Reader<impl Iterator<Item=char>>) -> Option<(Position, Token)> {
+    fn parse_next(
+        stop: impl Fn(char) -> bool,
+        s: &mut Reader<impl Iterator<Item = char>>,
+    ) -> Option<(Position, Token)> {
         loop {
             let c = *s.peek()?;
-            if is_whitespace(c) { s.next()?; }
-            else if stop(c) {
+            if is_whitespace(c) {
                 s.next()?;
-                return None 
+            } else if stop(c) {
+                s.next()?;
+                return None;
+            } else {
+                break;
             }
-            else { break }
         }
         let pos = s.position();
-        Self::num(s).or_else(|| Self::name(s))
-                    .or_else(|| Self::punc(s))
-                    .or_else(|| Self::block(s))
-                    .or_else(|| Self::oper(s))
-                    .or_else(|| Some(Token::InvalidChar(s.next()?)))
-                    .map(|t| (pos, t))
+        Self::num(s)
+            .or_else(|| Self::name(s))
+            .or_else(|| Self::punc(s))
+            .or_else(|| Self::block(s))
+            .or_else(|| Self::oper(s))
+            .or_else(|| Some(Token::InvalidChar(s.next()?)))
+            .map(|t| (pos, t))
     }
     ///Takes a Reader of chars and parses it to tokens.
     ///We might could have this return Iterator<Token>? Not sure how much of a benifit that
     ///would be.
     ///During parsing, if an invalid token is encountered it is given as a `TokenKind::InvalidChar`.
-    ///Mismatched enclosing characters will result in 
-    fn parse(stop: impl Fn(char) -> bool + Copy /* Max, what's best here? +Copy or passing a reference around? */, s: &mut Reader<impl Iterator<Item=char>>) -> Vec<(Position, Token)> {
+    ///Mismatched enclosing characters will result in
+    fn parse(
+        stop: impl Fn(char) -> bool + Copy, /* Max, what's best here? +Copy or passing a reference around? */
+        s: &mut Reader<impl Iterator<Item = char>>,
+    ) -> Vec<(Position, Token)> {
         let mut out = Vec::with_capacity(4096);
         loop {
             match Self::parse_next(stop, s) {
@@ -258,6 +276,12 @@ fn main() -> std::io::Result<()> {
     let s = "a bc def 123hi  var2; let a = (b+c) / 2".to_string();
     //let mut s = String::new();
     //std::fs::File::open("input")?.read_to_string(&mut s)?;
-    println!("{:?}", Token::Curlied(Token::parse(|_| false, &mut Reader::new(&mut s.chars().peekable()))));
+    println!(
+        "{:?}",
+        Token::Curlied(Token::parse(
+            |_| false,
+            &mut Reader::new(&mut s.chars().peekable())
+        ))
+    );
     Ok(())
 }
