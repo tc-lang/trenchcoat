@@ -1,10 +1,12 @@
-#![warn(clippy::perf)]
-
 mod position;
 mod reader;
 
+pub fn tokenize(s: &str) -> (Vec<(usize, Token)>, usize) {
+    Token::parse(|_| false, s)
+}
+
 #[derive(Debug)]
-enum Token<'a> {
+pub enum Token<'a> {
     Keyword(Keyword),
     TypeIdent(&'a str),
     NameIdent(&'a str),
@@ -69,7 +71,7 @@ impl std::fmt::Debug for Token {
 */
 
 #[derive(Debug)]
-enum Keyword {
+pub enum Keyword {
     Fn,
     If,
     Let,
@@ -94,7 +96,7 @@ impl Keyword {
 }
 
 #[derive(Debug)]
-enum Oper {
+pub enum Oper {
     Add,
     Sub,
     Astrix,
@@ -168,7 +170,7 @@ fn is_single_oper(ch: char) -> bool {
 }
 
 #[derive(Debug)]
-enum Punc {
+pub enum Punc {
     Dot,
     Comma,
     //Dot? This would have to be added as a special case to the operator parser
@@ -258,7 +260,7 @@ impl Token<'_> {
     fn oper(s: &str) -> Option<(Token, usize)> {
         let (oper_str, i) = Self::consume(is_oper, is_oper, is_single_oper, s)?;
         if oper_str == "." {
-            return Some((Token::Punc(Punc::Dot), i))
+            return Some((Token::Punc(Punc::Dot), i));
         }
         Some((Token::Oper(Oper::parse(oper_str)?), i))
     }
@@ -381,12 +383,4 @@ impl Token<'_> {
         }
         (out, i)
     }
-}
-
-fn main() -> std::io::Result<()> {
-    let s = "a bc def 123hi  var2; let a = (b+c.x) / 2";
-    //let mut s = String::new();
-    //std::fs::File::open("input")?.read_to_string(&mut s)?;
-    println!("{:?}", Token::parse(|_| false, s,));
-    Ok(())
 }
