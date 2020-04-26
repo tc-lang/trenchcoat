@@ -1,23 +1,19 @@
 #![warn(clippy::perf)]
 
-use std::fmt::{self, Debug};
-use std::io::prelude::*;
-
 mod position;
 mod reader;
-use position::Position;
-use reader::Reader;
 
 #[derive(Debug)]
-enum Token {
+enum Token<'a> {
     Keyword(Keyword),
-    TypeIdent(String),
-    NameIdent(String),
+    TypeIdent(&'a str),
+    NameIdent(&'a str),
     Oper(Oper),
     Punc(Punc),
-    Num(String),
-    Bracketed(Vec<(Position, Token)>),
-    Curlied(Vec<(Position, Token)>),
+    Num(&'a str),
+    Parens(Vec<(usize, Token<'a>)>),
+    Curlys(Vec<(usize, Token<'a>)>),
+    Squares(Vec<(usize, Token<'a>)>),
     InvalidChar(char),
 }
 
@@ -124,9 +120,9 @@ enum Oper {
 }
 
 impl Oper {
-    fn parse(oper: String) -> Option<Oper> {
+    fn parse(oper: &str) -> Option<Oper> {
         use Oper::*;
-        match &*oper {
+        match oper {
             "+" => Some(Add),
             "-" => Some(Sub),
             "*" => Some(Astrix),
@@ -142,7 +138,7 @@ impl Oper {
             "<" => Some(LT),
             "<=" => Some(LTOrEqual),
             ">" => Some(GT),
-            "<=" => Some(GTOrEqual),
+            ">=" => Some(GTOrEqual),
             "!" => Some(Not),
             "->" => Some(RightArrow),
             "<-" => Some(LeftArrow),
@@ -182,9 +178,9 @@ enum Punc {
 }
 
 impl Punc {
-    fn parse(punc: String) -> Option<Punc> {
+    fn parse(punc: &str) -> Option<Punc> {
         use Punc::*;
-        match &*punc {
+        match punc {
             "," => Some(Comma),
             ":" => Some(Colon),
             ";" => Some(SemiColon),
@@ -221,14 +217,14 @@ fn is_single_punc(ch: char) -> bool {
     }
 }
 
-/// like s.skip(1), but returns the same type as was passed.
-/// Is there a std lib way to do this?? I couldn't find it.
-fn skip1<T: Iterator>(i: &mut T) -> &mut T {
-    i.next();
-    i
+fn first_char_from(s: &str, i: usize) -> Option<(char, usize)> {
+    let mut ci = s.get(i..)?.char_indices();
+    let (_, c) = ci.next()?;
+    let (j, _) = ci.next().unwrap_or((s.len(), '0'));
+    Some((c, i + j))
 }
 
-impl Token {
+impl Token<'_> {
     /// consume forms the basis for most token parsing.
     /// It consumes a token described by `start`, `mid` and `term` from `s`.
     /// The token will:
@@ -239,129 +235,127 @@ impl Token {
         start: impl Fn(char) -> bool,
         mid: impl Fn(char) -> bool,
         term: impl Fn(char) -> bool,
-        cap: usize,
-        s: &mut Reader<impl Iterator<Item = char>>,
-    ) -> Option<String> {
-        let mut out = String::with_capacity(cap);
-        let c = *s.peek()?;
+        s: &str,
+    ) -> Option<(&str, usize)> {
+        let (c, mut i) = first_char_from(s, 0)?;
         if !start(c) {
             return None;
         }
-        out.push(s.next()?);
-        if term(c) {
-            return Some(out);
-        }
-        loop {
-            if let Some(&c) = s.peek() {
-                if mid(c) {
-                    out.push(s.next().unwrap());
-                    if !term(c) {
-                        continue;
-                    }
+        if !term(c) {
+            while let Some((c, j)) = first_char_from(s, i) {
+                if !mid(c) {
+                    break;
+                }
+                i = j;
+                if term(c) {
+                    break;
                 }
             }
-            break;
         }
-        Some(out)
+        return Some((&s[..i], i));
     }
 
     /// parses a `Token::Oper`
-    fn oper(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
-        Self::consume(is_oper, is_oper, is_single_oper, 2, s)
-            .and_then(Oper::parse)
-            .map(Token::Oper)
+    fn oper(s: &str) -> Option<(Token, usize)> {
+        let (oper_str, i) = Self::consume(is_oper, is_oper, is_single_oper, s)?;
+        Some((Token::Oper(Oper::parse(oper_str)?), i))
     }
 
     /// parses a `Token::Num`
-    fn num(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
-        Self::consume(
+    fn num(s: &str) -> Option<(Token, usize)> {
+        let (n, i) = Self::consume(
             |c| c.is_ascii_digit(),
             |c| c.is_alphanumeric() || c == '_',
             |_| false,
-            4,
             s,
-        )
-        .map(Token::Num)
+        )?;
+        Some((Token::Num(n), i))
     }
 
     /// parses a `Token::Punc`
-    fn punc(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
-        Self::consume(is_punc, is_punc, is_single_punc, 2, s)
-            .and_then(Punc::parse)
-            .map(Token::Punc)
+    fn punc(s: &str) -> Option<(Token, usize)> {
+        let (punc_str, i) = Self::consume(is_punc, is_punc, is_single_punc, s)?;
+        Some((Token::Punc(Punc::parse(punc_str)?), i))
     }
 
     /// parses a `Token::NameIdent`, `Token::TypeIdent` or `Token::Keyword`
-    fn name(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
-        enum FirstChar {
-            Upper,
-            Lower,
-        }
-        let mut out = String::with_capacity(8);
-        let mut fc = FirstChar::Lower;
-        let c = *s.peek()?;
-        if c.is_ascii_uppercase() {
-            fc = FirstChar::Upper;
-        } else if !c.is_ascii_lowercase() && c != '_' {
-            return None;
-        }
-        out.push(s.next()?);
-        loop {
-            if let Some(&c) = s.peek() {
-                if c.is_ascii_alphanumeric() || c == '_' {
-                    out.push(s.next().unwrap());
-                    continue;
-                }
-            }
-            break;
-        }
-        Some(if let FirstChar::Lower = fc {
-            // is there a better way to do this?
-            if let Some(keyword) = Keyword::parse(&*out) {
+    fn name(s: &str) -> Option<(Token, usize)> {
+        let (name, i) = Self::consume(
+            |c| c.is_ascii_lowercase(),
+            |c| c.is_ascii_alphanumeric() || c == '_',
+            |_| false,
+            s,
+        )?;
+        Some((
+            if let Some(keyword) = Keyword::parse(name) {
                 Token::Keyword(keyword)
-            } else if is_special_type(&*out) {
-                Token::TypeIdent(out)
+            } else if is_special_type(name) {
+                Token::TypeIdent(name)
             } else {
-                Token::NameIdent(out)
-            }
-        } else {
-            Token::TypeIdent(out)
-        })
+                Token::NameIdent(name)
+            },
+            i,
+        ))
+    }
+    fn typ(s: &str) -> Option<(Token, usize)> {
+        let (ident, i) = Self::consume(
+            |c| c.is_ascii_uppercase(),
+            |c| c.is_ascii_alphanumeric() || c == '_',
+            |_| false,
+            s,
+        )?;
+        Some((Token::TypeIdent(ident), i))
     }
 
     /// parses a `Token::Bracketed` or a `Token::Curlied`
-    fn block(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
-        match *s.peek()? {
-            '(' => Some(Token::Bracketed(Self::parse(|c| c == ')', skip1(s)))),
-            '{' => Some(Token::Curlied(Self::parse(|c| c == '}', skip1(s)))),
+    fn block(s: &str) -> Option<(Token, usize)> {
+        let (c, i) = first_char_from(s, 0)?;
+        match c {
+            '(' => {
+                let (blk, i) = Self::parse(|c| c == ')', s.get(i..)?);
+                Some((Token::Parens(blk), i))
+            }
+            '{' => {
+                let (blk, i) = Self::parse(|c| c == '}', s.get(i..)?);
+                Some((Token::Curlys(blk), i))
+            }
+            '[' => {
+                let (blk, i) = Self::parse(|c| c == ']', s.get(i..)?);
+                Some((Token::Squares(blk), i))
+            }
             _ => None,
         }
     }
     /// Parses 1 token from s. This discards leading whitespace. If stop returns true for the first
     /// non-whitespace character then it is consumed and None is returned.
-    fn parse_next(
-        stop: impl Fn(char) -> bool,
-        s: &mut Reader<impl Iterator<Item = char>>,
-    ) -> Option<(Position, Token)> {
+    fn parse_next(stop: impl Fn(char) -> bool, s: &str) -> (Option<(usize, Token)>, usize) {
+        let mut i = 0;
         loop {
-            let c = *s.peek()?;
-            if is_whitespace(c) {
-                s.next()?;
-            } else if stop(c) {
-                s.next()?;
-                return None;
+            if let Some((c, j)) = first_char_from(s, i) {
+                if is_whitespace(c) {
+                    i = j;
+                } else if stop(c) {
+                    return (None, j);
+                } else {
+                    break;
+                }
             } else {
-                break;
+                return (None, i);
             }
         }
-        let pos = s.position();
-        Self::num(s)
-            .or_else(|| Self::name(s))
-            .or_else(|| Self::punc(s))
-            .or_else(|| Self::block(s))
-            .or_else(|| Self::oper(s))
-            .or_else(|| Some(Token::InvalidChar(s.next()?)))
-            .map(|t| (pos, t))
+        if let Some(s) = s.get(i..) {
+            if let Some((t, l)) = Self::num(s)
+                .or_else(|| Self::name(s))
+                .or_else(|| Self::typ(s))
+                .or_else(|| Self::punc(s))
+                .or_else(|| Self::block(s))
+                .or_else(|| Self::oper(s))
+                .or_else(|| first_char_from(s, 0).map(|(c, i)| (Token::InvalidChar(c), i)))
+            {
+                return (Some((i, t)), i + l);
+            }
+        }
+        return (None, i);
     }
 
     /// Takes a Reader of chars and parses it to tokens.
@@ -371,28 +365,26 @@ impl Token {
     /// Mismatched enclosing characters will result in
     fn parse(
         stop: impl Fn(char) -> bool + Copy, /* Max, what's best here? +Copy or passing a reference around? */
-        s: &mut Reader<impl Iterator<Item = char>>,
-    ) -> Vec<(Position, Token)> {
+        s: &str,
+    ) -> (Vec<(usize, Token)>, usize) {
         let mut out = Vec::with_capacity(4096);
-        loop {
-            match Self::parse_next(stop, s) {
-                Some(t) => out.push(t),
-                None => return out,
+        let mut i = 0;
+        while let Some((op, l)) = s.get(i..).map(|ss| Self::parse_next(stop, ss)) {
+            i += l;
+            if let Some(p) = op {
+                out.push(p);
+            } else {
+                break;
             }
         }
+        (out, i)
     }
 }
 
 fn main() -> std::io::Result<()> {
-    let s = "a bc def 123hi  var2; let a = (b+c) / 2".to_string();
+    let s = "a bc def 123hi  var2; let a = (b+c) / 2";
     //let mut s = String::new();
     //std::fs::File::open("input")?.read_to_string(&mut s)?;
-    println!(
-        "{:?}",
-        Token::Curlied(Token::parse(
-            |_| false,
-            &mut Reader::new(&mut s.chars().peekable())
-        ))
-    );
+    println!("{:?}", Token::parse(|_| false, s,));
     Ok(())
 }
