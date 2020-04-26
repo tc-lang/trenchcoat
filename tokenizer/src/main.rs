@@ -103,7 +103,6 @@ enum Oper {
     Inc,
     Dec,
     Question,
-    Dot, // I'm not going to define syntax for ranges
     Ref,
     Assign,
     Equals,
@@ -130,7 +129,6 @@ impl Oper {
             "/" => Some(Div),
             "++" => Some(Inc),
             "--" => Some(Dec),
-            "." => Some(Dot),
             "&" => Some(Ref),
             "?" => Some(Question),
             "=" => Some(Assign),
@@ -171,6 +169,7 @@ fn is_single_oper(ch: char) -> bool {
 
 #[derive(Debug)]
 enum Punc {
+    Dot,
     Comma,
     //Dot? This would have to be added as a special case to the operator parser
     Colon,
@@ -258,6 +257,9 @@ impl Token<'_> {
     /// parses a `Token::Oper`
     fn oper(s: &str) -> Option<(Token, usize)> {
         let (oper_str, i) = Self::consume(is_oper, is_oper, is_single_oper, s)?;
+        if oper_str == "." {
+            return Some((Token::Punc(Punc::Dot), i))
+        }
         Some((Token::Oper(Oper::parse(oper_str)?), i))
     }
 
@@ -382,7 +384,7 @@ impl Token<'_> {
 }
 
 fn main() -> std::io::Result<()> {
-    let s = "a bc def 123hi  var2; let a = (b+c) / 2";
+    let s = "a bc def 123hi  var2; let a = (b+c.x) / 2";
     //let mut s = String::new();
     //std::fs::File::open("input")?.read_to_string(&mut s)?;
     println!("{:?}", Token::parse(|_| false, s,));
