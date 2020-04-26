@@ -1,9 +1,6 @@
-#![warn(clippy::pedantic)]
 #![warn(clippy::perf)]
 
-use fmt::Debug;
-use std::char;
-use std::fmt;
+use std::fmt::{self, Debug};
 use std::io::prelude::*;
 
 mod position;
@@ -24,14 +21,15 @@ enum Token {
 }
 
 impl Token {
-    ///fmt_write writes "kind(value) " to the formatter.
+    /// fmt_write writes "kind(value) " to the formatter.
     fn fmt_write(f: &mut fmt::Formatter, kind: &str, value: &str) -> Result<(), fmt::Error> {
         f.write_str(kind)?;
         f.write_str("(")?;
         f.write_str(&*value)?;
         f.write_str(") ")
     }
-    ///fmt_vec calls `t.fmt(f)` for each t in ts.
+
+    /// fmt_vec calls `t.fmt(f)` for each t in ts.
     fn fmt_vec(f: &mut fmt::Formatter, ts: &[(Position, Token)]) -> Result<(), fmt::Error> {
         for (_, t) in ts {
             t.fmt(f)?;
@@ -74,6 +72,7 @@ impl std::fmt::Debug for Token {
 fn is_whitespace(ch: char) -> bool {
     ch == ' ' || ch == '\t'
 }
+
 ///returns true if `ch` is an operator character.
 fn is_oper(ch: char) -> bool {
     (match ch {
@@ -81,23 +80,26 @@ fn is_oper(ch: char) -> bool {
         _ => false,
     }) || is_single_oper(ch) // it's a shame the match has to be in brackets :(
 }
-///returns true if `ch` is a 'single' operator character. A single operator char is one where
-///multiple characters next to eachother compounds the operator rather than referring to a
-///different operator.
-///For example, `+` is not a single operator char since it is distinct from `++` whereas
-///             `!` is a single operator char since `!!x` is equivilent to `!(!x)`.
+
+/// returns true if `ch` is a 'single' operator character. A single operator char is one where
+/// multiple characters next to eachother compounds the operator rather than referring to a
+/// different operator.
+/// For example, `+` is not a single operator char since it is distinct from `++` whereas
+///              `!` is a single operator char since `!!x` is equivilent to `!(!x)`.
 fn is_single_oper(ch: char) -> bool {
     match ch {
         '?' | '!' | '&' | '*' => true,
         _ => false,
     }
 }
+
 fn is_keyword(s: &str) -> bool {
     match s {
         "fn" | "if" | "let" | "type" | "match" | "return" => true,
         _ => false,
     }
 }
+
 fn is_special_type(s: &str) -> bool {
     match s {
         "int" | "uint" | "bool" | "i8" | "u8" | "i16" | "u16" | "i32" | "u32" | "i64" | "u64"
@@ -105,14 +107,16 @@ fn is_special_type(s: &str) -> bool {
         _ => false,
     }
 }
+
 fn is_punc(ch: char) -> bool {
     (match ch {
         ':' => true,
         _ => false,
     }) || is_single_punc(ch)
 }
-///for the distinction between single chars and normal chars, see the documentation for
-///`is_single_oper`.
+
+/// for the distinction between single chars and normal chars, see the documentation for
+/// `is_single_oper`.
 fn is_single_punc(ch: char) -> bool {
     match ch {
         '\n' | ',' | ';' => true,
@@ -120,20 +124,20 @@ fn is_single_punc(ch: char) -> bool {
     }
 }
 
-///like s.skip(1), but returns the same type as was passed.
-///Is there a std lib way to do this?? I couldn't find it.
+/// like s.skip(1), but returns the same type as was passed.
+/// Is there a std lib way to do this?? I couldn't find it.
 fn skip1<T: Iterator>(i: &mut T) -> &mut T {
     i.next();
     i
 }
 
 impl Token {
-    ///consume forms the basis for most token parsing.
-    ///It consumes a token described by `start`, `mid` and `term` from `s`.
-    ///The token will:
-    /// 1) start with a character, `c` where `start(c)` is true,
-    /// 2) must only consist further of characters, `c`, for which `mid(c)` is true and
-    /// 3) if a character, `c` has `term(c)` then that will be the final character.
+    /// consume forms the basis for most token parsing.
+    /// It consumes a token described by `start`, `mid` and `term` from `s`.
+    /// The token will:
+    ///  1) start with a character, `c` where `start(c)` is true,
+    ///  2) must only consist further of characters, `c`, for which `mid(c)` is true and
+    ///  3) if a character, `c` has `term(c)` then that will be the final character.
     fn consume(
         start: impl Fn(char) -> bool,
         mid: impl Fn(char) -> bool,
@@ -163,11 +167,13 @@ impl Token {
         }
         Some(out)
     }
-    ///parses a `Token::Oper`
+
+    /// parses a `Token::Oper`
     fn oper(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
         Self::consume(is_oper, is_oper, is_single_oper, 2, s).map(Token::Oper)
     }
-    ///parses a `Token::Num`
+
+    /// parses a `Token::Num`
     fn num(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
         Self::consume(
             |c| c.is_ascii_digit(),
@@ -178,11 +184,13 @@ impl Token {
         )
         .map(Token::Num)
     }
-    ///parses a `Token::Punc`
+
+    /// parses a `Token::Punc`
     fn punc(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
         Self::consume(is_punc, is_punc, is_single_punc, 2, s).map(Token::Punc)
     }
-    ///parses a `Token::NameIdent`, `Token::TypeIdent` or `Token::Keyword`
+
+    /// parses a `Token::NameIdent`, `Token::TypeIdent` or `Token::Keyword`
     fn name(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
         enum FirstChar {
             Upper,
@@ -219,7 +227,8 @@ impl Token {
             Token::TypeIdent(out)
         })
     }
-    ///parses a `Token::Bracketed` or a `Token::Curlied`
+
+    /// parses a `Token::Bracketed` or a `Token::Curlied`
     fn block(s: &mut Reader<impl Iterator<Item = char>>) -> Option<Token> {
         match *s.peek()? {
             '(' => Some(Token::Bracketed(Self::parse(|c| c == ')', skip1(s)))),
@@ -227,8 +236,8 @@ impl Token {
             _ => None,
         }
     }
-    ///Parses 1 token from s. This discards leading whitespace. If stop returns true for the first
-    ///non-whitespace character then it is consumed and None is returned.
+    /// Parses 1 token from s. This discards leading whitespace. If stop returns true for the first
+    /// non-whitespace character then it is consumed and None is returned.
     fn parse_next(
         stop: impl Fn(char) -> bool,
         s: &mut Reader<impl Iterator<Item = char>>,
@@ -253,11 +262,12 @@ impl Token {
             .or_else(|| Some(Token::InvalidChar(s.next()?)))
             .map(|t| (pos, t))
     }
-    ///Takes a Reader of chars and parses it to tokens.
-    ///We might could have this return Iterator<Token>? Not sure how much of a benifit that
-    ///would be.
-    ///During parsing, if an invalid token is encountered it is given as a `TokenKind::InvalidChar`.
-    ///Mismatched enclosing characters will result in
+
+    /// Takes a Reader of chars and parses it to tokens.
+    /// We might could have this return Iterator<Token>? Not sure how much of a benifit that
+    /// would be.
+    /// During parsing, if an invalid token is encountered it is given as a `TokenKind::InvalidChar`.
+    /// Mismatched enclosing characters will result in
     fn parse(
         stop: impl Fn(char) -> bool + Copy, /* Max, what's best here? +Copy or passing a reference around? */
         s: &mut Reader<impl Iterator<Item = char>>,
