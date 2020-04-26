@@ -1,8 +1,27 @@
 mod position;
 mod reader;
 
-pub fn tokenize(s: &str) -> (Vec<Token>, usize) {
-    Token::parse(|_| false, s)
+pub fn tokenize(s: &str) -> Vec<Token> {
+    Token::parse(|_| false, s).0
+}
+
+/// Produces all of the invalid tokens from a list, recursively
+pub fn collect_invalid<'a>(tokens: &'a [Token<'a>]) -> Vec<&'a Token<'a>> {
+    use TokenKind::*;
+
+    // This is inefficient, but that's okay. We don't need this to be industrial grade right now.
+    let mut invalids = Vec::new();
+    for t in tokens {
+        match &t.kind {
+            Parens(ts) | Curlys(ts) | Squares(ts) => {
+                invalids.extend_from_slice(&collect_invalid(&ts))
+            }
+            InvalidChar(_) => invalids.push(&t),
+            _ => (),
+        }
+    }
+
+    invalids
 }
 
 #[derive(Debug)]
@@ -35,6 +54,7 @@ pub enum Keyword {
     Let,
     Type,
     Return,
+    Print,
 }
 
 impl Keyword {
@@ -45,6 +65,7 @@ impl Keyword {
             "if" => Some(If),
             "let" => Some(Let),
             "type" => Some(Type),
+            "print" => Some(Print),
             "return" => Some(Return),
             _ => None,
         }
@@ -58,7 +79,6 @@ pub enum Oper {
     Star,
     Div,
     Ref,
-    DotDot,
     Assign,
     Equals,
     LT,
@@ -81,7 +101,6 @@ impl Oper {
             "*" => Some(Star),
             "/" => Some(Div),
             "&" => Some(Ref),
-            ".." => Some(DotDot),
             "=" => Some(Assign),
             "==" => Some(Equals),
             "<" => Some(LT),
@@ -146,8 +165,8 @@ fn is_whitespace(ch: char) -> bool {
 }
 
 fn is_special_type(s: &str) -> bool {
-    // Currently, we're only supporting `uint`s
-    s == "uint"
+    // Currently, we're only supporting `uint`s and `bool`s
+    s == "uint" || s == "bool"
 }
 
 fn is_punc(ch: char) -> bool {
