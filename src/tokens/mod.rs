@@ -24,16 +24,29 @@ pub fn collect_invalid<'a>(tokens: &'a [Token<'a>]) -> Vec<&'a Token<'a>> {
     invalids
 }
 
-#[derive(Debug)]
-pub struct Token<'a> {
-    /// The starting position of the token in the bytes of the file
-    byte_idx: usize,
-
-    /// The content of the token
-    kind: TokenKind<'a>,
+pub fn split_at_commas<'a>(tokens: &'a [Token<'a>]) -> Vec<&'a [Token<'a>]> {
+    let mut out = Vec::with_capacity(tokens.len() / 2);
+    let mut i = 0;
+    for j in 0..tokens.len() {
+        if let TokenKind::Punc(Punc::Comma) = tokens[j].kind {
+            out.push(&tokens[i..j]);
+            i = j + 1;
+        }
+    }
+    out.push(&tokens[i..tokens.len()]);
+    out
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub struct Token<'a> {
+    /// The starting position of the token in the bytes of the file
+    pub byte_idx: usize,
+
+    /// The content of the token
+    pub kind: TokenKind<'a>,
+}
+
+#[derive(Debug, Clone)]
 pub enum TokenKind<'a> {
     Keyword(Keyword),
     TypeIdent(&'a str),
@@ -47,7 +60,7 @@ pub enum TokenKind<'a> {
     InvalidChar(char),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Keyword {
     Fn,
     If,
@@ -72,7 +85,7 @@ impl Keyword {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Oper {
     Add,
     Sub,
@@ -137,7 +150,7 @@ fn is_single_oper(ch: char) -> bool {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 pub enum Punc {
     Dot,
     Comma,
