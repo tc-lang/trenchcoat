@@ -20,5 +20,5 @@ fn main() {
         return;
     }
 
-    println!("{:?}", ast::parse(&tokens));
+    println!("{:?}", ast::try_parse(&tokens));
 }

@@ -2,33 +2,76 @@
 
 use crate::tokens::Token;
 
-pub fn parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, AstError> {
-    todo!()
+////////////////////////////////////////////////////////////////////////////////
+// Top-level interface                                                        //
+////////////////////////////////////////////////////////////////////////////////
+
+pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<AstError>> {
+    let mut items = Vec::new();
+
+    // Our place in the list of tokens
+    let mut idx = 0;
+
+    while idx < tokens.len() {
+        let item = Item::parse(tokens)?;
+        idx += item.consumed();
+        items.push(item);
+    }
+
+    Ok(items)
 }
+
+////////////////////////////////////////////////////////////////////////////////
+// Type definitions                                                           //
+////////////////////////////////////////////////////////////////////////////////
 
 /// Currently nothing's here because parsing hasn't been implemented yet!
 #[derive(Debug)]
 pub enum AstError {}
 
+#[derive(Debug)]
+pub struct Item<'a> {
+    kind: ItemKind<'a>,
+    source: &'a [Token<'a>],
+}
+
+#[derive(Debug)]
+pub struct Stmt<'a> {
+    kind: ExprKind<'a>,
+    source: &'a [Token<'a>],
+}
+
+#[derive(Debug)]
+pub struct Expr<'a> {
+    kind: ExprKind<'a>,
+    source: &'a [Token<'a>],
+}
+
 /// A top-level item in the source
 ///
 /// Currently only function declarations are supported.
 #[derive(Debug)]
-pub enum Item<'a> {
+pub enum ItemKind<'a> {
     FnDecl {
         name: Ident<'a>,
         params: FnParams<'a>,
         body: Vec<Stmt<'a>>,
+        tail: Option<Expr<'a>>,
     },
 }
 
-pub type Ident<'a> = &'a str;
+#[derive(Debug)]
+pub struct Ident<'a> {
+    name: &'a str,
+    source: &'a Token<'a>,
+}
+
 pub type FnArgs<'a> = Vec<Expr<'a>>;
 pub type FnParams<'a> = Vec<Ident<'a>>;
 
 /// A semicolon-terminated statement
 #[derive(Debug)]
-pub enum Stmt<'a> {
+pub enum StmtKind<'a> {
     /// A `let` statement binding a value given by the `Expr` to a variable name given by the
     /// identifier. For example: `let x = g(y);`
     Let(Ident<'a>, Expr<'a>),
@@ -46,7 +89,7 @@ pub enum Stmt<'a> {
 }
 
 #[derive(Debug)]
-pub enum Expr<'a> {
+pub enum ExprKind<'a> {
     /// An expression representing a function call. The left-hand `Expr` is the function, and the
     /// right-hand `FnArgs` gives its arguments.
     FnCall(Box<Expr<'a>>, FnArgs<'a>),
@@ -103,4 +146,41 @@ pub enum BinOp {
 pub enum PrefixOp {
     /// Unary not: `!`
     Not,
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Implementations and other functions                                        //
+//                                                                            //
+// These are ordered by the required recusive depth from the top-level        //
+// `try_parse` to reach them.                                                 //
+//                                                                            //
+////////////////////////////////////////////////////////////////////////////////
+
+type FnDecl<'a> = (Ident<'a>, FnParams<'a>, Vec<Stmt<'a>>, Option<Expr<'a>>);
+
+impl<'a> Item<'a> {
+    /// Returns the number of tokens consumed to produce this type
+    fn consumed(&self) -> usize {
+        self.source.len()
+    }
+
+    /// Attempts to parse the set of tokens into an item, returning the number of tokens consumed
+    /// if successful.
+    fn parse(tokens: &'a [Token<'a>]) -> Result<Self, Vec<AstError>> {
+        let (fn_decl, consumed) = Self::parse_fn_decl(tokens)?;
+        let (name, params, body, tail) = fn_decl;
+        Ok(Item {
+            source: &tokens[..consumed],
+            kind: ItemKind::FnDecl {
+                name,
+                params,
+                body,
+                tail,
+            },
+        })
+    }
+
+    fn parse_fn_decl(tokens: &'a [Token<'a>]) -> Result<(FnDecl<'a>, usize), Vec<AstError>> {
+        todo!()
+    }
 }

@@ -348,16 +348,13 @@ impl Token<'_> {
     /// would be.
     /// During parsing, if an invalid token is encountered it is given as a `TokenKind::InvalidChar`.
     /// Mismatched enclosing characters will result in
-    fn parse(
-        stop: impl Fn(char) -> bool + Copy, /* Max, what's best here? +Copy or passing a reference around? */
-        s: &str,
-    ) -> (Vec<Token>, usize) {
+    fn parse(stop: impl Fn(char) -> bool, s: &str) -> (Vec<Token>, usize) {
         let mut out = Vec::new();
         // Our byte index in the string
         let mut idx = 0;
 
         while let Some((parse_result, offset)) =
-            s.get(idx..).map(|s| TokenKind::parse_next(stop, s))
+            s.get(idx..).map(|s| TokenKind::parse_next(&stop, s))
         {
             if let Some((byte_idx, kind)) = parse_result {
                 let mut token = Token { byte_idx, kind };
