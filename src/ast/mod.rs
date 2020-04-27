@@ -3,6 +3,10 @@
 use crate::tokens;
 use crate::tokens::{Keyword, Token, TokenKind};
 
+mod error;
+
+pub use error::{Context as ErrorContext, Error, ErrorKind};
+
 ////////////////////////////////////////////////////////////////////////////////
 // Top-level interface                                                        //
 ////////////////////////////////////////////////////////////////////////////////
@@ -40,51 +44,17 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
 // Type definitions                                                           //
 ////////////////////////////////////////////////////////////////////////////////
 
-/// Errors each have a kind and a context in which it occured. These can be combined with the
-/// source token to create a hopefully ok error message.
-/// The source may not be given in some error cases, for example when there's an unexpected EOF.
-#[derive(Debug, Clone)]
-pub struct Error<'a> {
-    pub kind: ErrorKind,
-    pub context: ErrorContext,
-    pub source: Option<&'a Token<'a>>,
-}
-
-#[derive(Debug, Clone)]
-pub enum ErrorKind {
-    /// This error is generated when, during parsing, there are no more tokens when some are
-    /// expected.
-    EOF,
-    /// This error is generated when a type ident is given where a name ident should have been.
-    /// This didd contain a string, maybe useful for suggesting a valid name later on however now
-    /// the Error type contains the token so it can be retrieved from that.
-    TypeIdent,
-    /// This error is generated when a NameIdent token was expected but another kind was given.
-    ExpectingName,
-    /// This error is generated when a Parens token was expected but another kind was given.
-    ExpectingParens,
-    /// This error is generated when a Corlys token was expected but another kind was given.
-    ExpectingCurlys,
-    ExpectingKeyword,
-}
-
-#[derive(Debug, Clone)]
-pub enum ErrorContext {
-    TopLevel,
-    FnName,
-    FnArgs,
-    FnBody,
-}
-
 /// Most parsing functions return a ParsingRet.
 #[derive(Debug)]
 enum ParsingRet<'a, T> {
     /// The parse was succesful.
     Ok(T),
+
     /// The parse was unsuccesful, however the error wasn't too bad so a result is given to
     /// complete the token tree and parsing may continue. However no steps after parsing should be
     /// completed and the collected errors should be given.
     SoftErr(T, Vec<Error<'a>>),
+
     /// The programmer can't code. Parsing must now stop. They should feel bad.
     Err(Vec<Error<'a>>),
 }
@@ -94,10 +64,12 @@ impl<'a, T> ParsingRet<'a, T> {
     fn single_err(e: Error<'a>) -> ParsingRet<'a, T> {
         Self::Err(vec![e])
     }
+
     /// Generates a `ParsingRet::SoftErr` with the value the error given.
     fn single_soft_err(v: T, e: Error<'a>) -> ParsingRet<'a, T> {
         Self::SoftErr(v, vec![e])
     }
+
     /// Returns `Self::Ok(v)` if errs is empty or a `Self::SoftErr` otherwise.
     fn with_soft_errs(v: T, errs: Vec<Error<'a>>) -> ParsingRet<'a, T> {
         if errs.len() > 0 {
@@ -259,17 +231,6 @@ impl<'a> Item<'a> {
             context: ErrorContext::TopLevel,
             source: tokens.get(0),
         })
-
-        /*let (name, params, body, tail) = fn_decl;
-        Ok(Item {
-            source: &tokens[..consumed],
-            kind: ItemKind::FnDecl {
-                name,
-                params,
-                body,
-                tail,
-            },
-        })*/
     }
 
     fn parse_block(tokens: &Vec<Token<'a>>) -> ParsingRet<'a, Block<'a>> {
@@ -310,51 +271,55 @@ impl<'a> Item<'a> {
 
     /// Takes the token expected to be the function params and tries to parse it.
     fn parse_fn_params(token: Option<&'a Token<'a>>) -> ParsingRet<'a, FnParams<'a>> {
-        match token.map(|t| &t.kind) {
-            Some(TokenKind::Parens(tokens)) => {
-                let params = tokens::split_at_commas(&tokens);
-                let mut errors = Vec::new();
-                let mut out = Vec::with_capacity(params.len());
-                for a in params {
-                    if a.len() != 1 {
-                        errors.push(Error {
-                            kind: ErrorKind::ExpectingName,
-                            context: ErrorContext::FnArgs,
-                            source: a.get(0),
-                        }); // TODO: improve this error
-                    } else {
-                        let a = &a[0];
-                        match a.kind {
-                            TokenKind::NameIdent(name) => out.push(Ident { name, source: a }),
-                            TokenKind::TypeIdent(name) => {
-                                out.push(Ident { name, source: a });
-                                errors.push(Error {
-                                    kind: ErrorKind::TypeIdent,
-                                    context: ErrorContext::FnArgs,
-                                    source: Some(a),
-                                });
-                            }
-                            _ => errors.push(Error {
-                                kind: ErrorKind::ExpectingName,
-                                context: ErrorContext::FnArgs,
-                                source: Some(a),
-                            }),
-                        }
-                    }
-                }
-                ParsingRet::with_soft_errs(out, errors)
+        let tokens = match token.map(|t| &t.kind) {
+            Some(TokenKind::Parens(tokens)) => tokens,
+            Some(_) => {
+                return ParsingRet::single_err(Error {
+                    kind: ErrorKind::ExpectingParens,
+                    context: ErrorContext::FnArgs,
+                    source: token,
+                })
             }
-            Some(_) => ParsingRet::single_err(Error {
-                kind: ErrorKind::ExpectingParens,
-                context: ErrorContext::FnArgs,
-                source: token,
-            }),
-            None => ParsingRet::single_err(Error {
-                kind: ErrorKind::EOF,
-                context: ErrorContext::FnArgs,
-                source: None,
-            }),
+            None => {
+                return ParsingRet::single_err(Error {
+                    kind: ErrorKind::EOF,
+                    context: ErrorContext::FnArgs,
+                    source: None,
+                })
+            }
+        };
+
+        let params = tokens::split_at_commas(&tokens);
+        let mut errors = Vec::new();
+        let mut out = Vec::with_capacity(params.len());
+        for a in params {
+            if a.len() != 1 {
+                errors.push(Error {
+                    kind: ErrorKind::ExpectingName,
+                    context: ErrorContext::FnArgs,
+                    source: a.get(0),
+                }); // TODO: improve this error
+            } else {
+                let a = &a[0];
+                match a.kind {
+                    TokenKind::NameIdent(name) => out.push(Ident { name, source: a }),
+                    TokenKind::TypeIdent(name) => {
+                        out.push(Ident { name, source: a });
+                        errors.push(Error {
+                            kind: ErrorKind::TypeIdent,
+                            context: ErrorContext::FnArgs,
+                            source: Some(a),
+                        });
+                    }
+                    _ => errors.push(Error {
+                        kind: ErrorKind::ExpectingName,
+                        context: ErrorContext::FnArgs,
+                        source: Some(a),
+                    }),
+                }
+            }
         }
+        ParsingRet::with_soft_errs(out, errors)
     }
 
     fn parse_fn_body(token: Option<&'a Token<'a>>) -> ParsingRet<'a, Block<'a>> {
@@ -374,51 +339,41 @@ impl<'a> Item<'a> {
     }
 
     fn parse_fn_decl(tokens: &'a [Token<'a>]) -> Option<ParsingRet<'a, Item<'a>>> {
-        if let TokenKind::Keyword(Keyword::Fn) = tokens.get(0)?.kind {
-            use ParsingRet::*;
-            let mut errors = Vec::new();
-            let name = match Self::parse_fn_name(tokens.get(1)) {
-                Ok(name) => name,
-                SoftErr(name, errs) => {
-                    errors.extend(errs);
-                    name
-                }
-                Err(errs) => {
-                    errors.extend(errs);
-                    return Some(Err(errors));
-                }
-            };
-            let params = match Self::parse_fn_params(tokens.get(2)) {
-                Ok(params) => params,
-                SoftErr(params, errs) => {
-                    errors.extend(errs);
-                    params
-                }
-                Err(errs) => {
-                    errors.extend(errs);
-                    return Some(Err(errors));
-                }
-            };
-            let body = match Self::parse_fn_body(tokens.get(3)) {
-                Ok(body) => body,
-                SoftErr(body, errs) => {
-                    errors.extend(errs);
-                    body
-                }
-                Err(errs) => {
-                    errors.extend(errs);
-                    return Some(Err(errors));
-                }
-            };
-            Some(ParsingRet::with_soft_errs(
-                Item {
-                    kind: ItemKind::FnDecl { name, params, body },
-                    source: &tokens[0..4],
-                },
-                errors,
-            ))
-        } else {
-            None
+        use ParsingRet::*;
+
+        match tokens.get(0)?.kind {
+            TokenKind::Keyword(Keyword::Fn) => (),
+            _ => return None,
         }
+
+        let mut errors = Vec::new();
+
+        macro_rules! next {
+            (try $f:expr) => {
+                match $f {
+                    Ok(v) => v,
+                    SoftErr(v, errs) => {
+                        errors.extend(errs);
+                        v
+                    }
+                    Err(errs) => {
+                        errors.extend(errs);
+                        return Some(Err(errors));
+                    }
+                }
+            };
+        }
+
+        let name = next!(try Self::parse_fn_name(tokens.get(1)));
+        let params = next!(try Self::parse_fn_params(tokens.get(2)));
+        let body = next!(try Self::parse_fn_body(tokens.get(3)));
+
+        Some(ParsingRet::with_soft_errs(
+            Item {
+                kind: ItemKind::FnDecl { name, params, body },
+                source: &tokens[0..4],
+            },
+            errors,
+        ))
     }
 }
