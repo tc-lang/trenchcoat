@@ -7,7 +7,7 @@ use crate::tokens::{Keyword, Token, TokenKind};
 // Top-level interface                                                        //
 ////////////////////////////////////////////////////////////////////////////////
 
-/*pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error<'a>>> {
+pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error<'a>>> {
     let mut items = Vec::new();
 
     // Our place in the list of tokens
@@ -20,7 +20,7 @@ use crate::tokens::{Keyword, Token, TokenKind};
     }
 
     Ok(items)
-}*/
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // Type definitions                                                           //
@@ -350,53 +350,50 @@ impl<'a> Item<'a> {
         }
     }
 
-    fn parse_fn_decl2(tokens: &'a [Token<'a>]) -> ParsingRet<'a, Item<'a>> {
-        use ParsingRet::*;
-        let mut errors = Vec::new();
-        let name = match Self::parse_fn_name(tokens.get(1)) {
-            Ok(name) => name,
-            SoftErr(name, errs) => {
-                errors.extend(errs);
-                name
-            }
-            Err(errs) => {
-                errors.extend(errs);
-                return Err(errors);
-            }
-        };
-        let params = match Self::parse_fn_params(tokens.get(2)) {
-            Ok(params) => params,
-            SoftErr(params, errs) => {
-                errors.extend(errs);
-                params
-            }
-            Err(errs) => {
-                errors.extend(errs);
-                return Err(errors);
-            }
-        };
-        let body = match Self::parse_fn_body(tokens.get(3)) {
-            Ok(body) => body,
-            SoftErr(body, errs) => {
-                errors.extend(errs);
-                body
-            }
-            Err(errs) => {
-                errors.extend(errs);
-                return Err(errors);
-            }
-        };
-        ParsingRet::with_soft_errs(
-            Item {
-                kind: ItemKind::FnDecl { name, params, body },
-                source: &tokens[0..4],
-            },
-            errors,
-        )
-    }
     fn parse_fn_decl(tokens: &'a [Token<'a>]) -> Option<ParsingRet<'a, Item<'a>>> {
         if let TokenKind::Keyword(Keyword::Fn) = tokens.get(0)?.kind {
-            Some(Self::parse_fn_decl2(tokens))
+            use ParsingRet::*;
+            let mut errors = Vec::new();
+            let name = match Self::parse_fn_name(tokens.get(1)) {
+                Ok(name) => name,
+                SoftErr(name, errs) => {
+                    errors.extend(errs);
+                    name
+                }
+                Err(errs) => {
+                    errors.extend(errs);
+                    return Some(Err(errors));
+                }
+            };
+            let params = match Self::parse_fn_params(tokens.get(2)) {
+                Ok(params) => params,
+                SoftErr(params, errs) => {
+                    errors.extend(errs);
+                    params
+                }
+                Err(errs) => {
+                    errors.extend(errs);
+                    return Some(Err(errors));
+                }
+            };
+            let body = match Self::parse_fn_body(tokens.get(3)) {
+                Ok(body) => body,
+                SoftErr(body, errs) => {
+                    errors.extend(errs);
+                    body
+                }
+                Err(errs) => {
+                    errors.extend(errs);
+                    return Some(Err(errors));
+                }
+            };
+            Some(ParsingRet::with_soft_errs(
+                Item {
+                    kind: ItemKind::FnDecl { name, params, body },
+                    source: &tokens[0..4],
+                },
+                errors,
+            ))
         } else {
             None
         }
