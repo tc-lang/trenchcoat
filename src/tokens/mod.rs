@@ -33,11 +33,13 @@ pub fn split_at_commas<'a>(tokens: &'a [Token<'a>]) -> Vec<&'a [Token<'a>]> {
             i = j + 1;
         }
     }
-    out.push(&tokens[i..tokens.len()]);
+    if i < tokens.len() {
+        out.push(&tokens[i..tokens.len()]);
+    }
     out
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Token<'a> {
     /// The starting position of the token in the bytes of the file
     pub byte_idx: usize,
@@ -46,7 +48,7 @@ pub struct Token<'a> {
     pub kind: TokenKind<'a>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind<'a> {
     Keyword(Keyword),
     TypeIdent(&'a str),
@@ -60,7 +62,7 @@ pub enum TokenKind<'a> {
     InvalidChar(char),
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Keyword {
     Fn,
     If,
@@ -85,7 +87,7 @@ impl Keyword {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Oper {
     Add,
     Sub,
@@ -94,10 +96,10 @@ pub enum Oper {
     Ref,
     Assign,
     Equals,
-    LT,
-    LTOrEqual,
-    GT,
-    GTOrEqual,
+    Lt,
+    LtOrEqual,
+    Gt,
+    GtOrEqual,
     Not,
     RightArrow,
     Or,
@@ -115,10 +117,10 @@ impl Oper {
             "&" => Some(Ref),
             "=" => Some(Assign),
             "==" => Some(Equals),
-            "<" => Some(LT),
-            "<=" => Some(LTOrEqual),
-            ">" => Some(GT),
-            ">=" => Some(GTOrEqual),
+            "<" => Some(Lt),
+            "<=" => Some(LtOrEqual),
+            ">" => Some(Gt),
+            ">=" => Some(GtOrEqual),
             "!" => Some(Not),
             "->" => Some(RightArrow),
             "||" => Some(Or),
@@ -150,7 +152,7 @@ fn is_single_oper(ch: char) -> bool {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq)]
 pub enum Punc {
     Dot,
     Comma,

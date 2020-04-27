@@ -8,7 +8,8 @@ use tokens::tokenize;
 fn main() {
     // Currently just a simple test of the tokenizer
     //let s = "a bc def 123hi  var2; let a = (b+c.x) / 2";
-    let s = "fn f() {a bc def 123hi  var2; let a = (b+c.x) / 2}   fn hi (x, y){abc;}";
+    let s = "fn f() {1 + 2}   fn hi (x, y){x * !y}";
+    //let s = "fn f() {2}";
     //let mut s = String::new();
     //std::fs::File::open("input")?.read_to_string(&mut s)?;
     let tokens = tokenize(s);
@@ -21,5 +22,6 @@ fn main() {
         return;
     }
 
+    println!("{:?}", tokens);
     println!("{:?}", ast::try_parse(&tokens));
 }

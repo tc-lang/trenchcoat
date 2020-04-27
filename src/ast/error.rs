@@ -12,7 +12,7 @@ pub struct Error<'a> {
     pub source: Option<&'a Token<'a>>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum ErrorKind {
     /// This error is generated when, during parsing, there are no more tokens when some are
     /// expected.
@@ -28,12 +28,21 @@ pub enum ErrorKind {
     /// This error is generated when a Corlys token was expected but another kind was given.
     ExpectingCurlys,
     ExpectingKeyword,
+    ExpectingEquals,
+    ExpectingExpr,
+    ExpectingStmt,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub enum Context {
+    UnknownName,
     TopLevel,
     FnName,
     FnArgs,
     FnBody,
+    LetName,
+    LetEquals,
+    BinOperLeft,
+    BinOperRight,
+    ParseStmt,
 }
