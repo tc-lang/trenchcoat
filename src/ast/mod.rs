@@ -9,17 +9,31 @@ use crate::tokens::{Keyword, Token, TokenKind};
 
 pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error<'a>>> {
     let mut items = Vec::new();
+    let mut errors = Vec::new();
 
     // Our place in the list of tokens
     let mut idx = 0;
 
     while idx < tokens.len() {
-        let item = Item::parse(tokens)?;
-        idx += item.consumed();
-        items.push(item);
+        match Item::parse(&tokens[idx..]) {
+            ParsingRet::Err(err) => return Err(err),
+            ParsingRet::SoftErr(item, err) => {
+                idx += item.consumed();
+                items.push(item);
+                errors.extend(err);
+            }
+            ParsingRet::Ok(item) => {
+                idx += item.consumed();
+                items.push(item);
+            }
+        }
     }
 
-    Ok(items)
+    if errors.len() > 0 {
+        Err(errors)
+    } else {
+        Ok(items)
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -51,10 +65,12 @@ pub enum ErrorKind {
     ExpectingParens,
     /// This error is generated when a Corlys token was expected but another kind was given.
     ExpectingCurlys,
+    ExpectingKeyword,
 }
 
 #[derive(Debug, Clone)]
 pub enum ErrorContext {
+    TopLevel,
     FnName,
     FnArgs,
     FnBody,
@@ -234,8 +250,15 @@ impl<'a> Item<'a> {
 
     /// Attempts to parse the set of tokens into an item, returning the number of tokens consumed
     /// if successful.
-    fn parse(tokens: &'a [Token<'a>]) -> Option<ParsingRet<'a, Item<'a>>> {
-        Self::parse_fn_decl(tokens)
+    fn parse(tokens: &'a [Token<'a>]) -> ParsingRet<'a, Item<'a>> {
+        if let Some(pr) = Self::parse_fn_decl(tokens) {
+            return pr;
+        }
+        ParsingRet::single_err(Error {
+            kind: ErrorKind::ExpectingKeyword,
+            context: ErrorContext::TopLevel,
+            source: tokens.get(0),
+        })
 
         /*let (name, params, body, tail) = fn_decl;
         Ok(Item {
