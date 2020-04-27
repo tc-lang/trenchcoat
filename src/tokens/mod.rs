@@ -87,7 +87,6 @@ pub enum Oper {
     GTOrEqual,
     Not,
     RightArrow,
-    FuncArrow,
     Or,
     And,
 }
@@ -109,7 +108,6 @@ impl Oper {
             ">=" => Some(GTOrEqual),
             "!" => Some(Not),
             "->" => Some(RightArrow),
-            "=>" => Some(FuncArrow),
             "||" => Some(Or),
             "&&" => Some(And),
             _ => None,
@@ -134,7 +132,7 @@ fn is_oper(ch: char) -> bool {
 /// single operator char since `!!x` is equivilent to `!(!x)`.
 fn is_single_oper(ch: char) -> bool {
     match ch {
-        '?' | '!' | '&' | '*' => true,
+        '!' | '*' => true,
         _ => false,
     }
 }
@@ -262,6 +260,8 @@ impl TokenKind<'_> {
             i,
         ))
     }
+
+    /// Attempts to parse a `TokenKind::TypeIdent`
     fn typ(s: &str) -> Option<(TokenKind, usize)> {
         let (ident, i) = Self::consume(
             |c| c.is_ascii_uppercase(),
@@ -275,18 +275,19 @@ impl TokenKind<'_> {
     /// parses a `Token::Bracketed` or a `Token::Curlied`
     fn block(s: &str) -> Option<(TokenKind, usize)> {
         let (c, i) = first_char_from(s, 0)?;
+        // We always return i + 1 because we need to account for the trailing close delimeter
         match c {
             '(' => {
                 let (blk, i) = Token::parse(|c| c == ')', s.get(i..)?);
-                Some((TokenKind::Parens(blk), i))
+                Some((TokenKind::Parens(blk), i + 1))
             }
             '{' => {
                 let (blk, i) = Token::parse(|c| c == '}', s.get(i..)?);
-                Some((TokenKind::Curlys(blk), i))
+                Some((TokenKind::Curlys(blk), i + 1))
             }
             '[' => {
                 let (blk, i) = Token::parse(|c| c == ']', s.get(i..)?);
-                Some((TokenKind::Squares(blk), i))
+                Some((TokenKind::Squares(blk), i + 1))
             }
             _ => None,
         }
@@ -297,37 +298,47 @@ impl TokenKind<'_> {
     /// Iff `stop` returns true for the first non-whitespace character, it is consumed and `None`
     /// is returned.
     fn parse_next(stop: impl Fn(char) -> bool, s: &str) -> (Option<(usize, TokenKind)>, usize) {
-        let mut i = 0;
+        let mut start_idx = 0;
         loop {
-            if let Some((c, j)) = first_char_from(s, i) {
-                if is_whitespace(c) {
-                    i = j;
-                } else if stop(c) {
-                    return (None, j);
-                } else {
+            match first_char_from(s, start_idx) {
+                None => return (None, start_idx),
+                Some((ch, offset)) => {
+                    if is_whitespace(ch) {
+                        start_idx = offset;
+                        continue;
+                    }
+
+                    if stop(ch) {
+                        return (None, offset);
+                    }
+
                     break;
                 }
-            } else {
-                return (None, i);
             }
         }
 
-        if let Some(s) = s.get(i..) {
-            if let Some((t, l)) = Self::num(s)
-                .or_else(|| Self::name(s))
-                .or_else(|| Self::typ(s))
-                // We do operators before punctuation because '..' is an operator that could
-                // alternatively be seen as two of the punctuation '.', which is not the correct
-                // way of parsing it.
-                .or_else(|| Self::oper(s))
-                .or_else(|| Self::punc(s))
-                .or_else(|| Self::block(s))
-                .or_else(|| first_char_from(s, 0).map(|(c, i)| (TokenKind::InvalidChar(c), i)))
-            {
-                return (Some((i, t)), i + l);
-            }
+        let s = match s.get(start_idx..) {
+            None => return (None, start_idx),
+            Some(s) => s,
+        };
+
+        let parse_result = Self::num(s)
+            .or_else(|| Self::name(s))
+            .or_else(|| Self::typ(s))
+            // We do operators before punctuation because '..' is an operator that could
+            // alternatively be seen as two of the punctuation '.', which is not the correct
+            // way of parsing it.
+            .or_else(|| Self::oper(s))
+            .or_else(|| Self::punc(s))
+            .or_else(|| Self::block(s))
+            .or_else(|| {
+                first_char_from(s, 0).map(|(c, start_idx)| (TokenKind::InvalidChar(c), start_idx))
+            });
+
+        match parse_result {
+            Some((token, offset)) => (Some((start_idx, token)), start_idx + offset),
+            None => (None, start_idx),
         }
-        return (None, i);
     }
 }
 
@@ -341,16 +352,43 @@ impl Token<'_> {
         stop: impl Fn(char) -> bool + Copy, /* Max, what's best here? +Copy or passing a reference around? */
         s: &str,
     ) -> (Vec<Token>, usize) {
-        let mut out = Vec::with_capacity(4096);
-        let mut i = 0;
-        while let Some((op, l)) = s.get(i..).map(|ss| TokenKind::parse_next(stop, ss)) {
-            i += l;
-            if let Some((byte_idx, kind)) = op {
-                out.push(Token { byte_idx, kind });
+        let mut out = Vec::new();
+        // Our byte index in the string
+        let mut idx = 0;
+
+        while let Some((parse_result, offset)) =
+            s.get(idx..).map(|s| TokenKind::parse_next(stop, s))
+        {
+            if let Some((byte_idx, kind)) = parse_result {
+                let mut token = Token { byte_idx, kind };
+                token.shift_idx(idx);
+                out.push(token);
+
+                idx += offset;
             } else {
+                idx += offset;
                 break;
             }
         }
-        (out, i)
+
+        (out, idx)
+    }
+
+    /// Internally shifts all of the indices forwards by a given amount
+    ///
+    /// This is so that the indices given by the token may be absolute in their location within the
+    /// file
+    fn shift_idx(&mut self, amount: usize) {
+        use TokenKind::{Curlys, Parens, Squares};
+
+        self.byte_idx += amount;
+        match &mut self.kind {
+            Parens(ts) | Curlys(ts) | Squares(ts) => {
+                for token in ts.iter_mut() {
+                    token.shift_idx(amount);
+                }
+            }
+            _ => (),
+        }
     }
 }
