@@ -128,6 +128,22 @@ impl Oper {
             _ => None,
         }
     }
+    
+    fn newline_prefix_allowed(self) -> bool {
+        use Self::*;
+        match self {
+            Add | Sub | Star | Div | Assign | Equals | Lt | LtOrEqual | Gt | GtOrEqual | RightArrow | Or | And => true,
+            _ => false,
+        }
+    }
+    fn newline_postfix_allowed(self) -> bool {
+        use Self::*;
+        match self {
+            // this is everything for now!
+            Add | Sub | Star | Div | Ref | Assign | Equals | Lt | LtOrEqual | Gt | GtOrEqual | Not | RightArrow | Or | And => true,
+            _ => false,
+        }
+    }
 }
 
 /// returns true if `ch` is an operator character.
@@ -158,6 +174,8 @@ pub enum Punc {
     Comma,
     Colon,
     Semi,
+    Newline,
+    Sep,
 }
 
 impl Punc {
@@ -168,13 +186,14 @@ impl Punc {
             "," => Some(Comma),
             ":" => Some(Colon),
             ";" => Some(Semi),
+            "\n" => Some(Newline),
             _ => None,
         }
     }
 }
 
 fn is_whitespace(ch: char) -> bool {
-    ch == ' ' || ch == '\t' || ch == '\n'
+    ch == ' ' || ch == '\t'
 }
 
 fn is_special_type(s: &str) -> bool {
