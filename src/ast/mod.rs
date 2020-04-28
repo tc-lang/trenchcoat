@@ -687,12 +687,12 @@ impl<'a> Stmt<'a> {
     fn parse_terminated_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
         use tokens::{Punc::Sep, TokenKind::Punc};
 
-        let semi_idx = tokens
+        let sep_idx = tokens
             .iter()
             .enumerate()
             .find(|(_, t)| t.kind == Punc(Sep))
             .map(|(i, _)| i)?;
-        Some(Expr::parse(&tokens[..semi_idx])?)
+        Some(Expr::parse(&tokens[..sep_idx])?)
     }
 }
 
