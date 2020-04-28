@@ -141,6 +141,7 @@ impl Oper {
     }
     /// returns true if newlines are allowed after this operator
     fn newline_postfix_allowed(self) -> bool {
+        // right now, this is all of them
         true
     }
 }
