@@ -47,4 +47,5 @@ pub enum Context {
     BinOperRight,
     PrefixOp,
     ParseStmt,
+    ParseAll,
 }

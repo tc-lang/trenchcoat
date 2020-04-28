@@ -138,7 +138,7 @@ pub enum StmtKind<'a> {
 
     /// The simple evaluation of a single expression, treated as a statement. This might be
     /// something like: `foo(bar(3));`, where `foo` and `bar` might have side effects.
-    Eval(ExprKind<'a>),
+    Eval(Expr<'a>),
 }
 
 #[derive(Debug)]
@@ -351,8 +351,9 @@ impl<'a> Item<'a> {
 }
 
 impl<'a> Block<'a> {
-    fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
-        // return Stmt::parse(tokens).map(|stmt| Block { body: vec![stmt] });
+    fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Vec<Stmt<'a>>> {
+        return Stmt::parse(tokens).map(|stmt| vec![stmt]);
+        //return Stmt::parse(tokens).map(|stmt| Block { body: vec![stmt], source: tokens[0] /*FIXME this is not the correct source*/, });
         // return ParseRet::Ok(Block { body: vec![] });
         todo!()
     }
@@ -360,7 +361,7 @@ impl<'a> Block<'a> {
     fn parse_fn_body(token: Option<&'a Token<'a>>) -> ParseRet<'a, Self> {
         if let Some(token) = token {
             if let TokenKind::Curlys(tokens) = &token.kind {
-                Block::parse(&tokens)
+                Block::parse(&tokens).map(|stmts| Block{ body: stmts, source: token })
             } else {
                 ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingCurlys,
@@ -505,27 +506,16 @@ impl<'a> Stmt<'a> {
     }*/
 
     fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
-        match Expr::parse(tokens) {
-            None => ParseRet::single_err(Error {
+        Self::parse_expr_stmt(tokens).unwrap_or(
+            ParseRet::single_err(Error {
                 kind: ErrorKind::ExpectingStmt,
                 context: ErrorContext::ParseStmt,
                 source: tokens.first(),
-            }),
-            Some(pr) => pr.map(|expr| Stmt {
-                kind: StmtKind::Eval(expr.kind),
-                source: expr.source,
-            }),
-        }
+            })
+        )
     }
-}
-
-impl<'a> Expr<'a> {
-    /// Returns the number of tokens consumed to produce the expression
-    fn consumed(&self) -> usize {
-        self.source.len()
-    }
-
-    fn parse(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
+    
+    fn parse_expr_stmt(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Stmt<'a>>> {
         let mut tokens = tokens;
         let mut source = tokens;
         // the expression ends early if there's a semi-colon.
@@ -536,17 +526,137 @@ impl<'a> Expr<'a> {
                 break;
             }
         }
+        Some(Expr::parse(tokens)?.map(|expr| Stmt{
+            kind: StmtKind::Eval(expr),
+            source,
+        }))
+    }
+}
 
+impl<'a> Expr<'a> {
+    /// Returns the number of tokens consumed to produce the expression
+    fn consumed(&self) -> usize {
+        self.source.len()
+    }
+
+    fn parse(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
         if tokens.len() == 0 {
             return Some(ParseRet::Ok(Expr {
                 kind: ExprKind::Empty,
-                source: source,
+                source: tokens,
             }));
         }
+        Self::parse_num_expr(tokens)
+            .or_else(|| Self::parse_prefix_op_expr(tokens))
+            .or_else(|| Self::parse_bin_op_expr(tokens))
+            .or_else(|| Self::parse_callable(tokens))
+    }
 
-        Some(
-            Self::parse_prefix_op_expr(tokens).or_else(|| Self::parse_bin_op_expr(tokens))?, // note this ?
-        )
+    fn parse_callable(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
+        Self::parse_name_expr(tokens)
+            .or_else(|| Self::parse_fn_call(tokens))
+    }
+
+    fn parse_name_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
+        Some(ParseRet::Ok(Expr{
+            kind: Self::parse_name(tokens)?,
+            source: tokens,
+        }))
+    }
+
+    fn parse_name(tokens: &'a [Token<'a>]) -> Option<ExprKind<'a>> {
+        if tokens.len() != 1 {
+            None
+        } else if let TokenKind::NameIdent(name) = tokens[0].kind {
+            Some(ExprKind::Named(Ident {
+                name,
+                source: &tokens[0],
+            }))
+        } else {
+            None
+        }
+    }
+
+    fn parse_num_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
+        Some(ParseRet::Ok(Expr{
+            kind: Self::parse_num(tokens)?,
+            source: tokens,
+        }))
+    }
+
+    fn parse_num(tokens: &'a [Token<'a>]) -> Option<ExprKind<'a>> {
+        if tokens.len() != 1 {
+            None
+        } else if let TokenKind::Num(string) = tokens[0].kind {
+            Some(ExprKind::Num(
+                string.parse().unwrap(), // we're unwrapping here since we know that a Num token must be a valid usize
+            ))
+        } else {
+            None
+        }
+    }
+
+    //fn parse_all(expr_sources: &'a [&'a [Token<'a>]]) -> ParseRet<'a, Vec<Expr<'a>>> {
+    fn parse_all(expr_sources: Vec<&'a [Token<'a>]>) -> ParseRet<'a, Vec<Expr<'a>>> {
+        let mut errors = Vec::new();
+        let mut out = Vec::with_capacity(expr_sources.len());
+        for tokens in expr_sources.iter() {
+            use ParseRet::{Err, Ok, SoftErr};
+            match Self::parse(tokens) {
+                Some(Ok(expr)) => out.push(expr),
+                Some(SoftErr(expr, errs)) => {
+                    out.push(expr);
+                    errors.extend(errs);
+                }
+                Some(Err(errs)) => return Err(errs),
+                None => {
+                    return ParseRet::single_err(Error {
+                        kind: ErrorKind::ExpectingExpr,
+                        context: ErrorContext::ParseAll,
+                        source: tokens.first(),
+                    })
+                }
+            }
+        }
+        ParseRet::with_soft_errs(out, errors)
+    }
+
+    fn parse_fn_call(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
+        let args = match &tokens.last()?.kind {
+            TokenKind::Parens(args) => args,
+            _ => return None,
+        };
+
+        use ParseRet::{Err, Ok, SoftErr};
+        let mut errors = Vec::new();
+
+        let callee = &tokens[..tokens.len() - 1];
+        let callee = match Self::parse_callable(callee)? {
+            Ok(callee) => callee,
+            SoftErr(callee, errs) => {
+                errors = errs;
+                callee
+            }
+            Err(errs) => return Some(Err(errs)),
+        };
+
+        let args = tokens::split_at_commas(&args);
+        let args = match Self::parse_all(args) {
+            Ok(args) => args,
+            SoftErr(args, errs) => {
+                errors.extend(errs);
+                args
+            }
+            Err(errs) => return Some(Err(errs)),
+        };
+
+        Some(ParseRet::with_soft_errs(
+            Expr{
+                kind: ExprKind::FnCall(Box::new(callee), args),
+                source: tokens,
+            },
+            errors,
+        ))
     }
 
     fn parse_both_bin_exprs(
@@ -602,7 +712,10 @@ impl<'a> Expr<'a> {
             ErrorContext::BinOperRight
         );
 
-        ParseRet::with_soft_errs(ExprKind::BinOp(Box::new(left), op, Box::new(right)), errors)
+        ParseRet::with_soft_errs(
+            ExprKind::BinOp(Box::new(left), op, Box::new(right)),
+            errors,
+        )
     }
 
     fn parse_bin_op_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
@@ -620,6 +733,7 @@ impl<'a> Expr<'a> {
                 },
                 _ => None,
             })
+            .rev() // since all operators are left-assiciative, we want to find the right-most operator first
             .collect::<Vec<_>>();
 
         for ops in BIN_OP_PRECEDENCE.iter() {
