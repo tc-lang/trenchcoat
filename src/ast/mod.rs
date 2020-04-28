@@ -35,16 +35,20 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
     let mut idx = 0;
 
     while idx < tokens.len() {
-        match Item::parse_top_level(&tokens[idx..]) {
-            ParseRet::Err(err) => return Err(err),
-            ParseRet::SoftErr(item, err) => {
-                idx += item.consumed();
-                items.push(item);
-                errors.extend(err);
-            }
-            ParseRet::Ok(item) => {
-                idx += item.consumed();
-                items.push(item);
+        if tokens[idx].kind == TokenKind::Punc(Punc::Sep) {
+            idx += 1;
+        } else {
+            match Item::parse_top_level(&tokens[idx..]) {
+                ParseRet::Err(err) => return Err(err),
+                ParseRet::SoftErr(item, err) => {
+                    idx += item.consumed();
+                    items.push(item);
+                    errors.extend(err);
+                }
+                ParseRet::Ok(item) => {
+                    idx += item.consumed();
+                    items.push(item);
+                }
             }
         }
     }
