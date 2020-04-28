@@ -7,8 +7,9 @@ pub fn auto_insert_sep(tokens: &mut Vec<Token>) {
     //  1) Replace Punc::Semi with Puct::Sep;
     //  2) Remove Punc::Newline if it is:
     //      a) After a comma,
-    //      b) before an infix or postfix operator,
-    //      c) after an infix or prefix operator;
+    //      b) before a dot,
+    //      c) before an infix or postfix operator,
+    //      d) after an infix or prefix operator;
     //  3) Replace remaining Punc::Newline tokens with Punc::Sep.
     //
     //  The i variable is required since, when we remove an item, we don't want to increment
@@ -31,6 +32,12 @@ pub fn auto_insert_sep(tokens: &mut Vec<Token>) {
                             tokens.remove(i);
                             continue;
                         }
+
+                        // newlines before a . also disappear
+                        TokenKind::Punc(Punc::Dot) => {
+                            tokens.remove(i);
+                            continue;
+                        },
 
                         // newlines before an operator which is allowed to create a newline
                         // disappear
