@@ -130,6 +130,7 @@ impl Oper {
         }
     }
 
+    /// returns true if newlines are allowed before this operator
     fn newline_prefix_allowed(self) -> bool {
         use Oper::*;
         match self {
@@ -138,13 +139,9 @@ impl Oper {
             _ => false,
         }
     }
+    /// returns true if newlines are allowed after this operator
     fn newline_postfix_allowed(self) -> bool {
-        use Oper::*;
-        match self {
-            // this is everything for now!
-            _ => true,
-            _ => false,
-        }
+        true
     }
 }
 
