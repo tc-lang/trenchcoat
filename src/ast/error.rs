@@ -43,9 +43,22 @@ pub enum Context {
     FnBody,
     LetName,
     LetEquals,
+    LetExpr,
+    PrintExpr,
+    AssignName,
+    AssignExpr,
     BinOperLeft,
     BinOperRight,
     PrefixOp,
     ParseStmt,
     ParseAll,
+}
+
+impl<'a> Error<'a> {
+    pub fn with_context(self, ctx: Context) -> Self {
+        Self {
+            context: ctx,
+            ..self
+        }
+    }
 }

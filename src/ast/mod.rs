@@ -384,35 +384,38 @@ impl<'a> Block<'a> {
 
 impl<'a> Ident<'a> {
     fn parse(token: Option<&'a Token<'a>>) -> ParseRet<'a, Ident> {
-        if let Some(token) = token {
-            match token.kind {
-                TokenKind::NameIdent(name) => ParseRet::Ok(Ident {
+        let token = match token {
+            Some(t) => t,
+            None => {
+                return ParseRet::single_err(Error {
+                    kind: ErrorKind::EOF,
+                    context: ErrorContext::UnknownName,
+                    source: None,
+                })
+            }
+        };
+
+        match token.kind {
+            TokenKind::NameIdent(name) => ParseRet::Ok(Ident {
+                name,
+                source: token,
+            }),
+            TokenKind::TypeIdent(name) => ParseRet::single_soft_err(
+                Ident {
                     name,
                     source: token,
-                }),
-                TokenKind::TypeIdent(name) => ParseRet::single_soft_err(
-                    Ident {
-                        name,
-                        source: token,
-                    },
-                    Error {
-                        kind: ErrorKind::TypeIdent,
-                        context: ErrorContext::UnknownName,
-                        source: Some(token),
-                    },
-                ),
-                _ => ParseRet::single_err(Error {
-                    kind: ErrorKind::ExpectingName,
+                },
+                Error {
+                    kind: ErrorKind::TypeIdent,
                     context: ErrorContext::UnknownName,
                     source: Some(token),
-                }),
-            }
-        } else {
-            ParseRet::single_err(Error {
-                kind: ErrorKind::EOF,
+                },
+            ),
+            _ => ParseRet::single_err(Error {
+                kind: ErrorKind::ExpectingName,
                 context: ErrorContext::UnknownName,
-                source: None,
-            })
+                source: Some(token),
+            }),
         }
     }
 }
@@ -476,61 +479,220 @@ impl<'a> Stmt<'a> {
         self.source.len()
     }
 
-    /*fn parse_let(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Item<'a>>> {
-        match tokens.get(0)?.kind {
-            TokenKind::Keyword(Keyword::Let) => {}
+    /// Extracts a statement as a prefix of the given tokens
+    fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
+        Stmt::parse_let(tokens)
+            .or_else(|| Stmt::parse_print(tokens))
+            .or_else(|| Stmt::parse_assign(tokens))
+            .or_else(|| Stmt::parse_eval(tokens))
+            .unwrap_or_else(|| {
+                ParseRet::single_err(Error {
+                    kind: ErrorKind::ExpectingStmt,
+                    context: ErrorContext::ParseStmt,
+                    source: tokens.first(),
+                })
+            })
+    }
+
+    fn parse_let(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Self>> {
+        use tokens::{
+            Keyword::Let,
+            Oper::Assign,
+            TokenKind::{Keyword, Oper},
+        };
+        use ErrorContext::{LetEquals, LetName};
+
+        // A let statement is made up of a sequence of tokens that looks something like:
+        //   "let" Ident "=" Expr ";"
+        // We'll go through and get each piece in turn
+
+        // 1. "let"
+        match tokens.first()?.kind {
+            Keyword(Let) => (),
             _ => return None,
+        }
+
+        // Because we saw the "let" keyword, we're fully expecting a let statement, so we'll produce
+        // errors instead of just failing
+
+        let mut errors = Vec::new();
+
+        // 2. Ident
+        let name = next!(Ident::parse(tokens.get(1)).with_context(LetName), errors);
+
+        if tokens.len() <= 2 {
+            errors.push(Error {
+                kind: ErrorKind::EOF,
+                context: LetEquals,
+                source: None,
+            });
+
+            return Some(ParseRet::Err(errors));
+        }
+
+        // 3. "="
+        match tokens[2].kind {
+            Oper(Assign) => (),
+            _ => {
+                errors.push(Error {
+                    kind: ErrorKind::ExpectingEquals,
+                    context: LetEquals,
+                    source: Some(&tokens[2]),
+                });
+
+                return Some(ParseRet::Err(errors));
+            }
+        }
+
+        // 4. Expr ";"
+        let expr = next!(
+            Stmt::parse_terminated_expr(&tokens[3..]).unwrap_or_else(|| {
+                ParseRet::single_err(Error {
+                    kind: ErrorKind::ExpectingExpr,
+                    context: ErrorContext::LetExpr,
+                    source: tokens.get(3),
+                })
+                .with_context(ErrorContext::LetExpr)
+            }),
+            errors
+        );
+
+        // 3 for the first 3 bits, plus 1 for the trailing semicolon
+        let consumed = 4 + expr.consumed();
+
+        Some(ParseRet::with_soft_errs(
+            Stmt {
+                kind: StmtKind::Let(name, expr),
+                source: &tokens[..consumed],
+            },
+            errors,
+        ))
+    }
+
+    fn parse_print(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Self>> {
+        use tokens::{Keyword::Print, TokenKind::Keyword};
+        use ErrorContext::PrintExpr;
+
+        // A print statement is made up of a sequence of tokens that looks something like:
+        //   "print" Expr ";"
+
+        // 1. "print"
+        match tokens.first()?.kind {
+            Keyword(Print) => (),
+            _ => return None,
+        }
+
+        // "print" is unambiguous, so not having a following expression is a hard error
+
+        // 2. Expr ";"
+
+        let mut errors = Vec::new();
+        let expr = next!(
+            Stmt::parse_terminated_expr(&tokens[1..]).unwrap_or_else(|| {
+                ParseRet::single_err(Error {
+                    kind: ErrorKind::ExpectingExpr,
+                    context: PrintExpr,
+                    source: tokens.get(1),
+                })
+                .with_context(PrintExpr)
+            }),
+            errors
+        );
+
+        // 1 for 'print', 1 for the trailing semicolon
+        let consumed = 2 + expr.consumed();
+
+        Some(ParseRet::with_soft_errs(
+            Stmt {
+                kind: StmtKind::Print(expr),
+                source: &tokens[..consumed],
+            },
+            errors,
+        ))
+    }
+
+    fn parse_assign(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Self>> {
+        use tokens::{Oper::Assign, TokenKind::Oper};
+        use ErrorContext::{AssignExpr, AssignName};
+
+        // An assignment statement is made up of a sequence of tokens that looks something like:
+        //   Ident "=" Expr ";"
+
+        // At the very minimum, we'll require `Ident "="` to determine that it's an assignment
+        if tokens.len() < 2 {
+            return None;
         }
 
         let mut errors = Vec::new();
 
-        let name = next!(Self::parse_let_name(tokens.get(1), errors), errors);
-
-        match tokens.get(2) {
-            None => {
-                return Some(ParseRet::single_err(Error {
-                    kind: ErrorKind::EOF,
-                    context: ErrorContext::LetEquals,
-                    source: None,
-                }))
+        // 1. Ident
+        let name = match Ident::parse(tokens.first()) {
+            ParseRet::Ok(n) => n,
+            ParseRet::SoftErr(n, es) => {
+                errors.extend(es.into_iter().map(|e| e.with_context(AssignName)));
+                n
             }
-            Some(token) => match token.kind {
-                TokenKind::Oper(Oper::Assign) => (),
-                _ => {
-                    return Some(ParseRet::single_err(Error {
-                        kind: ErrorKind::ExpectingEquals,
-                        context: ErrorContext::LetEquals,
-                        source: None,
-                    }))
-                }
-            },
-        }
-        todo!()
-    }*/
+            // If it's a hard error, we'll just cancel - this probably isn't an assignment
+            // statement
+            ParseRet::Err(_) => return None,
+        };
 
-    fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
-        Self::parse_expr_stmt(tokens).unwrap_or(ParseRet::single_err(Error {
-            kind: ErrorKind::ExpectingStmt,
-            context: ErrorContext::ParseStmt,
-            source: tokens.first(),
+        // 2. "="
+        match tokens[1].kind {
+            Oper(Assign) => (),
+            // Again, this probably isn't an assignment if there's no equals.
+            _ => return None,
+        }
+
+        // 3. Expr ";"
+        let expr = next!(
+            Stmt::parse_terminated_expr(&tokens[2..]).unwrap_or_else(|| {
+                ParseRet::single_err(Error {
+                    kind: ErrorKind::ExpectingExpr,
+                    context: AssignExpr,
+                    source: tokens.get(2),
+                })
+                .with_context(AssignExpr)
+            }),
+            errors
+        );
+
+        // 2 for the first couple bits, plus 1 for the trailing semicolon
+        let consumed = 3 + expr.consumed();
+
+        Some(ParseRet::with_soft_errs(
+            Stmt {
+                kind: StmtKind::Assign(name, expr),
+                source: &tokens[..consumed],
+            },
+            errors,
+        ))
+    }
+
+    fn parse_eval(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Self>> {
+        use StmtKind::Eval;
+
+        Some(Stmt::parse_terminated_expr(tokens)?.map(|expr| {
+            let consumed = expr.consumed() + 1;
+            Stmt {
+                kind: Eval(expr),
+                source: &tokens[..consumed],
+            }
         }))
     }
 
-    fn parse_expr_stmt(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Stmt<'a>>> {
-        let mut tokens = tokens;
-        let mut source = tokens;
-        // the expression ends early if there's a semi-colon.
-        for i in 0..tokens.len() {
-            if let TokenKind::Punc(Punc::Semi) = tokens[i].kind {
-                source = &tokens[..i + 1];
-                tokens = &tokens[..i];
-                break;
-            }
-        }
-        Some(Expr::parse(tokens)?.map(|expr| Stmt {
-            kind: StmtKind::Eval(expr),
-            source,
-        }))
+    /// Extracts a semicolon-terminated expression from a subset of the given tokens, returning the
+    /// expression. The number of consumed tokens will always be equal to the number consumed by
+    /// the expression, plus one.
+    fn parse_terminated_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
+        use tokens::{Punc::Semi, TokenKind::Punc};
+
+        let semi_idx = tokens
+            .iter()
+            .enumerate()
+            .find(|(_, t)| t.kind == Punc(Semi))
+            .map(|(i, _)| i)?;
+        Some(Expr::parse(&tokens[..semi_idx])?)
     }
 }
 
@@ -683,7 +845,6 @@ impl<'a> Expr<'a> {
                     Some(Err(errs)) => return Err(errs),
                     Some(SoftErr(exp, errs)) => {
                         $errors.extend(errs);
-                        //Expr{ kind: exp, source: $source }
                         exp
                     },
                     Some(Ok(exp)) if exp.consumed() == $source.len() => exp,
