@@ -96,7 +96,11 @@ pub struct Expr<'a> {
 #[derive(Debug)]
 pub struct Block<'a> {
     body: Vec<Stmt<'a>>,
-    /// The source for a `Block` will always be a token
+
+    /// Sometimes blocks will contain a trailing expression
+    tail: Option<Expr<'a>>,
+
+    /// The source for a `Block` will always be a single token - either curlies or parens
     source: &'a Token<'a>,
 }
 
@@ -338,7 +342,10 @@ impl<'a> Item<'a> {
             errors
         );
         let params = next!(parse_fn_params(tokens.get(2)), errors);
-        let body = next!(Block::parse_fn_body(tokens.get(3)), errors);
+        let body = next!(
+            Block::parse_curlies(tokens.get(3)).with_context(ErrorContext::FnBody),
+            errors
+        );
 
         Some(ParseRet::with_soft_errs(
             Item {
@@ -351,34 +358,84 @@ impl<'a> Item<'a> {
 }
 
 impl<'a> Block<'a> {
-    fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Vec<Stmt<'a>>> {
-        return Stmt::parse(tokens).map(|stmt| vec![stmt]);
-        //return Stmt::parse(tokens).map(|stmt| Block { body: vec![stmt], source: tokens[0] /*FIXME this is not the correct source*/, });
-        // return ParseRet::Ok(Block { body: vec![] });
-        todo!()
+    fn parse_body(tokens: &'a [Token<'a>]) -> ParseRet<'a, (Vec<Stmt<'a>>, Option<Expr<'a>>)> {
+        let mut idx = 0;
+
+        let mut errors = Vec::new();
+        let mut stmts = Vec::new();
+        let mut tail = None;
+
+        while idx < tokens.len() {
+            let stmt = match Stmt::parse(&tokens[idx..]) {
+                ParseRet::Ok(s) => s,
+                ParseRet::SoftErr(s, es) => {
+                    errors.extend_from_slice(&es);
+                    s
+                }
+                ParseRet::Err(es) => {
+                    // It could be that this is actually the end of the block, so we'll try to
+                    // parse an expression here. If that fails, we'll return the original erorr we
+                    // were given.
+                    //
+                    // The expression will only be vaid if it consumes all of the remaining tokens,
+                    // but that will be the case for anything that isn't a soft error, so we're
+                    // good.
+                    //
+                    // If the expression *is* valid, we'll return because it's the last thing - we
+                    // can do this by simply breaking out of the loop
+                    match Expr::parse(&tokens[idx..]) {
+                        // expression parsing failed, so we'll go with the original statement
+                        // parsing error and return
+                        None | Some(ParseRet::Err(_)) => {
+                            errors.extend_from_slice(&es);
+                            return ParseRet::Err(errors);
+                        }
+                        Some(ParseRet::SoftErr(ex, ex_errs)) => {
+                            tail = Some(ex);
+                            errors.extend_from_slice(&ex_errs);
+                        }
+                        Some(ParseRet::Ok(ex)) => tail = Some(ex),
+                    }
+
+                    break;
+                }
+            };
+
+            idx += stmt.consumed();
+            stmts.push(stmt);
+        }
+
+        ParseRet::with_soft_errs((stmts, tail), errors)
     }
 
-    fn parse_fn_body(token: Option<&'a Token<'a>>) -> ParseRet<'a, Self> {
-        if let Some(token) = token {
-            if let TokenKind::Curlys(tokens) = &token.kind {
-                Block::parse(&tokens).map(|stmts| Block {
-                    body: stmts,
-                    source: token,
-                })
-            } else {
-                ParseRet::single_err(Error {
-                    kind: ErrorKind::ExpectingCurlys,
-                    context: ErrorContext::FnBody,
-                    source: Some(token),
+    fn parse_curlies(token: Option<&'a Token<'a>>) -> ParseRet<'a, Block<'a>> {
+        use TokenKind::Curlys;
+
+        let (token, inner_tokens) = match token {
+            None => {
+                return ParseRet::single_err(Error {
+                    kind: ErrorKind::EOF,
+                    context: ErrorContext::NoContext,
+                    source: None,
                 })
             }
-        } else {
-            ParseRet::single_err(Error {
-                kind: ErrorKind::EOF,
-                context: ErrorContext::FnBody,
-                source: None,
-            })
-        }
+            Some(t) => match &t.kind {
+                Curlys(inner_tokens) => (t, inner_tokens),
+                _ => {
+                    return ParseRet::single_err(Error {
+                        kind: ErrorKind::ExpectingCurlys,
+                        context: ErrorContext::NoContext,
+                        source: Some(t),
+                    })
+                }
+            },
+        };
+
+        Block::parse_body(&inner_tokens).map(|(stmts, tail)| Block {
+            body: stmts,
+            tail,
+            source: token,
+        })
     }
 }
 

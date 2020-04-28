@@ -36,6 +36,7 @@ pub enum ErrorKind {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Context {
+    NoContext,
     UnknownName,
     TopLevel,
     FnName,
