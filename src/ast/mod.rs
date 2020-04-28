@@ -361,7 +361,10 @@ impl<'a> Block<'a> {
     fn parse_fn_body(token: Option<&'a Token<'a>>) -> ParseRet<'a, Self> {
         if let Some(token) = token {
             if let TokenKind::Curlys(tokens) = &token.kind {
-                Block::parse(&tokens).map(|stmts| Block{ body: stmts, source: token })
+                Block::parse(&tokens).map(|stmts| Block {
+                    body: stmts,
+                    source: token,
+                })
             } else {
                 ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingCurlys,
@@ -506,15 +509,13 @@ impl<'a> Stmt<'a> {
     }*/
 
     fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
-        Self::parse_expr_stmt(tokens).unwrap_or(
-            ParseRet::single_err(Error {
-                kind: ErrorKind::ExpectingStmt,
-                context: ErrorContext::ParseStmt,
-                source: tokens.first(),
-            })
-        )
+        Self::parse_expr_stmt(tokens).unwrap_or(ParseRet::single_err(Error {
+            kind: ErrorKind::ExpectingStmt,
+            context: ErrorContext::ParseStmt,
+            source: tokens.first(),
+        }))
     }
-    
+
     fn parse_expr_stmt(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Stmt<'a>>> {
         let mut tokens = tokens;
         let mut source = tokens;
@@ -526,7 +527,7 @@ impl<'a> Stmt<'a> {
                 break;
             }
         }
-        Some(Expr::parse(tokens)?.map(|expr| Stmt{
+        Some(Expr::parse(tokens)?.map(|expr| Stmt {
             kind: StmtKind::Eval(expr),
             source,
         }))
@@ -553,12 +554,11 @@ impl<'a> Expr<'a> {
     }
 
     fn parse_callable(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
-        Self::parse_name_expr(tokens)
-            .or_else(|| Self::parse_fn_call(tokens))
+        Self::parse_name_expr(tokens).or_else(|| Self::parse_fn_call(tokens))
     }
 
     fn parse_name_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
-        Some(ParseRet::Ok(Expr{
+        Some(ParseRet::Ok(Expr {
             kind: Self::parse_name(tokens)?,
             source: tokens,
         }))
@@ -578,7 +578,7 @@ impl<'a> Expr<'a> {
     }
 
     fn parse_num_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
-        Some(ParseRet::Ok(Expr{
+        Some(ParseRet::Ok(Expr {
             kind: Self::parse_num(tokens)?,
             source: tokens,
         }))
@@ -651,7 +651,7 @@ impl<'a> Expr<'a> {
         };
 
         Some(ParseRet::with_soft_errs(
-            Expr{
+            Expr {
                 kind: ExprKind::FnCall(Box::new(callee), args),
                 source: tokens,
             },
@@ -712,10 +712,7 @@ impl<'a> Expr<'a> {
             ErrorContext::BinOperRight
         );
 
-        ParseRet::with_soft_errs(
-            ExprKind::BinOp(Box::new(left), op, Box::new(right)),
-            errors,
-        )
+        ParseRet::with_soft_errs(ExprKind::BinOp(Box::new(left), op, Box::new(right)), errors)
     }
 
     fn parse_bin_op_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
