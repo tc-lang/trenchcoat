@@ -35,6 +35,10 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
     let mut idx = 0;
 
     while idx < tokens.len() {
+        if tokens[idx].kind == TokenKind::Punc(Punc::Sep) {
+            idx += 1;
+            continue;
+        }
         match Item::parse_top_level(&tokens[idx..]) {
             ParseRet::Err(err) => return Err(err),
             ParseRet::SoftErr(item, err) => {
@@ -742,14 +746,14 @@ impl<'a> Stmt<'a> {
     /// expression. The number of consumed tokens will always be equal to the number consumed by
     /// the expression, plus one.
     fn parse_terminated_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
-        use tokens::{Punc::Semi, TokenKind::Punc};
+        use tokens::{Punc::Sep, TokenKind::Punc};
 
-        let semi_idx = tokens
+        let sep_idx = tokens
             .iter()
             .enumerate()
-            .find(|(_, t)| t.kind == Punc(Semi))
+            .find(|(_, t)| t.kind == Punc(Sep))
             .map(|(i, _)| i)?;
-        Some(Expr::parse(&tokens[..semi_idx])?)
+        Some(Expr::parse(&tokens[..sep_idx])?)
     }
 }
 
