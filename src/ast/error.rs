@@ -31,6 +31,7 @@ pub enum ErrorKind {
     ExpectingEquals,
     ExpectingExpr,
     ExpectingStmt,
+    UnexpectedToken,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -44,5 +45,6 @@ pub enum Context {
     LetEquals,
     BinOperLeft,
     BinOperRight,
+    PrefixOp,
     ParseStmt,
 }
