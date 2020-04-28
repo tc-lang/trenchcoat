@@ -547,6 +547,8 @@ impl<'a> Expr<'a> {
                 source: tokens,
             }));
         }
+        //TODO: We may want to merge the callable parts here since names are going to be much more
+        // common than binary operators and are much cheaper to parse first.
         Self::parse_num_expr(tokens)
             .or_else(|| Self::parse_prefix_op_expr(tokens))
             .or_else(|| Self::parse_bin_op_expr(tokens))
