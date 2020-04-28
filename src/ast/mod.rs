@@ -49,7 +49,7 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
         }
     }
 
-    if errors.len() > 0 {
+    if !errors.is_empty() {
         Err(errors)
     } else {
         Ok(items)
@@ -541,7 +541,7 @@ impl<'a> Expr<'a> {
     }
 
     fn parse(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
-        if tokens.len() == 0 {
+        if tokens.is_empty() {
             return Some(ParseRet::Ok(Expr {
                 kind: ExprKind::Empty,
                 source: tokens,

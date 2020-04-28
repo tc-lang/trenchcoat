@@ -227,7 +227,7 @@ impl TokenKind<'_> {
                 }
             }
         }
-        return Some((&s[..i], i));
+        Some((&s[..i], i));
     }
 
     /// parses a `TokenKind::Oper`
