@@ -1,3 +1,4 @@
+pub mod auto_sep;
 mod position;
 mod reader;
 
@@ -128,19 +129,20 @@ impl Oper {
             _ => None,
         }
     }
-    
+
     fn newline_prefix_allowed(self) -> bool {
-        use Self::*;
+        use Oper::*;
         match self {
-            Add | Sub | Star | Div | Assign | Equals | Lt | LtOrEqual | Gt | GtOrEqual | RightArrow | Or | And => true,
+            Add | Sub | Star | Div | Assign | Equals | Lt | LtOrEqual | Gt | GtOrEqual
+            | RightArrow | Or | And => true,
             _ => false,
         }
     }
     fn newline_postfix_allowed(self) -> bool {
-        use Self::*;
+        use Oper::*;
         match self {
             // this is everything for now!
-            Add | Sub | Star | Div | Ref | Assign | Equals | Lt | LtOrEqual | Gt | GtOrEqual | Not | RightArrow | Or | And => true,
+            _ => true,
             _ => false,
         }
     }
@@ -203,7 +205,7 @@ fn is_special_type(s: &str) -> bool {
 
 fn is_punc(ch: char) -> bool {
     match ch {
-        '.' | ',' | ':' | ';' => true,
+        '.' | ',' | ':' | ';' | '\n' => true,
         _ => false,
     }
 }
