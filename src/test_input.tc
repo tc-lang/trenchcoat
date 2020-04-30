@@ -1,0 +1,13 @@
+fn hi(x) {
+	let x = 1 + f(3);
+	print x;
+	x
+}
+
+fn foo(x, y) {
+	x * 2 + y
+}
+
+fn main() {
+	print foo(1, 2);
+}

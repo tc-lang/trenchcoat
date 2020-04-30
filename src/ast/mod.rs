@@ -81,28 +81,28 @@ enum ParseRet<'a, T> {
 
 #[derive(Debug)]
 pub struct Item<'a> {
-    kind: ItemKind<'a>,
+    pub kind: ItemKind<'a>,
     source: &'a [Token<'a>],
 }
 
 #[derive(Debug)]
 pub struct Stmt<'a> {
-    kind: StmtKind<'a>,
+    pub kind: StmtKind<'a>,
     source: &'a [Token<'a>],
 }
 
 #[derive(Debug)]
 pub struct Expr<'a> {
-    kind: ExprKind<'a>,
+    pub kind: ExprKind<'a>,
     source: &'a [Token<'a>],
 }
 
 #[derive(Debug)]
 pub struct Block<'a> {
-    body: Vec<Stmt<'a>>,
+    pub body: Vec<Stmt<'a>>,
 
     /// Sometimes blocks will contain a trailing expression
-    tail: Option<Expr<'a>>,
+    pub tail: Option<Expr<'a>>,
 
     /// The source for a `Block` will always be a single token - either curlies or parens
     source: &'a Token<'a>,
@@ -123,7 +123,7 @@ pub enum ItemKind<'a> {
 
 #[derive(Debug)]
 pub struct Ident<'a> {
-    name: &'a str,
+    pub name: &'a str,
     source: &'a Token<'a>,
 }
 
