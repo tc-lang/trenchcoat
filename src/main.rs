@@ -2,9 +2,11 @@
 
 mod ast;
 mod tokens;
+mod verify;
 
 use tokens::auto_sep::auto_insert_sep;
 use tokens::tokenize;
+use verify::verify;
 
 fn main() {
     // Currently just a simple test of the tokenizer
@@ -24,6 +26,16 @@ fn main() {
         return;
     }
 
+    let tree = match ast::try_parse(&tokens) {
+        Ok(tree) => tree,
+        Err(errs) => {
+            println!("AST Parsing Errors: {:?}", errs);
+            return;
+        }
+    };
+
     println!("{:?}", tokens);
-    println!("{:?}", ast::try_parse(&tokens));
+    println!("{:?}", tree);
+
+    println!("Verify: {:?}", verify(&tree));
 }
