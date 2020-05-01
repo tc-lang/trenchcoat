@@ -134,7 +134,9 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
         let empty;
         let mut scopes: Vec<Scope>;
 
+        // Create a scope containing all the function arguments.
         let fn_scope = if params.is_empty() {
+            // If there aren't any, then this is just an empty scope.
             empty = Scope::empty(self);
             &empty
         } else {
@@ -143,6 +145,7 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
             //  Scope{ param0 } <- Scope{ param1 } <- Scope{ param2 } <- ...
 
             // First, we'll create each of the scopes without parents.
+            // It's a shame we can't do this on the stack :(
             scopes = params
                 .iter()
                 .map(|param| Scope {
