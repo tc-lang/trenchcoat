@@ -1,6 +1,4 @@
 pub mod auto_sep;
-mod position;
-mod reader;
 
 pub fn tokenize(s: &str) -> Vec<Token> {
     Token::parse(|_| false, s).0
