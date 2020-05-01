@@ -110,6 +110,7 @@ pub struct Expr<'a> {
 pub struct Block<'a> {
     pub body: Vec<Stmt<'a>>,
 
+    /// Sometimes blocks will contain a trailing expression
     /// This is boxed because an expression can contain a block so otherwise there'd be a cycle.
     pub tail: Box<Expr<'a>>,
 
