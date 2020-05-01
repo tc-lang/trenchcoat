@@ -29,23 +29,25 @@ fn main() {
     println!("{:?}", tokens);
     // println!("{:?}", ast::try_parse(&tokens));
 
-    match ast::try_parse(&tokens) {
-        Err(es) => println!("Parsing errors {:?}", es),
-        Ok(items) => {
-            let global = exec::generate_global_scope(items);
-            if !global.contains("main") {
-                eprintln!("missing main")
-            } else if let Some(n) = global.num_args("main") {
-                if n != 0 {
-                    eprintln!(
-                        "wrong number of args for fn 'main'; expected 0, found {}",
-                        n
-                    );
-                } else {
-                    println!("main: {:?}", global.exec("main", Vec::new()));
-                }
-            } else {
-            }
+    let items = match ast::try_parse(&tokens) {
+        Err(es) => {
+            println!("Parsing errors {:?}", es);
+            return;
         }
+        Ok(items) => items,
+    };
+
+    let global = exec::generate_global_scope(items);
+    if let Some(n) = global.num_args("main") {
+        if n != 0 {
+            eprintln!(
+                "wrong number of args for fn 'main'; expected 0, found {}",
+                n
+            );
+        } else {
+            println!("main: {:?}", global.exec("main", Vec::new()));
+        }
+    } else {
+        eprintln!("missing main")
     }
 }

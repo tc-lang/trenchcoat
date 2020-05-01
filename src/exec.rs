@@ -14,7 +14,6 @@ use crate::ast::{
 };
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::ops::Deref;
 use std::rc::Rc;
 
 pub struct GlobalScope<'a> {
