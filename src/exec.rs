@@ -201,10 +201,7 @@ fn exec_block(block: &Block, containing_scope: Rc<RefCell<LocalScope>>) -> Optio
     // value in a block... this should be considered (probably fine) and the rest of the interpeter
     // should be checked that it aligns with that.
 
-    block
-        .tail
-        .as_ref()
-        .and_then(|expr| exec_expr(expr, vars.clone()))
+    exec_expr(&block.tail, vars.clone())
 }
 
 fn exec_stmt<'a>(stmt: &Stmt, scope: Rc<RefCell<LocalScope>>) {
@@ -258,7 +255,7 @@ fn exec_expr(expr: &Expr, scope: Rc<RefCell<LocalScope>>) -> Option<Value> {
         }
         Named(Ident { name, .. }) => Some(scope.borrow().get_var(name)),
         &Num(v) => Some(v),
-        Bracket(stmts, expr) => exec_bracket(stmts, expr, scope),
+        Bracket(block) => exec_block(block, scope),
     }
 }
 
@@ -308,24 +305,6 @@ fn perform_prefix_op(op: PrefixOp, rhs: Value) -> Value {
         // @QUICK-FIX: boolean operators are currently unimplemented
         Not => panic!("boolean operators are currently unimplemented"),
     }
-}
-
-fn exec_bracket(
-    stmts: &[Stmt],
-    expr: &Expr,
-    containing_scope: Rc<RefCell<LocalScope>>,
-) -> Option<Value> {
-    // @QUICK-FIX: copied from `exec_block`
-    let vars = Rc::new(RefCell::new(LocalScope {
-        parent: ParentScope::Local(containing_scope),
-        variables: HashMap::new(),
-    }));
-
-    for s in stmts.iter() {
-        exec_stmt(s, vars.clone());
-    }
-
-    exec_expr(expr, vars.clone())
 }
 
 /// An isolated function for printing values so that we can easily change what it does

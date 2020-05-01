@@ -37,7 +37,7 @@ pub fn auto_insert_sep(tokens: &mut Vec<Token>) {
                         TokenKind::Punc(Punc::Dot) => {
                             tokens.remove(i);
                             continue;
-                        },
+                        }
 
                         // newlines before an operator which is allowed to create a newline
                         // disappear

@@ -3,9 +3,11 @@
 mod ast;
 mod exec;
 mod tokens;
+mod verify;
 
 use tokens::auto_sep::auto_insert_sep;
 use tokens::tokenize;
+use verify::verify;
 
 fn main() {
     // Currently just a simple test of the tokenizer
@@ -26,18 +28,20 @@ fn main() {
         return;
     }
 
-    println!("{:?}", tokens);
-    // println!("{:?}", ast::try_parse(&tokens));
+    // println!("{:?}", tokens);
 
-    let items = match ast::try_parse(&tokens) {
-        Err(es) => {
-            println!("Parsing errors {:?}", es);
+    let parse_tree = match ast::try_parse(&tokens) {
+        Ok(tree) => tree,
+        Err(errs) => {
+            println!("AST Parsing Errors: {:?}", errs);
             return;
         }
-        Ok(items) => items,
     };
 
-    let global = exec::generate_global_scope(items);
+    println!("{:?}", parse_tree);
+
+    println!("Verify: {:?}", verify(&parse_tree));
+    let global = exec::generate_global_scope(parse_tree);
     if let Some(n) = global.num_args("main") {
         if n != 0 {
             eprintln!(

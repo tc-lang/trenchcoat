@@ -64,6 +64,15 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
 // Type definitions                                                           //
 ////////////////////////////////////////////////////////////////////////////////
 
+#[derive(Debug, Clone)]
+pub enum Node<'a> {
+    Ident(&'a Ident<'a>),
+    Item(&'a Item<'a>),
+    Stmt(&'a Stmt<'a>),
+    Expr(&'a Expr<'a>),
+    Args(&'a FnArgs<'a>),
+}
+
 /// Most parsing functions return a ParseRet.
 #[derive(Debug)]
 enum ParseRet<'a, T> {
@@ -82,30 +91,30 @@ enum ParseRet<'a, T> {
 #[derive(Debug)]
 pub struct Item<'a> {
     pub kind: ItemKind<'a>,
-    source: &'a [Token<'a>],
+    pub source: &'a [Token<'a>],
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Stmt<'a> {
     pub kind: StmtKind<'a>,
-    source: &'a [Token<'a>],
+    pub source: &'a [Token<'a>],
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Expr<'a> {
     pub kind: ExprKind<'a>,
-    source: &'a [Token<'a>],
+    pub source: &'a [Token<'a>],
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Block<'a> {
     pub body: Vec<Stmt<'a>>,
 
-    /// Sometimes blocks will contain a trailing expression
-    pub tail: Option<Expr<'a>>,
+    /// This is boxed because an expression can contain a block so otherwise there'd be a cycle.
+    pub tail: Box<Expr<'a>>,
 
     /// The source for a `Block` will always be a single token - either curlies or parens
-    source: &'a Token<'a>,
+    pub source: &'a Token<'a>,
 }
 
 /// A top-level item in the source
@@ -121,17 +130,17 @@ pub enum ItemKind<'a> {
     },
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Ident<'a> {
     pub name: &'a str,
-    source: &'a Token<'a>,
+    pub source: &'a Token<'a>,
 }
 
 pub type FnArgs<'a> = Vec<Expr<'a>>;
 pub type FnParams<'a> = Vec<Ident<'a>>;
 
 /// A semicolon-terminated statement
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum StmtKind<'a> {
     /// A `let` statement binding a value given by the `Expr` to a variable name given by the
     /// identifier. For example: `let x = g(y);`
@@ -149,7 +158,7 @@ pub enum StmtKind<'a> {
     Eval(Expr<'a>),
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum ExprKind<'a> {
     Empty,
 
@@ -173,7 +182,7 @@ pub enum ExprKind<'a> {
 
     /// A bracketed expression, using either curly-braces or parentheses. For example: `(x + y)` or
     /// `{ foo(x); y }`
-    Bracket(Vec<Stmt<'a>>, Box<Expr<'a>>),
+    Bracket(Block<'a>),
 }
 
 /// A binary operator TODO: Maybe remove?
@@ -319,6 +328,11 @@ impl<'a> Item<'a> {
         self.source.len()
     }
 
+    /// Returns a `Node` containing `self`.
+    pub fn node(&'a self) -> Node<'a> {
+        Node::Item(self)
+    }
+
     /// Attempts to parse the set of tokens into an item, returning the number of tokens consumed
     /// if successful.
     fn parse_top_level(tokens: &'a [Token<'a>]) -> ParseRet<'a, Item<'a>> {
@@ -362,12 +376,16 @@ impl<'a> Item<'a> {
 }
 
 impl<'a> Block<'a> {
-    fn parse_body(tokens: &'a [Token<'a>]) -> ParseRet<'a, (Vec<Stmt<'a>>, Option<Expr<'a>>)> {
+    fn parse_body(tokens: &'a [Token<'a>]) -> ParseRet<'a, (Vec<Stmt<'a>>, Expr<'a>)> {
         let mut idx = 0;
 
         let mut errors = Vec::new();
         let mut stmts = Vec::new();
-        let mut tail = None;
+        let mut tail = Expr {
+            kind: ExprKind::Empty,
+            source: tokens, // FIXME - this probably doesn't matter since Empty will never error.
+                            //       - if this is refactored, we can make it more sensible.
+        };
 
         while idx < tokens.len() {
             let stmt = match Stmt::parse(&tokens[idx..]) {
@@ -395,10 +413,10 @@ impl<'a> Block<'a> {
                             return ParseRet::Err(errors);
                         }
                         Some(ParseRet::SoftErr(ex, ex_errs)) => {
-                            tail = Some(ex);
+                            tail = ex;
                             errors.extend_from_slice(&ex_errs);
                         }
-                        Some(ParseRet::Ok(ex)) => tail = Some(ex),
+                        Some(ParseRet::Ok(ex)) => tail = ex,
                     }
 
                     break;
@@ -437,13 +455,18 @@ impl<'a> Block<'a> {
 
         Block::parse_body(&inner_tokens).map(|(stmts, tail)| Block {
             body: stmts,
-            tail,
+            tail: Box::new(tail),
             source: token,
         })
     }
 }
 
 impl<'a> Ident<'a> {
+    /// Returns a `Node` containing `self`.
+    pub fn node(&'a self) -> Node<'a> {
+        Node::Ident(self)
+    }
+
     fn parse(token: Option<&'a Token<'a>>) -> ParseRet<'a, Ident> {
         let token = match token {
             Some(t) => t,
@@ -535,6 +558,11 @@ fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a
 }
 
 impl<'a> Stmt<'a> {
+    /// Returns a `Node` containing `self`.
+    pub fn node(&'a self) -> Node<'a> {
+        Node::Stmt(self)
+    }
+
     /// Returns the number of tokens consumed to produce the statment
     fn consumed(&self) -> usize {
         self.source.len()
@@ -758,6 +786,11 @@ impl<'a> Stmt<'a> {
 }
 
 impl<'a> Expr<'a> {
+    /// Returns a `Node` containing `self`.
+    pub fn node(&'a self) -> Node<'a> {
+        Node::Expr(self)
+    }
+
     /// Returns the number of tokens consumed to produce the expression
     fn consumed(&self) -> usize {
         self.source.len()

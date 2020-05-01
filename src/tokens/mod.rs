@@ -1,6 +1,4 @@
 pub mod auto_sep;
-mod position;
-mod reader;
 
 pub fn tokenize(s: &str) -> Vec<Token> {
     Token::parse(|_| false, s).0
@@ -60,6 +58,7 @@ pub enum TokenKind<'a> {
     Parens(Vec<Token<'a>>),
     Curlys(Vec<Token<'a>>),
     Squares(Vec<Token<'a>>),
+    ProofLine(&'a str),
     InvalidChar(char),
 }
 
@@ -306,6 +305,11 @@ impl TokenKind<'_> {
         Some((TokenKind::TypeIdent(ident), i))
     }
 
+    fn proof(s: &str) -> Option<(TokenKind, usize)> {
+        let (proof_line, i) = Self::consume(|c| c == '#', |_| true, |c| c == '\n', s)?;
+        Some((TokenKind::ProofLine(proof_line), i))
+    }
+
     /// parses a `Token::Bracketed` or a `Token::Curlied`
     fn block(s: &str) -> Option<(TokenKind, usize)> {
         let (c, i) = first_char_from(s, 0)?;
@@ -365,6 +369,7 @@ impl TokenKind<'_> {
             .or_else(|| Self::oper(s))
             .or_else(|| Self::punc(s))
             .or_else(|| Self::block(s))
+            .or_else(|| Self::proof(s))
             .or_else(|| {
                 first_char_from(s, 0).map(|(c, start_idx)| (TokenKind::InvalidChar(c), start_idx))
             });
