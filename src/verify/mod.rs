@@ -151,11 +151,17 @@ impl<'a, 'b: 'a> Scope<'a> {
         let empty;
         let mut scopes;
 
+        // Create a scope containing all the function arguments.
         let fn_scope = if params.is_empty() {
+            // If there aren't any, then this is just an empty scope.
             empty = Self::empty(top_level);
             &empty
         } else {
             // We'll now create a scope for each parameter.
+            // Using the notation `parent <- child`, this will create the structure:
+            //  Scope{ param0 } <- Scope{ param1 } <- Scope{ param2 } <- ...
+
+            // First, we'll create each of the scopes without parents.
             // It's a shame we can't do this on the stack :(
             scopes = Vec::with_capacity(params.len());
             for param in params {
@@ -170,6 +176,10 @@ impl<'a, 'b: 'a> Scope<'a> {
                     top_level,
                 });
             }
+
+            // Then, we'll link each scope to it's parent. So the scope for param n gets a parent
+            // of the scope for param n-1.
+
             // This is down here rather than in the main loop to isolate the unsafe.
             // Using unsafe along with push seemed risky because although we know, when writing
             // this, that the vec won't need to exapand and reallocate, it seems risky since
