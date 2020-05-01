@@ -306,6 +306,16 @@ impl TokenKind<'_> {
         )?;
         Some((TokenKind::TypeIdent(ident), i))
     }
+    
+    fn proof(s: &str) -> Option<(TokenKind, usize)> {
+        let (proof_line, i) = Self::consume(
+            |c| c == '#',
+            |_| true,
+            |c| c == '\n',
+            s,
+        )?;
+        Some((TokenKind::ProofLine(proof_line), i))
+    }
 
     fn proof(s: &str) -> Option<(TokenKind, usize)> {
         let (proof_line, i) = Self::consume(|c| c == '#', |_| true, |c| c == '\n', s)?;
