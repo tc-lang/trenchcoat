@@ -34,7 +34,7 @@ struct Func {
 
 /// Currently variables are all isize so no information is required!
 #[derive(Debug, Clone)]
-struct Variable {}
+struct Variable;
 
 /// The top level scope consists of named items, currently just functions. Things will be
 /// transitioned out of here as they can be placed in local scopes until everything is under
@@ -51,7 +51,7 @@ struct TopLevelItem<'a> {
     source: &'a ast::Item<'a>,
 }
 
-/// Represents a lexical scope. These usually contain ScopeItems which are named variabled.
+/// Represents a lexical scope. These usually contain ScopeItems which are named variables.
 /// They may also have an optional parent which getting names can bubble up to.
 /// All `Scopes` are within a `TopLevelScope` context to resolve global names such as functions.
 #[derive(Debug, Clone)]
@@ -79,7 +79,11 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
 
         for item in items {
             match &item.kind {
-                ast::ItemKind::FnDecl { name, params, body: _ } => {
+                ast::ItemKind::FnDecl {
+                    name,
+                    params,
+                    body: _,
+                } => {
                     if let Some(conflict) = out.map.insert(
                         name.name,
                         TopLevelItem {
@@ -104,7 +108,11 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
 
     fn check_item(&'a self, item: &'b ast::ItemKind<'b>) -> Vec<Error<'b>> {
         match item {
-            ast::ItemKind::FnDecl { name: _, params, body } => Scope::check_fn(self, params, body),
+            ast::ItemKind::FnDecl {
+                name: _,
+                params,
+                body,
+            } => self.check_fn(params, body),
         }
     }
 
@@ -114,6 +122,57 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
             errors.extend(self.check_item(&item.kind));
         }
         errors
+    }
+
+    /// Given a TopLevelScope, check_fn checks the body of the function and returns any errors.
+    fn check_fn(
+        &'a self,
+        params: &'b ast::FnParams<'b>,
+        block: &'b ast::Block<'b>,
+    ) -> Vec<Error<'b>> {
+        // Storage for later
+        let empty;
+        let mut scopes: Vec<Scope>;
+
+        let fn_scope = if params.is_empty() {
+            empty = Scope::empty(self);
+            &empty
+        } else {
+            // We'll now create a scope for each parameter.
+            // Using the notation `parent <- child`, this will create the structure:
+            //  Scope{ param0 } <- Scope{ param1 } <- Scope{ param2 } <- ...
+
+            // First, we'll create each of the scopes without parents.
+            scopes = params
+                .iter()
+                .map(|param| Scope {
+                    item: Some(ScopeItem {
+                        name: param.name,
+                        variable: Variable {},
+                        source: Some(param.node()),
+                    }),
+                    parent: None,
+                    top_level: self,
+                })
+                .collect();
+
+            // Then, we'll link each scope to it's parent. So the scope for param n gets a parent
+            // of the scope for param n-1.
+
+            // This is down here rather than in the main loop to isolate the unsafe.
+            // Using unsafe along with push seemed risky because although we know, when writing
+            // this, that the vec won't need to exapand and reallocate, it seems risky since
+            // someone could easily make a change that without thinking about this.
+            for i in 1..scopes.len() {
+                let parent = scopes.get(i - 1).map(|x| unsafe { &*(x as *const Scope) });
+                scopes[i].parent = parent;
+            }
+            ///// !!!!!!!!!!!!!!! DO NOT CHANGE `scopes` AFTER THIS UNSAFE !!!!!!!!!!!!!!! /////
+
+            scopes.last().unwrap()
+        };
+
+        fn_scope.check_block(block, 0)
     }
 }
 
@@ -141,52 +200,6 @@ impl<'a, 'b: 'a> Scope<'a> {
         Self::new(item, self)
     }
 
-    /// Given a TopLevelScope, check_fn checks the body of the function and returns any errors.
-    fn check_fn(
-        top_level: &'a TopLevelScope<'a>,
-        params: &'b ast::FnParams<'b>,
-        block: &'b ast::Block<'b>,
-    ) -> Vec<Error<'b>> {
-        // Storage for later
-        let empty;
-        let mut scopes;
-
-        let fn_scope = if params.is_empty() {
-            empty = Self::empty(top_level);
-            &empty
-        } else {
-            // We'll now create a scope for each parameter.
-            // It's a shame we can't do this on the stack :(
-            scopes = Vec::with_capacity(params.len());
-            for param in params {
-                scopes.push(Scope {
-                    item: Some(ScopeItem {
-                        name: param.name,
-                        variable: Variable {},
-                        source: Some(param.node()),
-                    }),
-                    // parent will be filled in later
-                    parent: None,
-                    top_level,
-                });
-            }
-            // This is down here rather than in the main loop to isolate the unsafe.
-            // Using unsafe along with push seemed risky because although we know, when writing
-            // this, that the vec won't need to exapand and reallocate, it seems risky since
-            // someone could easily make a change that without thinking about this.
-            for i in 1..scopes.len() {
-                let parent = scopes.get(i-1)
-                    .map(|x| unsafe { &*(x as *const Scope) });
-                scopes[i].parent = parent;
-            }
-            ///// !!!!!!!!!!!!!!! DO NOT CHANGE `scopes` AFTER THIS UNSAFE !!!!!!!!!!!!!!! /////
-
-            scopes.last().unwrap()
-        };
-
-        fn_scope.check_block(block, 0)
-    }
-
     /// Finds a scope item with the given name. This bubbles up to parent scopes.
     fn get(&self, name: &str) -> Option<&ScopeItem<'a>> {
         if let Some(item) = &self.item {
@@ -201,11 +214,11 @@ impl<'a, 'b: 'a> Scope<'a> {
     fn check_expr(&'a self, expr: &'b ast::Expr<'b>) -> Vec<Error<'b>> {
         match &expr.kind {
             ast::ExprKind::BinOp(left, _, right) => {
-                let mut errors = self.check_expr(&*left);
-                errors.extend(self.check_expr(&*right));
+                let mut errors = self.check_expr(left);
+                errors.extend(self.check_expr(right));
                 errors
             }
-            ast::ExprKind::PrefixOp(_, inner_expr) => self.check_expr(&*inner_expr),
+            ast::ExprKind::PrefixOp(_, inner_expr) => self.check_expr(inner_expr),
             ast::ExprKind::Num(_) => Vec::new(), // Woo! No errors here!
             // (Overflows will be handled when the int is
             //  parsed? If the interpreter is going to parse
@@ -260,9 +273,13 @@ impl<'a, 'b: 'a> Scope<'a> {
         }
     }
 
-    fn check_assign(&'a self, ident: &'b ast::Ident<'b>, expr: &'b ast::Expr<'b>) -> Vec<Error<'b>> {
+    fn check_assign(
+        &'a self,
+        ident: &'b ast::Ident<'b>,
+        expr: &'b ast::Expr<'b>,
+    ) -> Vec<Error<'b>> {
         let mut errors = Vec::new();
-        if let None = self.get(ident.name) {
+        if self.get(ident.name).is_none() {
             errors.push(Error {
                 kind: error::Kind::VariableNotFound,
                 context: error::Context::Assign,
@@ -302,7 +319,7 @@ impl<'a, 'b: 'a> Scope<'a> {
             }
         }
 
-        errors.extend(self.check_expr(&*block.tail));
+        errors.extend(self.check_expr(&block.tail));
 
         errors
     }
