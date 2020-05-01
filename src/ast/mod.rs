@@ -112,7 +112,6 @@ pub struct Block<'a> {
 
     /// Sometimes blocks will contain a trailing expression
     /// This is boxed because an expression can contain a block so otherwise there'd be a cycle.
-    /// TODO: think about this more
     pub tail: Box<Expr<'a>>,
 
     /// The source for a `Block` will always be a single token - either curlies or parens
@@ -184,7 +183,6 @@ pub enum ExprKind<'a> {
 
     /// A bracketed expression, using either curly-braces or parentheses. For example: `(x + y)` or
     /// `{ foo(x); y }`
-    //Bracket(Vec<Stmt<'a>>, Box<Expr<'a>>),
     Bracket(Block<'a>),
 }
 
