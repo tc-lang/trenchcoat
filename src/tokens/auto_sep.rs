@@ -50,8 +50,12 @@ pub fn auto_insert_sep(tokens: &mut Vec<Token>) {
 
                         _ => (),
                     }
+                } else {
+                    // Remove it if it's the last token.
+                    tokens.remove(i);
+                    continue;
                 }
-                if let Some(prev_token) = tokens.get(i - 1) {
+                if let Some(prev_token) = i.checked_sub(1).and_then(|prev_i| tokens.get(prev_i)) {
                     match prev_token.kind {
                         // newlines after commas disapear
                         TokenKind::Punc(Punc::Comma) => {
@@ -69,6 +73,10 @@ pub fn auto_insert_sep(tokens: &mut Vec<Token>) {
 
                         _ => (),
                     }
+                } else {
+                    // Remove it if it's the last token.
+                    tokens.remove(i);
+                    continue;
                 }
                 // remaining newlines turn in to seps
                 tokens[i].kind = TokenKind::Punc(Punc::Sep);
