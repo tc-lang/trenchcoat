@@ -159,23 +159,28 @@ impl<'a, 'b: 'a> Scope<'a> {
             // It's a shame we can't do this on the stack :(
             scopes = Vec::with_capacity(params.len());
             for param in params {
-                // So here's the problem. We need to construct an unknown number of scopes which
-                // inherit from eachother, but we don't want to scope type to require it's parent
-                // to be boxed. That would solve the problem but then everywhere else requires all
-                // the scopes to be boxed!
-                // We could also have a vec in the scope for items but that's more stuff on the
-                // heap...
-                let parent = scopes.last();
                 scopes.push(Scope {
                     item: Some(ScopeItem {
                         name: param.name,
                         variable: Variable {},
                         source: Some(param.node()),
                     }),
-                    parent, // the parent should be the scope of the previous param
+                    // parent will be filled in later
+                    parent: None,
                     top_level,
                 });
             }
+            // This is down here rather than in the main loop to isolate the unsafe.
+            // Using unsafe along with push seemed risky because although we know, when writing
+            // this, that the vec won't need to exapand and reallocate, it seems risky since
+            // someone could easily make a change that without thinking about this.
+            for i in 1..scopes.len() {
+                let parent = scopes.get(i-1)
+                    .map(|x| unsafe { &*(x as *const Scope) });
+                scopes[i].parent = parent;
+            }
+            ///// !!!!!!!!!!!!!!! DO NOT CHANGE `scopes` AFTER THIS UNSAFE !!!!!!!!!!!!!!! /////
+
             scopes.last().unwrap()
         };
 
