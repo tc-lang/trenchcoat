@@ -179,7 +179,7 @@ pub enum ExprKind<'a> {
     Named(Ident<'a>),
 
     /// A raw number, e.g. `420`
-    Num(usize),
+    Num(isize),
 
     /// A bracketed expression, using either curly-braces or parentheses. For example: `(x + y)` or
     /// `{ foo(x); y }`
@@ -848,7 +848,7 @@ impl<'a> Expr<'a> {
             None
         } else if let TokenKind::Num(string) = tokens[0].kind {
             Some(ExprKind::Num(
-                string.parse().unwrap(), // we're unwrapping here since we know that a Num token must be a valid usize
+                string.parse().unwrap(), // we're unwrapping here since we know that a Num token must be a valid isize
             ))
         } else {
             None

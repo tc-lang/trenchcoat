@@ -31,12 +31,53 @@ struct Func<'a> {
     body: Block<'a>,
 }
 
-type Value = usize;
+/// The value of an expression
+///
+/// The necessary type information is encoded in the variables used. This type implements `Copy`
+/// only so that when it is later removed, it will become clear where the semantics must be
+/// changed. Eventually, it will not be possible to perform a bit-wise copy of a `Value` due to
+/// adding arrays as types.
+#[derive(Copy, Clone, Debug)]
+pub enum Value {
+    /// The unit type, `()`
+    ///
+    /// This is the implicit return type of functions without an explicit return or an implicitly
+    /// returned expression. For example:
+    /// ```
+    /// fn foo() {
+    ///     bar();
+    /// }
+    /// ```
+    /// Here, `foo` has a return type of `()`
+    Unit,
+
+    /// A boolean value
+    ///
+    /// This can currently only be created by binary comparison operators.
+    Bool(bool),
+
+    /// An integer value
+    ///
+    /// These may be created by integer literals or basic arithmetic operators.
+    Int(isize),
+}
 
 enum ParentScope<'a> {
     Global(&'a GlobalScope<'a>),
     // Damn borrow checker :(
     Local(Rc<RefCell<LocalScope<'a>>>),
+}
+
+impl Value {
+    /// Unwraps the `Value` into the inner value of the `Int` variant
+    ///
+    /// If the value is not of type `Int`, this will panic with the given message.
+    fn expect_int(self, panic_msg: impl AsRef<str>) -> isize {
+        match self {
+            Value::Int(i) => i,
+            _ => panic!("{}", panic_msg.as_ref()),
+        }
+    }
 }
 
 /// Generates the global scope of functions (with their attached bodies) from the list of items
@@ -123,15 +164,16 @@ impl<'a> GlobalScope<'a> {
     }
 
     /// Executes the function with the given name in the global scope, yielding the return value of
-    /// the function, if present.
+    /// the function. Functions with no return values give yield [`Value::Unit`]
     ///
     /// This will panic if no function with the given name exists within the global scope or the
     /// number of arguments does not match the expected number for the function. These can be
     /// checked the [`contains`] and [`num_args`] methods, respectively.
     ///
+    /// [`Value::Unit`]: enum.Value.html#variant.Unit
     /// [`contains`]: #method.contains
     /// [`num_args`]: #method.num_args
-    pub fn exec(&self, fn_name: &str, args: Vec<Value>) -> Option<Value> {
+    pub fn exec(&self, fn_name: &str, args: Vec<Value>) -> Value {
         let func = self.funcs.get(fn_name).unwrap_or_else(|| {
             panic!("no function {:?} in the global scope", fn_name);
         });
@@ -152,10 +194,13 @@ impl<'a> GlobalScope<'a> {
 }
 
 impl<'a> Func<'a> {
-    /// Executes the function with the given arguments, yielding the return value, if present.
+    /// Executes the function with the given arguments, yielding the return value. If there is no
+    /// return value, [`Value::Unit`] will be returned.
     ///
     /// This will panic if the given number of arguments does not match what is expected
-    fn exec(&self, global: &GlobalScope, args: Vec<Value>) -> Option<Value> {
+    ///
+    /// [`Value::Unit`]: enum.Value.html#variant.Unit
+    fn exec(&self, global: &GlobalScope, args: Vec<Value>) -> Value {
         if args.len() != self.params.len() {
             panic!(
                 "wrong number of arguments; expected {} but found {}",
@@ -186,8 +231,10 @@ impl<'a> Func<'a> {
 }
 
 /// Executes the block in a new scope (separate from the one it is given), and yields the final
-/// value, if it exists.
-fn exec_block(block: &Block, containing_scope: Rc<RefCell<LocalScope>>) -> Option<Value> {
+/// value, if it exists. If there is no final expression, [`Value::Unit`] will be returned.
+///
+/// [`Value::Unit`]: enum.Value.html#variant.Unit
+fn exec_block(block: &Block, containing_scope: Rc<RefCell<LocalScope>>) -> Value {
     let vars = Rc::new(RefCell::new(LocalScope {
         parent: ParentScope::Local(containing_scope),
         variables: HashMap::new(),
@@ -209,9 +256,7 @@ fn exec_stmt<'a>(stmt: &Stmt, scope: Rc<RefCell<LocalScope>>) {
 
     match &stmt.kind {
         Let(Ident { name, .. }, expr) => {
-            let val = exec_expr(expr, scope.clone()).unwrap_or_else(|| {
-                panic!("expected value; expr yielded `None`");
-            });
+            let val = exec_expr(expr, scope.clone());
             scope.borrow_mut().variables.insert((*name).into(), val);
         }
         Assign(Ident { name, .. }, expr) => {
@@ -219,9 +264,7 @@ fn exec_stmt<'a>(stmt: &Stmt, scope: Rc<RefCell<LocalScope>>) {
                 panic!("assignment to unknown variable {:?}", name);
             }
 
-            let val = exec_expr(expr, scope.clone()).unwrap_or_else(|| {
-                panic!("expected value; expr yielded `None`");
-            });
+            let val = exec_expr(expr, scope.clone());
             scope.borrow_mut().reassign(name, val);
         }
         Print(expr) => print_value(exec_expr(expr, scope)),
@@ -229,32 +272,23 @@ fn exec_stmt<'a>(stmt: &Stmt, scope: Rc<RefCell<LocalScope>>) {
     }
 }
 
-fn exec_expr(expr: &Expr, scope: Rc<RefCell<LocalScope>>) -> Option<Value> {
+fn exec_expr(expr: &Expr, scope: Rc<RefCell<LocalScope>>) -> Value {
     use ExprKind::{BinOp, Bracket, Empty, FnCall, Named, Num, PrefixOp};
 
     match &expr.kind {
-        Empty => None,
+        Empty => Value::Unit,
         FnCall(fn_expr, args) => exec_fn_call(fn_expr, args, scope),
         BinOp(lhs, op, rhs) => {
-            let lhs = exec_expr(lhs, scope.clone()).unwrap_or_else(|| {
-                panic!("expected value; expr yielded `None`");
-            });
-
-            let rhs = exec_expr(rhs, scope).unwrap_or_else(|| {
-                panic!("expected value; expr yielded `None`");
-            });
-
-            Some(perform_bin_op(lhs, *op, rhs))
+            let lhs = exec_expr(lhs, scope.clone());
+            let rhs = exec_expr(rhs, scope);
+            perform_bin_op(lhs, *op, rhs)
         }
         PrefixOp(op, rhs) => {
-            let rhs = exec_expr(rhs, scope).unwrap_or_else(|| {
-                panic!("expected value; expr yielded `None`");
-            });
-
-            Some(perform_prefix_op(*op, rhs))
+            let rhs = exec_expr(rhs, scope);
+            perform_prefix_op(*op, rhs)
         }
-        Named(Ident { name, .. }) => Some(scope.borrow().get_var(name)),
-        &Num(v) => Some(v),
+        Named(Ident { name, .. }) => scope.borrow().get_var(name),
+        &Num(i) => Value::Int(i),
         Bracket(block) => exec_block(block, scope),
     }
 }
@@ -262,7 +296,7 @@ fn exec_expr(expr: &Expr, scope: Rc<RefCell<LocalScope>>) -> Option<Value> {
 /// Executes the function-call expression. Currently this expects `fn_expr.kind` to be an
 /// `ExprKind::Named`. It will panic otherwise
 // @QUICK-FIX
-fn exec_fn_call(fn_expr: &Expr, args: &FnArgs, scope: Rc<RefCell<LocalScope>>) -> Option<Value> {
+fn exec_fn_call(fn_expr: &Expr, args: &FnArgs, scope: Rc<RefCell<LocalScope>>) -> Value {
     let fn_name = match &fn_expr.kind {
         ExprKind::Named(Ident { name, .. }) => name,
         _ => panic!("tried to call non-function expr"),
@@ -270,11 +304,7 @@ fn exec_fn_call(fn_expr: &Expr, args: &FnArgs, scope: Rc<RefCell<LocalScope>>) -
 
     let args = args
         .iter()
-        .map(|expr| {
-            exec_expr(expr, scope.clone()).unwrap_or_else(|| {
-                panic!("expected value; expr yielded `None`");
-            })
-        })
+        .map(|expr| exec_expr(expr, scope.clone()))
         .collect();
 
     let s = scope.borrow();
@@ -285,7 +315,10 @@ fn exec_fn_call(fn_expr: &Expr, args: &FnArgs, scope: Rc<RefCell<LocalScope>>) -
 fn perform_bin_op(lhs: Value, op: BinOp, rhs: Value) -> Value {
     use BinOp::{Add, And, Div, Eq, Ge, Gt, Le, Lt, Mul, Or, Sub};
 
-    match op {
+    let lhs = lhs.expect_int("expected integer-valued left-hand-side expressoin");
+    let rhs = rhs.expect_int("expected integer-valued right-hand-side expressoin");
+
+    let v = match op {
         Add => lhs + rhs,
         Sub => lhs - rhs,
         Mul => lhs * rhs,
@@ -295,7 +328,9 @@ fn perform_bin_op(lhs: Value, op: BinOp, rhs: Value) -> Value {
         Eq | Lt | Le | Gt | Ge | Or | And => {
             panic!("boolean operators are currently unimplemented")
         }
-    }
+    };
+
+    Value::Int(v)
 }
 
 fn perform_prefix_op(op: PrefixOp, rhs: Value) -> Value {
@@ -308,6 +343,6 @@ fn perform_prefix_op(op: PrefixOp, rhs: Value) -> Value {
 }
 
 /// An isolated function for printing values so that we can easily change what it does
-fn print_value(val: Option<Value>) {
+fn print_value(val: Value) {
     println!(">> {:?}", val);
 }
