@@ -216,7 +216,7 @@ impl<'a> Func<'a> {
             variables: HashMap::new(),
         };
 
-        for (v, &Ident { name, .. }) in args.into_iter().zip(self.params.iter()) {
+        for (v, &(Ident { name, .. }, _)) in args.into_iter().zip(self.params.iter()) {
             if local_scope.variables.contains_key(name) {
                 // This should have already been validated, but we'll double-check here
                 panic!("duplicate argument {:?}", name);

@@ -31,6 +31,7 @@ pub enum ErrorKind {
     ExpectingEquals,
     ExpectingExpr,
     ExpectingStmt,
+    ExpectingType,
     UnexpectedToken,
 }
 

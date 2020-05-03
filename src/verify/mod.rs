@@ -150,9 +150,9 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
                 .iter()
                 .map(|param| Scope {
                     item: Some(ScopeItem {
-                        name: param.name,
+                        name: param.0.name,
                         variable: Variable {},
-                        source: Some(param.node()),
+                        source: Some(param.0.node()),
                     }),
                     parent: None,
                     top_level: self,

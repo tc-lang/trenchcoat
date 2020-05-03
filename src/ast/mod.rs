@@ -118,6 +118,13 @@ pub struct Block<'a> {
     pub source: &'a Token<'a>,
 }
 
+/// A type expression - e.g. `int` or `bool`
+#[derive(Debug, Clone)]
+pub struct TypeExpr<'a> {
+    pub kind: TypeExprKind,
+    pub source: &'a [Token<'a>],
+}
+
 /// A top-level item in the source
 ///
 /// Currently only function declarations are supported.
@@ -138,7 +145,7 @@ pub struct Ident<'a> {
 }
 
 pub type FnArgs<'a> = Vec<Expr<'a>>;
-pub type FnParams<'a> = Vec<Ident<'a>>;
+pub type FnParams<'a> = Vec<(Ident<'a>, TypeExpr<'a>)>;
 
 /// A semicolon-terminated statement
 #[derive(Debug, Clone)]
@@ -184,6 +191,17 @@ pub enum ExprKind<'a> {
     /// A bracketed expression, using either curly-braces or parentheses. For example: `(x + y)` or
     /// `{ foo(x); y }`
     Bracket(Block<'a>),
+}
+
+/// The kind of type expression
+///
+/// This is (currently) either a boolean or an integer, as those are the only two supported types.
+#[derive(Debug, Clone)]
+pub enum TypeExprKind {
+    /// A boolean, written `bool`
+    Bool,
+    /// An integer, written `int`
+    Int,
 }
 
 /// A binary operator TODO: Maybe remove?
@@ -505,57 +523,168 @@ impl<'a> Ident<'a> {
     }
 }
 
-/// Takes the token expected to be the function params and tries to parse it.
-fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a>> {
-    let tokens = if let Some(token) = token {
-        if let TokenKind::Parens(tokens) = &token.kind {
-            tokens
-        } else {
+impl<'a> TypeExpr<'a> {
+    /// Parses a type expression from the *complete* set of tokens given
+    fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, TypeExpr> {
+        use ErrorContext::NoContext;
+        use ErrorKind::ExpectingType;
+        use ErrorKind::EOF;
+        use TokenKind::TypeIdent;
+
+        // In its current state, we'll only expect a single token for type expressions. This single
+        // token should be a `TypeIdent`, which we'll then convert into a valid type expression.
+
+        if tokens.is_empty() {
             return ParseRet::single_err(Error {
-                kind: ErrorKind::ExpectingParens,
-                context: ErrorContext::FnArgs,
-                source: Some(token),
+                kind: EOF,
+                context: NoContext,
+                source: None,
             });
         }
-    } else {
-        return ParseRet::single_err(Error {
-            kind: ErrorKind::EOF,
-            context: ErrorContext::FnArgs,
-            source: None,
-        });
+
+        // We'll try to parse the first token first, and then return an error if there's too many
+        // tokens, instead of the other way around. This way, we can generate better error messages
+        // by starting at the first problematic token
+
+        let type_ident_str = match &tokens[0].kind {
+            TypeIdent(s) => s,
+            _ => {
+                return ParseRet::single_err(Error {
+                    kind: ExpectingType,
+                    context: NoContext,
+                    source: Some(&tokens[0]),
+                })
+            }
+        };
+
+        // FIXME: This is *really* unergonomic from an internal point of view. There should not be
+        // two different identifier types produced by the **tokenizer**. Currently we have
+        // redundant sources of truth in that "bool" and "int" are duplicated both here and in the
+        // tokenizer module, so changing one of them might inadvertently break the other.
+        let ty_kind = match type_ident_str {
+            &"bool" => TypeExprKind::Bool,
+            &"int" => TypeExprKind::Int,
+            _ => panic!("unexpected TypeIdent"),
+        };
+
+        ParseRet::Ok(TypeExpr {
+            kind: ty_kind,
+            source: &tokens[0..1],
+        })
+    }
+}
+
+/// Takes the token expected to be the function params and tries to parse it.
+fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a>> {
+    let tokens = match token {
+        Some(t) => match &t.kind {
+            TokenKind::Parens(tokens) => tokens,
+            _ => {
+                return ParseRet::single_err(Error {
+                    kind: ErrorKind::ExpectingParens,
+                    context: ErrorContext::FnArgs,
+                    source: Some(t),
+                })
+            }
+        },
+        None => {
+            return ParseRet::single_err(Error {
+                kind: ErrorKind::EOF,
+                context: ErrorContext::FnArgs,
+                source: None,
+            })
+        }
     };
 
-    let params = tokens::split_at_commas(&tokens);
+    let splits = tokens::split_at_commas(&tokens);
     let mut errors = Vec::new();
-    let mut out = Vec::with_capacity(params.len());
-    for a in params {
-        if a.len() != 1 {
-            errors.push(Error {
-                kind: ErrorKind::ExpectingName,
-                context: ErrorContext::FnArgs,
-                source: a.first(),
-            }); // TODO: improve this error
-        } else {
-            let a = &a[0];
-            match a.kind {
-                TokenKind::NameIdent(name) => out.push(Ident { name, source: a }),
-                TokenKind::TypeIdent(name) => {
-                    out.push(Ident { name, source: a });
-                    errors.push(Error {
-                        kind: ErrorKind::TypeIdent,
-                        context: ErrorContext::FnArgs,
-                        source: Some(a),
-                    });
-                }
-                _ => errors.push(Error {
-                    kind: ErrorKind::ExpectingName,
-                    context: ErrorContext::FnArgs,
-                    source: Some(a),
-                }),
+    let mut params = Vec::with_capacity(splits.len());
+    for tokens in splits {
+        match parse_single_param(tokens) {
+            ParseRet::Ok(p) => params.push(p),
+            ParseRet::SoftErr(p, es) => {
+                errors.extend(es.into_iter().map(|e| e.with_context(ErrorContext::FnArgs)));
+                params.push(p);
+            }
+            ParseRet::Err(es) => {
+                errors.extend(es.into_iter().map(|e| e.with_context(ErrorContext::FnArgs)));
+                return ParseRet::Err(errors);
             }
         }
     }
-    ParseRet::with_soft_errs(out, errors)
+
+    ParseRet::with_soft_errs(params, errors)
+}
+
+/// Attempts to parse a set of tokens as a single function parameter, including name, colon, and
+/// type expression
+///
+/// Valid function parameters could be: `x: int` or `p: bool`.
+fn parse_single_param<'a>(tokens: &'a [Token<'a>]) -> ParseRet<'a, (Ident<'a>, TypeExpr<'a>)> {
+    use tokens::{Punc::Colon, TokenKind::Punc};
+
+    // This expects a sequence of the form
+    //   NameIdent ":" TypeExpr
+    // This expects exactly two tokens for the first two, and then parses the remaining tokens as a
+    // type expression.
+
+    let mut errors = Vec::new();
+
+    // 1. NameIdent
+    let name = match Ident::parse(tokens.first()) {
+        ParseRet::Ok(ident) => ident,
+        ParseRet::SoftErr(ident, es) => {
+            errors.extend(es);
+            ident
+        }
+        ParseRet::Err(es) => return ParseRet::Err(es),
+    };
+
+    // 2. ":"
+    match tokens.get(1) {
+        Some(t) if t.kind == Punc(Colon) => (),
+        Some(t) => {
+            errors.push(Error {
+                kind: ErrorKind::ExpectingName,
+                context: ErrorContext::FnArgs,
+                source: Some(t),
+            });
+
+            return ParseRet::Err(errors);
+        }
+        None => {
+            errors.push(Error {
+                kind: ErrorKind::EOF,
+                context: ErrorContext::FnArgs,
+                source: None,
+            });
+
+            return ParseRet::Err(errors);
+        }
+    }
+
+    // 3. TypeExpr
+    let ty = match tokens.get(2..).map(TypeExpr::parse) {
+        Some(ParseRet::Ok(ty)) => ty,
+        Some(ParseRet::SoftErr(ty, es)) => {
+            errors.extend(es);
+            ty
+        }
+        Some(ParseRet::Err(es)) => {
+            errors.extend(es);
+            return ParseRet::Err(errors);
+        }
+        None => {
+            errors.push(Error {
+                kind: ErrorKind::EOF,
+                context: ErrorContext::FnArgs,
+                source: None,
+            });
+            return ParseRet::Err(errors);
+        }
+    };
+
+    ParseRet::with_soft_errs((name, ty), errors)
 }
 
 impl<'a> Stmt<'a> {

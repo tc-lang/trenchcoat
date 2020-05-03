@@ -1,10 +1,10 @@
-fn hi(x) {
+fn hi(x: int) {
 	let x = 1 + f(3);
 	print x;
 	x
 }
 
-fn foo(x, y) {
+fn foo(x: int, y: int) {
 	x * 2 + y
 }
 
