@@ -966,21 +966,34 @@ impl<'a> Expr<'a> {
     }
 
     fn parse_num_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
-        Some(ParseRet::Ok(Expr {
-            kind: Self::parse_num(tokens)?,
-            source: tokens,
-        }))
-    }
-
-    fn parse_num(tokens: &'a [Token<'a>]) -> Option<ExprKind<'a>> {
+        // A number is represented as a single token, and we expect to consume the entire set of
+        // tokens
         if tokens.len() != 1 {
-            None
-        } else if let TokenKind::Num(string) = tokens[0].kind {
-            Some(ExprKind::Num(
-                string.parse().unwrap(), // we're unwrapping here since we know that a Num token must be a valid isize
-            ))
-        } else {
-            None
+            return None;
+        }
+
+        match tokens[0].kind {
+            TokenKind::Num(string) => match string.parse::<isize>() {
+                Ok(n) => Some(ParseRet::Ok(Expr {
+                    kind: ExprKind::Num(n),
+                    source: tokens,
+                })),
+
+                // Because `TokenKind::Num` will only be composed of digits, we know that the
+                // problem must have been due to the integer value being too large
+                Err(_) => Some(ParseRet::single_soft_err(
+                    Expr {
+                        kind: ExprKind::Num(0),
+                        source: tokens,
+                    },
+                    Error {
+                        kind: ErrorKind::IntegerValueTooLarge,
+                        context: ErrorContext::NoContext,
+                        source: Some(&tokens[0]),
+                    },
+                )),
+            },
+            _ => None,
         }
     }
 

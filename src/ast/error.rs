@@ -25,7 +25,7 @@ pub enum ErrorKind {
     ExpectingName,
     /// This error is generated when a Parens token was expected but another kind was given.
     ExpectingParens,
-    /// This error is generated when a Corlys token was expected but another kind was given.
+    /// This error is generated when a Curlys token was expected but another kind was given.
     ExpectingCurlys,
     ExpectingKeyword,
     ExpectingEquals,
@@ -33,6 +33,10 @@ pub enum ErrorKind {
     ExpectingStmt,
     ExpectingType,
     UnexpectedToken,
+
+    /// An integer literal represents a value larger than `isize::MAX`, and so we cannot construct
+    /// it
+    IntegerValueTooLarge,
 }
 
 #[derive(Debug, Clone, Copy)]
