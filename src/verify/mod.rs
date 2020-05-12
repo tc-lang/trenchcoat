@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use crate::ast;
+use crate::types::{self, Type};
 pub mod error;
 use error::Error;
 
@@ -36,7 +37,7 @@ struct Func<'a> {
 /// Currently variables are all isize so no information is required!
 #[derive(Debug, Clone)]
 struct Variable<'a> {
-    type_kind: &'a ast::TypeExprKind<'a>,
+    typ: &'a Type<'a>,
 }
 
 /// The top level scope consists of named items, currently just functions. Things will be
@@ -72,13 +73,23 @@ struct ScopeItem<'a> {
 }
 
 impl<'a> ast::Expr<'a> {
-    fn type_kind(&self, scope: &'a Scope<'a>) -> &'a ast::TypeExprKind<'a> {
+    fn type_check(&self, scope: &'a Scope<'a>) -> Vec<Error<'a>> {
+        match &self.kind {
+            Empty => Vec::new(),
+            Named(_) => Vec::new(),
+            Num(_) => Vec::new(),
+            Bracket(block) => block.type_check(),
+            FnCall(f, args) => (),
+        }
+    }
+    /// returns the Type which the expression evaluates to
+    fn typ(&self, scope: &'a Scope<'a>) -> &'a Type<'a> {
         use ast::ExprKind::*;
         match &self.kind {
-            Empty => &ast::empty_struct_kind,
+            Empty => &types::empty_struct,
+            Named(ident) => &scope.get(ident.name).unwrap().variable.typ,
             BinOp(_, _, _) => &ast::TypeExprKind::Int,
             PrefixOp(_, _) => &ast::TypeExprKind::Int,
-            Named(ident) => &scope.get(ident.name).unwrap().variable.type_kind,
             Num(_) => &ast::TypeExprKind::Int,
             Bracket(block) => block.tail.type_kind(scope),
             FnCall(f, _) => match &f.kind {
