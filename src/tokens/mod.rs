@@ -196,8 +196,8 @@ fn is_whitespace(ch: char) -> bool {
 }
 
 fn is_special_type(s: &str) -> bool {
-    // Currently, we're only supporting `int`s and `bool`s
-    s == "int" || s == "bool"
+    // Currently, we're only supporting `int`s, `uint`s and `bool`s
+    s == "int" || s == "uint" || s == "bool"
 }
 
 fn is_punc(ch: char) -> bool {

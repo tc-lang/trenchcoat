@@ -32,6 +32,11 @@ pub enum ErrorKind {
     ExpectingExpr,
     ExpectingStmt,
     ExpectingType,
+    ExpectingIdent,
+    ExpectingComma,
+    ExpectingTypeIdent,
+    ExpectingColon,
+    MalformedStructField,
     UnexpectedToken,
 
     /// An integer literal represents a value larger than `isize::MAX`, and so we cannot construct
@@ -46,6 +51,7 @@ pub enum Context {
     TopLevel,
     FnName,
     FnArgs,
+    FnReturnType,
     FnBody,
     LetName,
     LetEquals,
@@ -58,6 +64,7 @@ pub enum Context {
     PrefixOp,
     ParseStmt,
     ParseAll,
+    Struct,
 }
 
 impl<'a> Error<'a> {

@@ -21,6 +21,8 @@ pub enum Kind<'a> {
     FunctionMustBeName,
     IncorrectNumberOfArgs { n_given: usize, n_expected: usize },
     VariableNotFound,
+
+    ReturnType,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -30,6 +32,7 @@ pub enum Context {
     FnBody,
     Expr,
     Assign,
+    FnTail,
 }
 
 impl<'a> Error<'a> {
