@@ -2,6 +2,7 @@
 
 //use crate::tokens::Token;
 use crate::ast;
+use crate::types::Type;
 
 /// Errors each have a kind and a context in which it occured. These can be combined with the
 /// source AST node to create a hopefully ok error message.
@@ -14,7 +15,7 @@ pub struct Error<'a> {
     pub source: ast::Node<'a>,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum Kind<'a> {
     ItemConflict(&'a ast::Item<'a>, &'a ast::Item<'a>),
     FunctionNotFound,
@@ -23,6 +24,10 @@ pub enum Kind<'a> {
     VariableNotFound,
 
     ReturnType,
+    TypeMismatch{
+        expected: Vec<Type<'a>>,
+        found: Type<'a>,
+    },
 }
 
 #[derive(Debug, Clone, Copy)]

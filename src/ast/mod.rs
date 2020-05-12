@@ -1,6 +1,7 @@
 //! The production of the abstract syntax tree for a source file
 
 use crate::tokens::{self, Keyword, Oper, Punc, Token, TokenKind};
+use crate::types::{self, Type};
 use std::convert::TryFrom;
 
 mod error;
@@ -102,6 +103,8 @@ enum ParseRet<'a, T> {
     SoftErr(T, Vec<Error<'a>>),
 
     /// The programmer can't code. Parsing must now stop. They should feel bad.
+    /// This should be used when an error is encountered and parsing should stop - for example if
+    /// it is likely that future errors will not be sensible.
     Err(Vec<Error<'a>>),
 }
 
@@ -135,20 +138,21 @@ pub struct Block<'a> {
     pub source: &'a Token<'a>,
 }
 
-/// A type expression - e.g. `int` or `bool`
+/// A type expression - e.g. `int`, `bool`, `(int, int)` or `{x: int, y: uint}`.
 #[derive(Debug, Clone)]
 pub struct TypeExpr<'a> {
-    pub kind: TypeExprKind<'a>,
+    pub typ: Type<'a>,
     pub source: &'a [Token<'a>],
 }
 
+/// Returns a type expression representing an empty struct (`{}`) with no source.
+/// Used in places such as when a function doesn't specify it's return type.
 pub fn empty_struct<'a>() -> TypeExpr<'a> {
     TypeExpr {
-        kind: TypeExprKind::Struct(Vec::new()),
+        typ: types::new_empty_struct(),
         source: &[],
     }
 }
-pub static empty_struct_kind: TypeExprKind = TypeExprKind::Struct(Vec::new());
 
 /// A top-level item in the source
 ///
@@ -173,7 +177,7 @@ pub struct Ident<'a> {
 pub type FnArgs<'a> = Vec<Expr<'a>>;
 pub type FnParams<'a> = Vec<(Ident<'a>, TypeExpr<'a>)>;
 
-/// A semicolon-terminated statement
+/// A statement
 #[derive(Debug, Clone)]
 pub enum StmtKind<'a> {
     /// A `let` statement binding a value given by the `Expr` to a variable name given by the
@@ -219,80 +223,6 @@ pub enum ExprKind<'a> {
     Bracket(Block<'a>),
 }
 
-/// The kind of type expression
-///
-/// This is (currently) either a boolean or an integer, as those are the only two supported types.
-#[derive(Debug, Clone)]
-pub enum TypeExprKind<'a> {
-    /// References a named type. This is currently unused.
-    Named(&'a str),
-    /// A boolean, written `bool`
-    Bool,
-    /// An integer, written `int`
-    Int,
-    Uint,
-    Struct(Vec<StructField<'a>>),
-}
-
-impl<'a> PartialEq for TypeExprKind<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        use TypeExprKind::*;
-
-        if let Named(_) = other {
-            panic!("cannot compare TypeExprKind::Named");
-        }
-
-        match self {
-            Named(_) => panic!("cannot compare TypeExprKind::Named"),
-            Bool => {
-                if let Bool = other {
-                    true
-                } else {
-                    false
-                }
-            }
-            Int => {
-                if let Int = other {
-                    true
-                } else {
-                    false
-                }
-            }
-            Uint => {
-                if let Uint = other {
-                    true
-                } else {
-                    false
-                }
-            }
-            Struct(fields) => {
-                if let Struct(other_fields) = other {
-                    // TODO Note that the current implementation requires struct fields to be in the
-                    // same order for their structs to be equal. Details for struct equality will
-                    // have to be worked out when field ordering is decided. There are a couple of
-                    // valid approaches.
-                    other_fields == fields
-                } else {
-                    false
-                }
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct StructField<'a> {
-    name: &'a str,
-    typ: TypeExpr<'a>,
-}
-
-// This implementation ignores the source of the TypeExpr.
-impl<'a> PartialEq for StructField<'a> {
-    fn eq(&self, other: &Self) -> bool {
-        self.name == other.name && self.typ.kind == other.typ.kind
-    }
-}
-
 /// A binary operator TODO: Maybe remove?
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum BinOp {
@@ -331,8 +261,6 @@ static BIN_OP_PRECEDENCE: &[&[BinOp]] = &[
     &[BinOp::Mul, BinOp::Div],
 ];
 
-static PREFIX_OPS: &[Oper] = &[Oper::Not];
-
 /// A prefix operator. This is currently lacking most of the prefix operators that will be added
 /// later. This is intentional.
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -340,6 +268,8 @@ pub enum PrefixOp {
     /// Unary not: `!`
     Not,
 }
+
+static PREFIX_OPS: &[PrefixOp] = &[PrefixOp::Not];
 
 ////////////////////////////////////////////////////////////////////////////////
 // Helper functions + boilerplate implementations                             //
@@ -462,24 +392,39 @@ impl<'a> Item<'a> {
 
         let mut errors = Vec::new();
 
+        // Token indexes
         const name_idx: usize = 1;
         const params_idx: usize = 2;
         const ret_typ_idx: usize = 3;
         // body_idx will be determined later
 
+        // Function name (an identifier)
         let name = next_option!(
-            Ident::parse(tokens.get(name_idx)).with_context(ErrorContext::FnName),
+            tokens
+                .get(name_idx)
+                .map(Ident::parse)
+                .unwrap_or_else(|| ParseRet::single_err(Error {
+                    kind: ErrorKind::EOF,
+                    context: ErrorContext::FnName,
+                    source: None,
+                }))
+                .with_context(ErrorContext::FnName),
             errors
         );
 
+        // Function parameters
         let params = next_option!(parse_fn_params(tokens.get(params_idx)), errors);
 
+        // Function return type
         let (ret, ret_consumed) = match parse_fn_return_type(&tokens[ret_typ_idx..]) {
             // If no type is specified, we default to returning an empty struct
             None => (empty_struct(), 0),
             Some(pr) => next_option!(pr, errors),
         };
 
+        // Function body, just 1 curly token.
+        // This will later be replaced with a parser that may consume more tokens for the
+        //  => ... syntax.
         let body_idx = ret_typ_idx + ret_consumed;
         let body = next_option!(
             Block::parse_curlies(tokens.get(body_idx)).with_context(ErrorContext::FnBody),
@@ -494,7 +439,7 @@ impl<'a> Item<'a> {
                     ret,
                     body,
                 },
-                source: &tokens[0..body_idx+1],
+                source: &tokens[0..body_idx + 1],
             },
             errors,
         ))
@@ -509,8 +454,11 @@ impl<'a> Block<'a> {
         let mut stmts = Vec::new();
         let mut tail = Expr {
             kind: ExprKind::Empty,
-            source: tokens, // FIXME - this probably doesn't matter since Empty will never error.
-                            //       - if this is refactored, we can make it more sensible.
+            source: &[], // FIXME - this probably doesn't matter since Empty will never error.
+                         //       - if this is refactored, we can make it more sensible.
+                         // We could just give an empty slice? Since an empty tail has no source.
+                         // Not super useful for working out where it came from though.
+                         // But, it should never error.
         };
 
         while idx < tokens.len() {
@@ -593,8 +541,8 @@ impl<'a> Ident<'a> {
         Node::Ident(self)
     }
 
-    fn parse(token: Option<&'a Token<'a>>) -> ParseRet<'a, Ident> {
-        let token = match token {
+    fn parse(token: &'a Token<'a>) -> ParseRet<'a, Ident> {
+        /*let token = match token {
             Some(t) => t,
             None => {
                 return ParseRet::single_err(Error {
@@ -603,7 +551,10 @@ impl<'a> Ident<'a> {
                     source: None,
                 })
             }
-        };
+        };*/
+        // Changed to allow use of Ident::parse without passing an Option.
+        // An Option is only passed in 1 place so the error handling is not duplicated.
+        // It didn't really belong here anyway, ErrorKind::EOF is slightly context dependent.
 
         match token.kind {
             TokenKind::NameIdent(name) => ParseRet::Ok(Ident {
@@ -630,34 +581,43 @@ impl<'a> Ident<'a> {
     }
 }
 
-impl<'a> From<&'a str> for TypeExprKind<'a> {
-    fn from(name: &'a str) -> Self {
+impl<'a> Type<'a> {
+    /// Gives a type from a type identifier.
+    /// At the moment, this hard-codes "int", "uint" and "bool" although in the future it won't
+    /// have to since these will be special types in the prelude but for now there is no way to
+    /// resolve types!
+    fn from_name(name: &'a str) -> Self {
         match name {
-            "bool" => TypeExprKind::Bool,
-            "int" => TypeExprKind::Int,
-            "uint" => TypeExprKind::Uint,
-            _ => TypeExprKind::Named(name),
+            "int" => Type::Int,
+            "uint" => Type::Uint,
+            "bool" => Type::Bool,
+            _ => Type::Named(name),
         }
     }
 }
 
-impl<'a> TypeExpr<'a> {
-    fn parse_struct(inner: &'a [Token<'a>]) -> ParseRet<'a, TypeExprKind<'a>> {
+impl<'a> Type<'a> {
+    fn parse_struct(inner: &'a [Token<'a>]) -> ParseRet<'a, Type<'a>> {
         let fields = tokens::split_at_commas(inner);
         let mut struct_fields = Vec::with_capacity(fields.len());
         let mut errors = Vec::new();
+
         for field_tokens in fields.iter() {
-            let field = next!(Self::parse_struct_field(field_tokens), errors);
+            let field = next!(types::StructField::parse(field_tokens), errors);
             struct_fields.push(field);
         }
-        ParseRet::with_soft_errs(TypeExprKind::Struct(struct_fields), errors)
-    }
 
-    fn parse_struct_field(tokens: &'a [Token<'a>]) -> ParseRet<'a, StructField<'a>> {
+        ParseRet::with_soft_errs(Type::Struct(struct_fields), errors)
+    }
+}
+
+impl<'a> types::StructField<'a> {
+    fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
+        // Ensure we have the correct number of tokens
         match tokens.len() {
             0 => {
                 return ParseRet::single_err(Error {
-                    kind: ErrorKind::ExpectingTypeIdent,
+                    kind: ErrorKind::ExpectingIdent,
                     context: ErrorContext::Struct,
                     source: None,
                 })
@@ -674,25 +634,14 @@ impl<'a> TypeExpr<'a> {
         }
 
         let mut errors = Vec::new();
-        let name = match &tokens[0].kind {
-            TokenKind::NameIdent(name) => *name,
-            TokenKind::TypeIdent(name) => {
-                errors.push(Error {
-                    kind: ErrorKind::TypeIdent,
-                    context: ErrorContext::Struct,
-                    source: Some(&tokens[0]),
-                });
-                *name
-            }
-            _ => {
-                return ParseRet::single_err(Error {
-                    kind: ErrorKind::ExpectingName,
-                    context: ErrorContext::Struct,
-                    source: Some(&tokens[0]),
-                })
-            }
-        };
 
+        // Fist the field name (an identifier)
+        let name = next!(
+            Ident::parse(&tokens[0]).with_context(ErrorContext::Struct),
+            errors
+        );
+
+        // Check for the colon
         match &tokens[1].kind {
             TokenKind::Punc(Punc::Colon) => (),
             _ => {
@@ -707,12 +656,14 @@ impl<'a> TypeExpr<'a> {
             }
         };
 
-        let typ = next!(Self::parse(&tokens[2..]), errors);
+        // Finally the type expression.
+        let type_expr = next!(TypeExpr::parse(&tokens[2..]), errors);
 
-        ParseRet::with_soft_errs(StructField { name, typ }, errors)
+        ParseRet::with_soft_errs(types::StructField { name, type_expr }, errors)
     }
+}
 
-    /// Parses a type expression from the *complete* set of tokens given
+impl<'a> TypeExpr<'a> {
     fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, TypeExpr<'a>> {
         use ErrorContext::NoContext;
         use ErrorKind::ExpectingType;
@@ -720,9 +671,6 @@ impl<'a> TypeExpr<'a> {
         use TokenKind::Curlys;
         use TokenKind::Parens;
         use TokenKind::TypeIdent;
-
-        // In its current state, we'll only expect a single token for type expressions. This single
-        // token should be a `TypeIdent`, which we'll then convert into a valid type expression.
 
         if tokens.is_empty() {
             return ParseRet::single_err(Error {
@@ -732,19 +680,15 @@ impl<'a> TypeExpr<'a> {
             });
         }
 
-        // We'll try to parse the first token first, and then return an error if there's too many
-        // tokens, instead of the other way around. This way, we can generate better error messages
-        // by starting at the first problematic token
-
         let mut errors = Vec::new();
 
         let typ = match &tokens[0].kind {
             TypeIdent(name) => TypeExpr {
-                kind: TypeExprKind::from(*name),
+                typ: Type::from_name(*name),
                 source: &tokens[0..1],
             },
             Curlys(inner) | Parens(inner) => TypeExpr {
-                kind: next!(Self::parse_struct(inner), errors),
+                typ: next!(Type::parse_struct(inner), errors),
                 source: &tokens[0..1],
             },
             _ => {
@@ -759,6 +703,7 @@ impl<'a> TypeExpr<'a> {
         ParseRet::with_soft_errs(typ, errors)
     }
 
+    /// returns the number of tokens in the source of self
     fn consumed(&self) -> usize {
         self.source.len()
     }
@@ -772,7 +717,7 @@ fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a
             _ => {
                 return ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingParens,
-                    context: ErrorContext::FnArgs,
+                    context: ErrorContext::FnParams,
                     source: Some(t),
                 })
             }
@@ -780,27 +725,23 @@ fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a
         None => {
             return ParseRet::single_err(Error {
                 kind: ErrorKind::EOF,
-                context: ErrorContext::FnArgs,
+                context: ErrorContext::FnParams,
                 source: None,
             })
         }
     };
 
-    let splits = tokens::split_at_commas(&tokens);
+    let params_tokens = tokens::split_at_commas(&tokens);
+
     let mut errors = Vec::new();
-    let mut params = Vec::with_capacity(splits.len());
-    for tokens in splits {
-        match parse_single_param(tokens) {
-            ParseRet::Ok(p) => params.push(p),
-            ParseRet::SoftErr(p, es) => {
-                errors.extend(es.into_iter().map(|e| e.with_context(ErrorContext::FnArgs)));
-                params.push(p);
-            }
-            ParseRet::Err(es) => {
-                errors.extend(es.into_iter().map(|e| e.with_context(ErrorContext::FnArgs)));
-                return ParseRet::Err(errors);
-            }
-        }
+    let mut params = Vec::with_capacity(params_tokens.len());
+
+    for tokens in params_tokens {
+        let param = next!(
+            parse_single_param(tokens).with_context(ErrorContext::FnParams),
+            errors
+        );
+        params.push(param);
     }
 
     ParseRet::with_soft_errs(params, errors)
@@ -811,70 +752,10 @@ fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a
 ///
 /// Valid function parameters could be: `x: int` or `p: bool`.
 fn parse_single_param<'a>(tokens: &'a [Token<'a>]) -> ParseRet<'a, (Ident<'a>, TypeExpr<'a>)> {
-    use tokens::{Punc::Colon, TokenKind::Punc};
-
-    // This expects a sequence of the form
-    //   NameIdent ":" TypeExpr
-    // This expects exactly two tokens for the first two, and then parses the remaining tokens as a
-    // type expression.
-
-    let mut errors = Vec::new();
-
-    // 1. NameIdent
-    let name = match Ident::parse(tokens.first()) {
-        ParseRet::Ok(ident) => ident,
-        ParseRet::SoftErr(ident, es) => {
-            errors.extend(es);
-            ident
-        }
-        ParseRet::Err(es) => return ParseRet::Err(es),
-    };
-
-    // 2. ":"
-    match tokens.get(1) {
-        Some(t) if t.kind == Punc(Colon) => (),
-        Some(t) => {
-            errors.push(Error {
-                kind: ErrorKind::ExpectingName,
-                context: ErrorContext::FnArgs,
-                source: Some(t),
-            });
-
-            return ParseRet::Err(errors);
-        }
-        None => {
-            errors.push(Error {
-                kind: ErrorKind::EOF,
-                context: ErrorContext::FnArgs,
-                source: None,
-            });
-
-            return ParseRet::Err(errors);
-        }
-    }
-
-    // 3. TypeExpr
-    let ty = match tokens.get(2..).map(TypeExpr::parse) {
-        Some(ParseRet::Ok(ty)) => ty,
-        Some(ParseRet::SoftErr(ty, es)) => {
-            errors.extend(es);
-            ty
-        }
-        Some(ParseRet::Err(es)) => {
-            errors.extend(es);
-            return ParseRet::Err(errors);
-        }
-        None => {
-            errors.push(Error {
-                kind: ErrorKind::EOF,
-                context: ErrorContext::FnArgs,
-                source: None,
-            });
-            return ParseRet::Err(errors);
-        }
-    };
-
-    ParseRet::with_soft_errs((name, ty), errors)
+    // At the moment, this is the same as struct field parsing. 
+    return types::StructField::parse(tokens)
+        .map(|field| (field.name, field.type_expr))
+        .with_context(ErrorContext::FnParam);
 }
 
 fn parse_fn_return_type<'a>(
@@ -894,10 +775,14 @@ fn parse_fn_return_type<'a>(
 
     // Parse the type
     // The amount consumed is the type + 1 (for the arrow)
-    Some(TypeExpr::parse(&tokens[1..]).map(|typ| {
-        let consumed = typ.consumed() + 1;
-        (typ, consumed)
-    }).with_context(ErrorContext::FnReturnType))
+    Some(
+        TypeExpr::parse(&tokens[1..])
+            .map(|typ| {
+                let consumed = typ.consumed() + 1;
+                (typ, consumed)
+            })
+            .with_context(ErrorContext::FnReturnType),
+    )
 }
 
 impl<'a> Stmt<'a> {
@@ -1058,7 +943,7 @@ impl<'a> Stmt<'a> {
         let mut errors = Vec::new();
 
         // 1. Ident
-        let name = match Ident::parse(tokens.first()) {
+        let name = match Ident::parse(&tokens[0]) {
             ParseRet::Ok(n) => n,
             ParseRet::SoftErr(n, es) => {
                 errors.extend(es.into_iter().map(|e| e.with_context(AssignName)));
