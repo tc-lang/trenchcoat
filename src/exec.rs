@@ -88,7 +88,12 @@ pub fn generate_global_scope<'a>(items: Vec<Item<'a>>) -> GlobalScope<'a> {
 
     for item in items.into_iter() {
         match item.kind {
-            ItemKind::FnDecl { name, params, body } => {
+            ItemKind::FnDecl {
+                name,
+                params,
+                ret: _,
+                body,
+            } => {
                 // If we've already added a function with this name ot the global scope, we'll
                 // panic. We should have already validated that there aren't any name conflicts.
                 if global.funcs.contains_key(name.name) {

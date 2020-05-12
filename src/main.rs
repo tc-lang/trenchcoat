@@ -40,7 +40,14 @@ fn main() {
 
     println!("{:?}", parse_tree);
 
-    println!("Verify: {:?}", verify(&parse_tree));
+    match &verify(&parse_tree)[..] {
+        [] => (),
+        errs => {
+            println!("Verify Errors: {:?}", errs);
+            return;
+        },
+    }
+
     let global = exec::generate_global_scope(parse_tree);
     if let Some(n) = global.num_args("main") {
         if n != 0 {

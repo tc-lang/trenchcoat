@@ -26,15 +26,18 @@ pub fn verify<'a>(items: &'a [ast::Item<'a>]) -> Vec<Error<'a>> {
 /// This will likely grow to include type and proof information for each parameter along with the
 /// return type.
 #[derive(Debug, Clone)]
-struct Func {
+struct Func<'a> {
     /// the number of parameters, when types are introduced this will likely be replaced with a
     /// list of type information for each parameter.
-    n_params: usize,
+    params: Vec<&'a ast::TypeExpr<'a>>,
+    ret: &'a ast::TypeExpr<'a>,
 }
 
 /// Currently variables are all isize so no information is required!
 #[derive(Debug, Clone)]
-struct Variable;
+struct Variable<'a> {
+    type_kind: &'a ast::TypeExprKind<'a>,
+}
 
 /// The top level scope consists of named items, currently just functions. Things will be
 /// transitioned out of here as they can be placed in local scopes until everything is under
@@ -47,7 +50,7 @@ struct TopLevelScope<'a> {
 /// Represents an item in the top level scope. Currently this is always a function.
 #[derive(Debug, Clone)]
 struct TopLevelItem<'a> {
-    func: Func,
+    func: Func<'a>,
     source: &'a ast::Item<'a>,
 }
 
@@ -64,8 +67,27 @@ struct Scope<'a> {
 #[derive(Debug, Clone)]
 struct ScopeItem<'a> {
     name: &'a str,
-    variable: Variable,
+    variable: Variable<'a>,
     source: Option<ast::Node<'a>>,
+}
+
+impl<'a> ast::Expr<'a> {
+    fn type_kind(&self, scope: &'a Scope<'a>) -> &'a ast::TypeExprKind<'a> {
+        use ast::ExprKind::*;
+        match &self.kind {
+            Empty => &ast::empty_struct_kind,
+            BinOp(_, _, _) => &ast::TypeExprKind::Int,
+            PrefixOp(_, _) => &ast::TypeExprKind::Int,
+            Named(ident) => &scope.get(ident.name).unwrap().variable.type_kind,
+            Num(_) => &ast::TypeExprKind::Int,
+            Bracket(block) => block.tail.type_kind(scope),
+            FnCall(f, _) => match &f.kind {
+                Named(f_name) => &scope.top_level.map.get(f_name.name).unwrap().func.ret.kind,
+                _ => panic!("can only call named expression"), 
+                // ^ this should have been checked already
+            },
+        }
+    }
 }
 
 impl<'a, 'b: 'a> TopLevelScope<'a> {
@@ -82,13 +104,15 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
                 ast::ItemKind::FnDecl {
                     name,
                     params,
+                    ret,
                     body: _,
                 } => {
                     if let Some(conflict) = out.map.insert(
                         name.name,
                         TopLevelItem {
                             func: Func {
-                                n_params: params.len(),
+                                params: params.iter().map(|param| &param.1).collect(),
+                                ret,
                             },
                             source: item,
                         },
@@ -111,8 +135,9 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
             ast::ItemKind::FnDecl {
                 name: _,
                 params,
+                ret,
                 body,
-            } => self.check_fn(params, body),
+            } => self.check_fn(params, ret, body),
         }
     }
 
@@ -128,6 +153,7 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
     fn check_fn(
         &'a self,
         params: &'b ast::FnParams<'b>,
+        ret: &'b ast::TypeExpr<'b>,
         block: &'b ast::Block<'b>,
     ) -> Vec<Error<'b>> {
         // Storage for later
@@ -151,7 +177,9 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
                 .map(|param| Scope {
                     item: Some(ScopeItem {
                         name: param.0.name,
-                        variable: Variable {},
+                        variable: Variable {
+                            type_kind: &param.1.kind,
+                        },
                         source: Some(param.0.node()),
                     }),
                     parent: None,
@@ -175,7 +203,17 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
             scopes.last().unwrap()
         };
 
-        fn_scope.check_block(block, 0)
+        let mut errors = fn_scope.check_block(block, 0);
+        
+        if *block.tail.type_kind(fn_scope) != ret.kind {
+            errors.push(Error{
+                kind: error::Kind::ReturnType,
+                context: error::Context::FnTail,
+                source: block.tail.node(),
+            })
+        }
+
+        errors
     }
 }
 
@@ -259,11 +297,11 @@ impl<'a, 'b: 'a> Scope<'a> {
                     Some(item) => &item.func,
                 };
 
-                if func.n_params != args.len() {
+                if func.params.len() != args.len() {
                     vec![Error {
                         kind: error::Kind::IncorrectNumberOfArgs {
                             n_given: args.len(),
-                            n_expected: func.n_params,
+                            n_expected: func.params.len(),
                         },
                         context: error::Context::Expr,
                         source: ast::Node::Args(&args),
@@ -311,7 +349,9 @@ impl<'a, 'b: 'a> Scope<'a> {
 
                     let new_scope = self.child(ScopeItem {
                         name: name.name,
-                        variable: Variable {},
+                        variable: Variable {
+                            type_kind: expr.type_kind(self),
+                        },
                         source: Some(stmt.node()),
                     });
 
