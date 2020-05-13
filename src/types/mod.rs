@@ -49,13 +49,17 @@ impl<'a> PartialEq for Type<'a> {
     fn eq(&self, other: &Self) -> bool {
         use Type::*;
 
-// So struct fields are equal iff they have the same name and type.
+        // So struct fields are equal iff they have the same name and type.
         if let Named(_) = other {
             panic!("cannot compare TypeExprKind::Named");
         }
 
         match self {
             Named(_) => panic!("cannot compare TypeExprKind::Named"),
+            Distinct{name} => match other {
+                Distinct{name: other_name} => name == other_name,
+                _ => false,
+            },
             Bool => match other {
                 Bool => true,
                 _ => false,
@@ -83,10 +87,11 @@ impl<'a> PartialEq for Type<'a> {
 impl<'a> PartialEq for StructField<'a> {
     fn eq(&self, other: &Self) -> bool {
         // See the doc comment for StructField for the documentation of this comparison.
-        self.name == other.name && self.type_expr.typ == other.type_expr.typ
+        self.name.name == other.name.name && self.type_expr.typ == other.type_expr.typ
     }
 }
 
 pub static empty_struct: Type = Type::Struct(Vec::new());
-pub fn new_empty_struct<'a>() -> Type<'a> { Type::Struct(Vec::new()) }
-
+pub fn new_empty_struct<'a>() -> Type<'a> {
+    Type::Struct(Vec::new())
+}

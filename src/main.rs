@@ -1,10 +1,10 @@
 #![warn(clippy::perf)]
 
+mod ast;
+mod exec;
 mod tokens;
 mod types;
-mod ast;
 mod verify;
-mod exec;
 
 use tokens::auto_sep::auto_insert_sep;
 use tokens::tokenize;
@@ -46,7 +46,7 @@ fn main() {
         errs => {
             println!("Verify Errors: {:?}", errs);
             return;
-        },
+        }
     }
 
     let global = exec::generate_global_scope(parse_tree);
