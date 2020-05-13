@@ -20,11 +20,14 @@ pub enum Kind<'a> {
     ItemConflict(&'a ast::Item<'a>, &'a ast::Item<'a>),
     FunctionNotFound,
     FunctionMustBeName,
-    IncorrectNumberOfArgs { n_given: usize, n_expected: usize },
+    IncorrectNumberOfArgs {
+        n_given: usize,
+        n_expected: usize,
+    },
     VariableNotFound,
 
     ReturnType,
-    TypeMismatch{
+    TypeMismatch {
         expected: Vec<Type<'a>>,
         found: Type<'a>,
     },
@@ -38,6 +41,8 @@ pub enum Context {
     Expr,
     Assign,
     FnTail,
+    FnArg,
+    BinOpTypeCheck,
 }
 
 impl<'a> Error<'a> {

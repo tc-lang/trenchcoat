@@ -1,4 +1,4 @@
-use super::{Oper, Punc, Token, TokenKind};
+use super::{Punc, Token, TokenKind};
 
 /// Transform a token tree containing `Punc::Semi` and `Punc::Newline`s to a token tree containing
 /// `Punc::Sep`s.

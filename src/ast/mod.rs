@@ -752,7 +752,7 @@ fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a
 ///
 /// Valid function parameters could be: `x: int` or `p: bool`.
 fn parse_single_param<'a>(tokens: &'a [Token<'a>]) -> ParseRet<'a, (Ident<'a>, TypeExpr<'a>)> {
-    // At the moment, this is the same as struct field parsing. 
+    // At the moment, this is the same as struct field parsing.
     return types::StructField::parse(tokens)
         .map(|field| (field.name, field.type_expr))
         .with_context(ErrorContext::FnParam);
@@ -832,10 +832,18 @@ impl<'a> Stmt<'a> {
         // Because we saw the "let" keyword, we're fully expecting a let statement, so we'll produce
         // errors instead of just failing
 
+        if tokens.len() <= 1 {
+            return Some(ParseRet::single_err(Error {
+                kind: ErrorKind::ExpectingName,
+                context: ErrorContext::LetName,
+                source: None,
+            }));
+        }
+
         let mut errors = Vec::new();
 
         // 2. Ident
-        let name = next_option!(Ident::parse(tokens.get(1)).with_context(LetName), errors);
+        let name = next_option!(Ident::parse(&tokens[1]).with_context(LetName), errors);
 
         if tokens.len() <= 2 {
             errors.push(Error {
