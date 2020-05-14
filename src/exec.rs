@@ -278,7 +278,7 @@ fn exec_stmt<'a>(stmt: &Stmt, scope: Rc<RefCell<LocalScope>>) {
 }
 
 fn exec_expr(expr: &Expr, scope: Rc<RefCell<LocalScope>>) -> Value {
-    use ExprKind::{BinOp, Bracket, Empty, FnCall, Named, Num, PrefixOp};
+    use ExprKind::{BinOp, Bracket, Empty, FieldAccess, FnCall, Named, Num, PrefixOp, Struct};
 
     match &expr.kind {
         Empty => Value::Unit,
@@ -295,6 +295,8 @@ fn exec_expr(expr: &Expr, scope: Rc<RefCell<LocalScope>>) -> Value {
         Named(Ident { name, .. }) => scope.borrow().get_var(name),
         &Num(i) => Value::Int(i),
         Bracket(block) => exec_block(block, scope),
+        FieldAccess(_, _) => todo!(),
+        Struct(_) => todo!(),
     }
 }
 
