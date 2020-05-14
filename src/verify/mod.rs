@@ -192,14 +192,10 @@ impl<'a, 'b: 'a> TopLevelScope<'b> {
         ret: &'b ast::TypeExpr<'b>,
         block: &'b ast::Block<'b>,
     ) -> Vec<Error<'b>> {
-        // Storage for later
-        let empty;
-        let mut scopes: Vec<Scope>;
-
         // Create a scope containing all the function arguments.
         let check_block = if params.is_empty() {
             // If there aren't any, then this is just an empty scope.
-            empty = Scope {
+            let empty = Scope {
                 item: None,
                 parent: None,
                 top_level: self,
@@ -212,7 +208,7 @@ impl<'a, 'b: 'a> TopLevelScope<'b> {
 
             // First, we'll create each of the scopes without parents.
             // It's a shame we can't do this on the stack :(
-            scopes = params
+            let scopes = params
                 .iter()
                 .map(|param| Scope {
                     item: Some(ScopeItem {
@@ -223,7 +219,7 @@ impl<'a, 'b: 'a> TopLevelScope<'b> {
                     parent: None,
                     top_level: self,
                 })
-                .collect();
+                .collect::<Vec<_>>();
 
             // Then, we'll link each scope to it's parent. So the scope for param n gets a parent
             // of the scope for param n-1.
@@ -246,7 +242,7 @@ impl<'a, 'b: 'a> TopLevelScope<'b> {
 
         if *tail_type != ret.typ {
             errors.push(Error {
-                kind: error::Kind::TypeMismatch{
+                kind: error::Kind::TypeMismatch {
                     expected: vec![ret.typ],
                     found: *tail_type,
                 },
@@ -317,6 +313,7 @@ impl<'a, 'b: 'a> Scope<'a, 'b> {
             }]
         }
     }
+
     fn integer_check(t: &'a Type<'b>, source: ast::Node<'b>) -> Vec<Error<'b>> {
         // The left operand must be an integer type
         if *t == Type::Int || *t == Type::Uint {
@@ -332,7 +329,8 @@ impl<'a, 'b: 'a> Scope<'a, 'b> {
             }]
         }
     }
-    fn bool_check(t: &'a Type<'b>, source: ast::Node<'b>) -> Vec<Error<'b>> {
+
+    fn bool_check(t: &Type<'b>, source: ast::Node<'b>) -> Vec<Error<'b>> {
         match t {
             Type::Bool => Vec::new(),
             _ => vec![Error {
@@ -369,25 +367,25 @@ impl<'a, 'b: 'a> Scope<'a, 'b> {
         match op {
             // Boolean to Boolean operators
             Or | And => {
-                errors.extend(Self::bool_check(left, left_source));
+                errors.extend(Scope::bool_check(left, left_source));
                 output_type = &Type::Bool;
             }
             // T x T => Boolean type operators
             Eq => output_type = &Type::Bool,
             // Integer x Integer -> Integer operators
             Add | Sub | Mul | Div => {
-                errors.extend(Self::integer_check(left, left_source));
+                errors.extend(Scope::integer_check(left, left_source));
                 output_type = left;
             }
             // Integer x Integer -> Boolean operators
             Lt | Le | Gt | Ge => {
-                errors.extend(Self::integer_check(left, left_source));
+                errors.extend(Scope::integer_check(left, left_source));
                 output_type = &Type::Bool;
             }
         }
 
         // Check that the right operand has the same type as the left operand.
-        errors.extend(Self::same_type_check(
+        errors.extend(Scope::same_type_check(
             left,
             left_source,
             right,
@@ -409,7 +407,7 @@ impl<'a, 'b: 'a> Scope<'a, 'b> {
         match op {
             // Boolean -> Boolean operators
             Not => {
-                errors.extend(Self::bool_check(t, source));
+                errors.extend(Scope::bool_check(t, source));
                 output_type = &Type::Bool;
             }
         }
@@ -551,11 +549,7 @@ impl<'a, 'b: 'a> Scope<'a, 'b> {
         errors
     }
 
-    fn check_block(
-        &'a self,
-        block: &'b ast::Block<'b>,
-        start: usize,
-    ) -> (Vec<Error<'b>>, &'a Type<'b>) {
+    fn check_block(&self, block: &ast::Block<'b>, start: usize) -> (Vec<Error<'b>>, &Type<'b>) {
         let mut errors = Vec::new();
 
         // Check the statements from `start`
