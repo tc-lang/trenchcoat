@@ -221,6 +221,14 @@ pub enum ExprKind<'a> {
     /// A bracketed expression, using either curly-braces or parentheses. For example: `(x + y)` or
     /// `{ foo(x); y }`
     Bracket(Block<'a>),
+
+    /// Accessing a field using `.`
+    /// For example, `point.x` or `(a + b).x`
+    FieldAccess(Box<Expr<'a>>, Ident<'a>),
+
+    /// A struct literal, for example:
+    /// `{x: 10, y: 20}`
+    Struct(Vec<(Ident<'a>, Expr<'a>)>),
 }
 
 /// A binary operator TODO: Maybe remove?
