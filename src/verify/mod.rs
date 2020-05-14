@@ -62,7 +62,7 @@ struct TopLevelItem<'a> {
 struct Scope<'a, 'b: 'a> {
     item: Option<ScopeItem<'a, 'b>>,
     parent: Option<&'a Scope<'a, 'b>>,
-    top_level: &'a TopLevelScope<'a>,
+    top_level: &'a TopLevelScope<'b>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +126,7 @@ struct ScopeItem<'a, 'b: 'a> {
     }
 }*/
 
-impl<'a, 'b: 'a> TopLevelScope<'a> {
+impl<'a, 'b: 'a> TopLevelScope<'b> {
     /// Takes a slice of top-level items and builds a `TopLevelScope` from them.
     /// It does not verify the items as this should be done after the scope is fully constructed.
     fn build(items: &'b [ast::Item<'b>]) -> (TopLevelScope<'a>, Vec<Error<'b>>) {
@@ -193,18 +193,18 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
         block: &'b ast::Block<'b>,
     ) -> Vec<Error<'b>> {
         // Storage for later
-        let empty: Scope<'a, 'b>;
+        let empty;
         let mut scopes: Vec<Scope>;
 
         // Create a scope containing all the function arguments.
-        let fn_scope: &'a Scope<'a, 'b> = if params.is_empty() {
+        let check_block = if params.is_empty() {
             // If there aren't any, then this is just an empty scope.
-            empty = Scope::<'a, 'b>{
+            empty = Scope {
                 item: None,
                 parent: None,
                 top_level: self,
             };
-            &empty
+            empty.check_block(block, 0)
         } else {
             // We'll now create a scope for each parameter.
             // Using the notation `parent <- child`, this will create the structure:
@@ -214,7 +214,7 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
             // It's a shame we can't do this on the stack :(
             scopes = params
                 .iter()
-                .map(|param| Scope::<'a, 'b> {
+                .map(|param| Scope {
                     item: Some(ScopeItem {
                         name: param.0.name,
                         variable: Variable { typ: &param.1.typ },
@@ -238,14 +238,18 @@ impl<'a, 'b: 'a> TopLevelScope<'a> {
             }
             ///// !!!!!!!!!!!!!!! DO NOT CHANGE `scopes` AFTER THIS UNSAFE !!!!!!!!!!!!!!! /////
 
-            scopes.last().unwrap()
+            scopes.last().unwrap().check_block(block, 0)
         };
 
-        let (mut errors, tail_type) = fn_scope.check_block(block, 0);
+        //let (mut errors, tail_type) = fn_scope.check_block(block, 0);
+        let (mut errors, tail_type) = check_block;
 
         if *tail_type != ret.typ {
             errors.push(Error {
-                kind: error::Kind::ReturnType,
+                kind: error::Kind::TypeMismatch{
+                    expected: vec![ret.typ],
+                    found: *tail_type,
+                },
                 context: error::Context::FnTail,
                 source: block.tail.node(),
             })

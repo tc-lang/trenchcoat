@@ -56,8 +56,8 @@ impl<'a> PartialEq for Type<'a> {
 
         match self {
             Named(_) => panic!("cannot compare TypeExprKind::Named"),
-            Distinct{name} => match other {
-                Distinct{name: other_name} => name == other_name,
+            Distinct { name } => match other {
+                Distinct { name: other_name } => name == other_name,
                 _ => false,
             },
             Bool => match other {
