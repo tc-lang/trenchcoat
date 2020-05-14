@@ -90,60 +90,6 @@ struct ScopeItem<'a> {
     source: Option<ast::Node<'a>>,
 }
 
-/*impl<'a> ast::Expr<'a> {
-    fn type_check(&self, scope: &'a Scope<'a>) -> Vec<Error<'a>> {
-        use ast::ExprKind::*;
-        match &self.kind {
-            // The following expression kinds cannot have type errors
-            Empty | Named(_) | Num(_) => Vec::new(),
-
-            // Hand the type checking down
-            Bracket(block) => block.type_check(),
-
-            FnCall(f, args) => {
-                let mut errors = Vec::new();
-
-                // First type check each argument.
-                for arg in args {
-                    errors.extend(arg.type_check(scope));
-                }
-
-                let f_name = match &f.kind {
-                    Named(f_ident) => f_ident.name,
-                    _ => return errors, // this error will be raised elsewhere
-                };
-                let f = match scope.get_fn(f_name) {
-                    Some(f) => f,
-                    None => return errors, // again, this has already been raised
-                };
-
-                if args.len() != f.params.len() {
-                    return errors;
-                }
-
-                // Then, check that each argument has the correct type.
-            },
-        }
-    }
-    /// returns the Type which the expression evaluates to
-    fn typ(&self, scope: &'a Scope<'a>) -> &'a Type<'a> {
-        use ast::ExprKind::*;
-        match &self.kind {
-            Empty => &types::empty_struct,
-            Named(ident) => &scope.get(ident.name).unwrap().variable.typ,
-            BinOp(_, _, _) => &ast::TypeExprKind::Int,
-            PrefixOp(_, _) => &ast::TypeExprKind::Int,
-            Num(_) => &ast::TypeExprKind::Int,
-            Bracket(block) => block.tail.type_kind(scope),
-            FnCall(f, _) => match &f.kind {
-                Named(f_name) => &scope.get_fn(f_name.name).unwrap().ret.typ,
-                _ => panic!("can only call named expression"),
-                // ^ this should have been checked already
-            },
-        }
-    }
-}*/
-
 impl<'a> TopLevelScope<'a> {
     /// Takes a slice of top-level items and builds a `TopLevelScope` from them.
     /// It does not verify the items as this should be done after the scope is fully constructed.
