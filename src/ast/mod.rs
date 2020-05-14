@@ -1056,7 +1056,9 @@ impl<'a> Expr<'a> {
     }
 
     fn parse_callable(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
-        Self::parse_name_expr(tokens).or_else(|| Self::parse_fn_call(tokens))
+        Self::parse_name_expr(tokens)
+            .or_else(|| Self::parse_field_access(tokens))
+            .or_else(|| Self::parse_fn_call(tokens))
     }
 
     fn parse_name_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
@@ -1308,5 +1310,29 @@ impl<'a> Expr<'a> {
                 source,
             }
         }))
+    }
+
+    fn parse_field_access(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
+        let l = tokens.len();
+        if l < 3 {
+            return None;
+        }
+
+        // The second to last token should be a `.`
+        match &tokens[l - 2].kind {
+            TokenKind::Punc(Punc::Dot) => (),
+            _ => return None,
+        }
+
+        let mut errors = Vec::new();
+        let expr = next_option!(Self::parse_callable(&tokens[..l - 2])?, errors);
+        let name = next_option!(Ident::parse(&tokens[l - 1]), errors);
+        Some(ParseRet::with_soft_errs(
+            Expr {
+                kind: ExprKind::FieldAccess(Box::new(expr), name),
+                source: tokens,
+            },
+            errors,
+        ))
     }
 }
