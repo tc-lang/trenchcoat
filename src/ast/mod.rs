@@ -406,15 +406,15 @@ impl<'a> Item<'a> {
         let mut errors = Vec::new();
 
         // Token indexes
-        const name_idx: usize = 1;
-        const params_idx: usize = 2;
-        const ret_typ_idx: usize = 3;
+        const NAME_IDX: usize = 1;
+        const PARAMS_IDX: usize = 2;
+        const RET_TYP_IDX: usize = 3;
         // body_idx will be determined later
 
         // Function name (an identifier)
         let name = next_option!(
             tokens
-                .get(name_idx)
+                .get(NAME_IDX)
                 .map(Ident::parse)
                 .unwrap_or_else(|| ParseRet::single_err(Error {
                     kind: ErrorKind::EOF,
@@ -426,10 +426,10 @@ impl<'a> Item<'a> {
         );
 
         // Function parameters
-        let params = next_option!(parse_fn_params(tokens.get(params_idx)), errors);
+        let params = next_option!(parse_fn_params(tokens.get(PARAMS_IDX)), errors);
 
         // Function return type
-        let (ret, ret_consumed) = match parse_fn_return_type(&tokens[ret_typ_idx..]) {
+        let (ret, ret_consumed) = match parse_fn_return_type(&tokens[RET_TYP_IDX..]) {
             // If no type is specified, we default to returning an empty struct
             None => (empty_struct(), 0),
             Some(pr) => next_option!(pr, errors),
@@ -438,7 +438,7 @@ impl<'a> Item<'a> {
         // Function body, just 1 curly token.
         // This will later be replaced with a parser that may consume more tokens for the
         //  => ... syntax.
-        let body_idx = ret_typ_idx + ret_consumed;
+        let body_idx = RET_TYP_IDX + ret_consumed;
         let body = next_option!(
             Block::parse_curlies(tokens.get(body_idx)).with_context(ErrorContext::FnBody),
             errors
