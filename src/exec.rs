@@ -37,7 +37,7 @@ struct Func<'a> {
 /// only so that when it is later removed, it will become clear where the semantics must be
 /// changed. Eventually, it will not be possible to perform a bit-wise copy of a `Value` due to
 /// adding arrays as types.
-#[derive(Copy, Clone, Debug)]
+#[derive(Clone, Debug)]
 pub enum Value {
     /// The unit type, `()`
     ///
@@ -60,6 +60,10 @@ pub enum Value {
     ///
     /// These may be created by integer literals or basic arithmetic operators.
     Int(isize),
+
+    /// A struct value. We use a hashmap here for nicer ergonomics of fetching values, given that
+    /// performance is not a large concern for this interpreter.
+    Struct { fields: HashMap<String, Value> },
 }
 
 enum ParentScope<'a> {
@@ -123,7 +127,7 @@ impl<'a> LocalScope<'a> {
     /// Gets the variable associated with the given name, searching first in this scope and then in
     /// any parent scopes. If there is no such variable, this function will panic.
     fn get_var(&self, name: &str) -> Value {
-        if let Some(&v) = self.variables.get(name) {
+        if let Some(v) = self.variables.get(name).cloned() {
             return v;
         } else if let ParentScope::Local(ref p) = &self.parent {
             return p.borrow().get_var(name);
@@ -297,8 +301,26 @@ fn exec_expr(expr: &Expr, scope: Rc<RefCell<LocalScope>>) -> Value {
         Named(Ident { name, .. }) => scope.borrow().get_var(name),
         &Num(i) => Value::Int(i),
         Bracket(block) => exec_block(block, scope),
-        FieldAccess(_, _) => todo!(),
-        Struct(_) => todo!(),
+        FieldAccess(struct_expr, field) => match exec_expr(struct_expr, scope) {
+            Value::Struct { fields } => match fields.get(field.name) {
+                Some(v) => v.clone(),
+                None => panic!(
+                    "No field {:?} in struct value {:?}",
+                    field.name,
+                    Value::Struct { fields }
+                ),
+            },
+            v => panic!("Expected struct value, found {:?}", v),
+        },
+        Struct(fields) => {
+            let mut fields_map = HashMap::new();
+
+            for (field, expr) in fields {
+                fields_map.insert(field.name.into(), exec_expr(expr, scope.clone()));
+            }
+
+            Value::Struct { fields: fields_map }
+        }
         Malformed => panic!("Malformed expression cannot be evaluated"),
     }
 }
