@@ -1,7 +1,7 @@
 //! The production of the abstract syntax tree for a source file
 
 use crate::tokens::{self, Keyword, Oper, Punc, Token, TokenKind};
-use crate::types::{self, Type};
+use crate::types::{self, Type, EMPTY_STRUCT};
 use std::convert::TryFrom;
 
 mod error;
@@ -151,7 +151,7 @@ pub struct TypeExpr<'a> {
 /// Used in places such as when a function doesn't specify it's return type.
 pub fn empty_struct<'a>() -> TypeExpr<'a> {
     TypeExpr {
-        typ: types::new_empty_struct(),
+        typ: EMPTY_STRUCT.clone(),
         source: &[],
     }
 }
@@ -164,9 +164,8 @@ pub enum ItemKind<'a> {
     FnDecl {
         name: Ident<'a>,
         params: FnParams<'a>,
-        ret: TypeExpr<'a>,
+        return_type: TypeExpr<'a>,
         body: Block<'a>,
-        //tail: Option<Expr<'a>>,
     },
 }
 
@@ -281,8 +280,6 @@ pub enum PrefixOp {
     /// Unary not: `!`
     Not,
 }
-
-static PREFIX_OPS: &[PrefixOp] = &[PrefixOp::Not];
 
 ////////////////////////////////////////////////////////////////////////////////
 // Helper functions + boilerplate implementations                             //
@@ -429,7 +426,7 @@ impl<'a> Item<'a> {
         let params = next_option!(parse_fn_params(tokens.get(PARAMS_IDX)), errors);
 
         // Function return type
-        let (ret, ret_consumed) = match parse_fn_return_type(&tokens[RET_TYP_IDX..]) {
+        let (return_type, ret_consumed) = match parse_fn_return_type(&tokens[RET_TYP_IDX..]) {
             // If no type is specified, we default to returning an empty struct
             None => (empty_struct(), 0),
             Some(pr) => next_option!(pr, errors),
@@ -449,7 +446,7 @@ impl<'a> Item<'a> {
                 kind: ItemKind::FnDecl {
                     name,
                     params,
-                    ret,
+                    return_type,
                     body,
                 },
                 source: &tokens[0..body_idx + 1],
@@ -555,20 +552,6 @@ impl<'a> Ident<'a> {
     }
 
     fn parse(token: &'a Token<'a>) -> ParseRet<'a, Ident> {
-        /*let token = match token {
-            Some(t) => t,
-            None => {
-                return ParseRet::single_err(Error {
-                    kind: ErrorKind::EOF,
-                    context: ErrorContext::UnknownName,
-                    source: None,
-                })
-            }
-        };*/
-        // Changed to allow use of Ident::parse without passing an Option.
-        // An Option is only passed in 1 place so the error handling is not duplicated.
-        // It didn't really belong here anyway, ErrorKind::EOF is slightly context dependent.
-
         match token.kind {
             TokenKind::NameIdent(name) => ParseRet::Ok(Ident {
                 name,
@@ -685,11 +668,8 @@ impl<'a> types::StructField<'a> {
 impl<'a> TypeExpr<'a> {
     fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, TypeExpr<'a>> {
         use ErrorContext::NoContext;
-        use ErrorKind::ExpectingType;
-        use ErrorKind::EOF;
-        use TokenKind::Curlys;
-        use TokenKind::Parens;
-        use TokenKind::TypeIdent;
+        use ErrorKind::{ExpectingType, EOF};
+        use TokenKind::{Curlys, Parens, TypeIdent};
 
         if tokens.is_empty() {
             return ParseRet::single_err(Error {
@@ -1412,7 +1392,10 @@ impl<'a> Expr<'a> {
                                 context: ErrorContext::StructExpr,
                                 source: Some(&field[2]),
                             });
-                            return Some(ParseRet::with_soft_errs(Expr::malformed(expr_tokens), errors));
+                            return Some(ParseRet::with_soft_errs(
+                                Expr::malformed(expr_tokens),
+                                errors,
+                            ));
                         }
                     };
                     let expr = next_option!(expr_pr, errors);
@@ -1427,7 +1410,7 @@ impl<'a> Expr<'a> {
         // Simplify single item tuple to ExprKind::Bracket or else the type is a Struct
         // FIXME We need to change a struct to contain blocks rather than expressions.
         let kind = if struct_fields.len() == 1 && struct_fields[0].0.name == "0" {
-            ExprKind::Bracket(Block{
+            ExprKind::Bracket(Block {
                 body: Vec::new(),
                 tail: Box::new(struct_fields[0].1.clone()),
                 source: &tokens[0],

@@ -1,7 +1,6 @@
 //! Error definitions for ast parsing
 
-//use crate::tokens::Token;
-use crate::ast;
+use crate::ast::{Item, Node};
 use crate::types::Type;
 
 /// Errors each have a kind and a context in which it occured. These can be combined with the
@@ -12,12 +11,12 @@ pub struct Error<'a> {
     pub kind: Kind<'a>,
     pub context: Context,
     /// In the future, we should make a source stack rather than just have 1 source.
-    pub source: ast::Node<'a>,
+    pub source: Node<'a>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Kind<'a> {
-    ItemConflict(&'a ast::Item<'a>, &'a ast::Item<'a>),
+    ItemConflict(&'a Item<'a>, &'a Item<'a>),
     FunctionNotFound,
     FunctionMustBeName,
     IncorrectNumberOfArgs {
