@@ -33,6 +33,19 @@ pub enum Type<'a> {
     /// The field order is user defined (the order in which they list the fields).
     /// TODO Much later on, struct ordering will probably be done differently.
     Struct(Vec<StructField<'a>>),
+
+    /// For some reason, probably an error, the type is unknown.
+    /// Note that unknown types are not equal to other unknown types.
+    Unknown,
+}
+
+pub fn field_type<'a, 'b: 'a>(fields: &'a [StructField<'b>], name: &str) -> Option<Type<'b>> {
+    for field in fields {
+        if field.name.name == name {
+            return Some(field.typ.clone());
+        }
+    }
+    None
 }
 
 /// Represents a field of a struct.
@@ -42,7 +55,7 @@ pub enum Type<'a> {
 #[derive(Debug, Clone)]
 pub struct StructField<'a> {
     pub name: ast::Ident<'a>,
-    pub type_expr: ast::TypeExpr<'a>,
+    pub typ: Type<'a>,
 }
 
 impl<'a> PartialEq for Type<'a> {
@@ -80,6 +93,8 @@ impl<'a> PartialEq for Type<'a> {
                 Struct(other_fields) => other_fields == fields,
                 _ => false,
             },
+            // Unknown types aren't equal to other unknown types.
+            Unknown => false,
         }
     }
 }
@@ -87,11 +102,11 @@ impl<'a> PartialEq for Type<'a> {
 impl<'a> PartialEq for StructField<'a> {
     fn eq(&self, other: &Self) -> bool {
         // See the doc comment for StructField for the documentation of this comparison.
-        self.name.name == other.name.name && self.type_expr.typ == other.type_expr.typ
+        self.name.name == other.name.name && self.typ == other.typ
     }
 }
 
-pub static empty_struct: Type = Type::Struct(Vec::new());
+pub static EMPTY_STRUCT: Type = Type::Struct(Vec::new());
 pub fn new_empty_struct<'a>() -> Type<'a> {
     Type::Struct(Vec::new())
 }

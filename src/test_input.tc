@@ -12,3 +12,30 @@ fn main() {
 	print foo(1, 2);
 }
 
+fn t(my_struct: { hello: uint, world: {x: int, y: uint, z: bool} }) -> {a: int, b: bool, c: uint} {
+	{
+		a: 2,
+		b: my_struct.world.z,
+		c: my_struct.hello
+	}
+}
+
+fn u(ooo: {a: int, b: bool, c: uint}) -> int {
+	ooo.a
+}
+
+fn v(z: bool) -> { hello: int, world: {x: uint, y: uint, z: bool} } {
+	{
+		hello: 5,
+		world: {
+			x: 6,
+			y: 7,
+			z: z,
+		}
+	}
+}
+
+fn w(x: bool) -> int {
+	u(t(v(x)))
+}
+

@@ -25,6 +25,7 @@ pub enum Kind<'a> {
         n_expected: usize,
     },
     VariableNotFound,
+    AccessFieldOnNotStruct,
 
     ReturnType,
     TypeMismatch {
@@ -42,6 +43,7 @@ pub enum Context {
     Assign,
     FnTail,
     FnArg,
+    FieldAccess,
     BinOpTypeCheck,
 }
 

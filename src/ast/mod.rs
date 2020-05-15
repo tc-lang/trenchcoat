@@ -168,14 +168,14 @@ pub enum ItemKind<'a> {
     },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Ident<'a> {
     pub name: &'a str,
     pub source: &'a Token<'a>,
 }
 
 pub type FnArgs<'a> = Vec<Expr<'a>>;
-pub type FnParams<'a> = Vec<(Ident<'a>, TypeExpr<'a>)>;
+pub type FnParams<'a> = Vec<(Ident<'a>, Type<'a>)>;
 
 /// A statement
 #[derive(Debug, Clone)]
@@ -667,7 +667,13 @@ impl<'a> types::StructField<'a> {
         // Finally the type expression.
         let type_expr = next!(TypeExpr::parse(&tokens[2..]), errors);
 
-        ParseRet::with_soft_errs(types::StructField { name, type_expr }, errors)
+        ParseRet::with_soft_errs(
+            types::StructField {
+                name,
+                typ: type_expr.typ,
+            },
+            errors,
+        )
     }
 }
 
@@ -759,10 +765,10 @@ fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a
 /// type expression
 ///
 /// Valid function parameters could be: `x: int` or `p: bool`.
-fn parse_single_param<'a>(tokens: &'a [Token<'a>]) -> ParseRet<'a, (Ident<'a>, TypeExpr<'a>)> {
+fn parse_single_param<'a>(tokens: &'a [Token<'a>]) -> ParseRet<'a, (Ident<'a>, Type<'a>)> {
     // At the moment, this is the same as struct field parsing.
     return types::StructField::parse(tokens)
-        .map(|field| (field.name, field.type_expr))
+        .map(|field| (field.name, field.typ))
         .with_context(ErrorContext::FnParam);
 }
 
@@ -1059,6 +1065,7 @@ impl<'a> Expr<'a> {
         Self::parse_name_expr(tokens)
             .or_else(|| Self::parse_field_access(tokens))
             .or_else(|| Self::parse_fn_call(tokens))
+            .or_else(|| Self::parse_struct_expr(tokens))
     }
 
     fn parse_name_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
@@ -1334,5 +1341,9 @@ impl<'a> Expr<'a> {
             },
             errors,
         ))
+    }
+
+    fn parse_struct_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
+        todo!()
     }
 }
