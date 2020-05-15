@@ -47,6 +47,11 @@ pub struct Token<'a> {
     pub kind: TokenKind<'a>,
 }
 
+pub static FAKE_TOKEN: Token = Token {
+    byte_idx: 0,
+    kind: TokenKind::Fake,
+};
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind<'a> {
     Keyword(Keyword),
@@ -60,6 +65,7 @@ pub enum TokenKind<'a> {
     Squares(Vec<Token<'a>>),
     ProofLine(&'a str),
     InvalidChar(char),
+    Fake,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]

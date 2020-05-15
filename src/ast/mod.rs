@@ -5,7 +5,9 @@ use crate::types::{self, Type};
 use std::convert::TryFrom;
 
 mod error;
+mod u8_to_str;
 pub use error::{Context as ErrorContext, Error, ErrorKind};
+use u8_to_str::u8_to_str;
 
 macro_rules! next {
     ($f:expr , $errors:expr) => {{
@@ -229,6 +231,9 @@ pub enum ExprKind<'a> {
     /// A struct literal, for example:
     /// `{x: 10, y: 20}`
     Struct(Vec<(Ident<'a>, Expr<'a>)>),
+
+    /// Represents an expression which failed to parse due to an error.
+    Malformed,
 }
 
 /// A binary operator TODO: Maybe remove?
@@ -1344,6 +1349,109 @@ impl<'a> Expr<'a> {
     }
 
     fn parse_struct_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
-        todo!()
+        if tokens.len() != 1 {
+            return None;
+        }
+
+        let inner = match &tokens[0].kind {
+            TokenKind::Curlys(inner) | TokenKind::Parens(inner) => inner,
+            _ => return None,
+        };
+
+        let fields = tokens::split_at_commas(inner);
+        let mut struct_fields = Vec::with_capacity(fields.len());
+        // Keep track of the unnamed field index.
+        // FIXME
+        // For now, unnamed indexes are u8. This is definitally fine for now, since a 256 tuple is
+        // probably all we'll need! This approach is not perminant however.
+        // We are also allowing unnamed fields to be separated by named fields. Again, we should
+        // change how this works.
+        let mut unnamed_idx: u8 = 0;
+        let mut errors = Vec::new();
+
+        for field in fields.iter() {
+            let struct_field = match Expr::parse(field) {
+                // A valid expression was found, so this is an unnamed field
+                Some(expr) => {
+                    let expr = next_option!(expr, errors);
+                    // Generate a name based on the index
+                    let name = Ident {
+                        name: u8_to_str(unnamed_idx),
+                        source: &tokens::FAKE_TOKEN,
+                    };
+                    unnamed_idx += 1;
+                    (name, expr)
+                }
+                // Not a valid expression, so try parse it as a named field.
+                None => {
+                    // We need at least 3 tokens: `<name> ':' <expr>`
+                    if field.len() < 3 || field[1].kind != TokenKind::Punc(Punc::Colon) {
+                        return Some(ParseRet::single_soft_err(
+                            Expr::malformed(field),
+                            Error {
+                                kind: ErrorKind::MalformedStructField,
+                                context: ErrorContext::StructExpr,
+                                source: field.first(),
+                            },
+                        ));
+                    }
+
+                    // TODO maybe we should allow naming unnamed fields, for example
+                    // { 1: "world", 0: "hello" } would be the same as { "hello", "world" }
+                    // Something to consider.
+                    let name = next_option!(Ident::parse(&field[0]), errors);
+
+                    // Try to parse the expression
+                    let expr_tokens = &field[2..];
+                    let expr_pr = match Expr::parse(expr_tokens) {
+                        Some(expr_pr) => expr_pr,
+                        None => {
+                            // Error if there was not an expression
+                            errors.push(Error {
+                                kind: ErrorKind::MalformedStructField,
+                                context: ErrorContext::StructExpr,
+                                source: Some(&field[2]),
+                            });
+                            return Some(ParseRet::with_soft_errs(Expr::malformed(expr_tokens), errors));
+                        }
+                    };
+                    let expr = next_option!(expr_pr, errors);
+
+                    (name, expr)
+                }
+            };
+
+            struct_fields.push(struct_field);
+        }
+
+        // Simplify single item tuple to ExprKind::Bracket or else the type is a Struct
+        // FIXME We need to change a struct to contain blocks rather than expressions.
+        let kind = if struct_fields.len() == 1 && struct_fields[0].0.name == "0" {
+            ExprKind::Bracket(Block{
+                body: Vec::new(),
+                tail: Box::new(struct_fields[0].1.clone()),
+                source: &tokens[0],
+            })
+        } else {
+            ExprKind::Struct(struct_fields)
+        };
+
+        Some(ParseRet::with_soft_errs(
+            Expr {
+                kind,
+                source: tokens,
+            },
+            errors,
+        ))
+    }
+}
+
+impl<'a> Expr<'a> {
+    /// Returns a malformed expression with the given source
+    fn malformed(source: &'a [Token<'a>]) -> Expr<'a> {
+        Expr {
+            kind: ExprKind::Malformed,
+            source: source,
+        }
     }
 }

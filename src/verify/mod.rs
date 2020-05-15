@@ -389,7 +389,7 @@ impl<'a> Scope<'a> {
     /// Returns any errors and the type of the given expression when evaluated in this scope.
     fn check_expr(&'a self, expr: &'a ast::Expr) -> (Vec<Error<'a>>, Type<'a>) {
         use ast::ExprKind::{
-            BinOp, Bracket, Empty, FieldAccess, FnCall, Named, Num, PrefixOp, Struct,
+            BinOp, Bracket, Empty, FieldAccess, FnCall, Malformed, Named, Num, PrefixOp, Struct,
         };
 
         match &expr.kind {
@@ -527,6 +527,7 @@ impl<'a> Scope<'a> {
                 }
                 (errors, Type::Struct(field_types))
             }
+            Malformed => (Vec::new(), Type::Unknown), // the error will have already been raised
         }
     }
 

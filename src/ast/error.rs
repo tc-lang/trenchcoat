@@ -66,6 +66,7 @@ pub enum Context {
     ParseStmt,
     ParseAll,
     Struct,
+    StructExpr,
 }
 
 impl<'a> Error<'a> {
