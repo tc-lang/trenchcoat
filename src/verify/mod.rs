@@ -47,14 +47,14 @@ impl<'a> std::ops::Deref for TopLevelErrors<'a> {
 struct Func<'a> {
     /// the number of parameters, when types are introduced this will likely be replaced with a
     /// list of type information for each parameter.
-    params: Vec<&'a ast::TypeExpr<'a>>,
+    params: Vec<&'a Type<'a>>,
     ret: &'a ast::TypeExpr<'a>,
 }
 
 /// Currently variables are all isize so no information is required!
 #[derive(Debug, Clone)]
 struct Variable<'a> {
-    typ: &'a Type<'a>,
+    typ: Type<'a>,
 }
 
 /// The top level scope consists of named items, currently just functions. Things will be
@@ -183,7 +183,9 @@ impl<'a> TopLevelScope<'a> {
                 .map(|param| Scope {
                     item: Some(ScopeItem {
                         name: param.0.name,
-                        variable: Variable { typ: &param.1.typ },
+                        variable: Variable {
+                            typ: param.1.clone(),
+                        },
                         source: Some(param.0.node()),
                     }),
                     parent: None,
@@ -207,7 +209,7 @@ impl<'a> TopLevelScope<'a> {
             scopes.last().unwrap().check_block(block, 0)
         };
 
-        if *tail_type != ret.typ {
+        if tail_type != ret.typ {
             errors.push(Error {
                 kind: error::Kind::TypeMismatch {
                     expected: vec![ret.typ.clone()],
@@ -262,12 +264,12 @@ impl<'a> Scope<'a> {
     }
 
     fn same_type_check(
-        left: &'a Type,
-        left_source: ast::Node,
-        right: &'a Type,
+        left: &Type<'a>,
+        _left_source: ast::Node,
+        right: &Type<'a>,
         right_source: ast::Node<'a>,
     ) -> Vec<Error<'a>> {
-        if *right == *left {
+        if right == left {
             Vec::new()
         } else {
             vec![Error {
@@ -281,7 +283,7 @@ impl<'a> Scope<'a> {
         }
     }
 
-    fn integer_check(t: &'a Type, source: ast::Node<'a>) -> Vec<Error<'a>> {
+    fn integer_check(t: &Type<'a>, source: ast::Node<'a>) -> Vec<Error<'a>> {
         // The left operand must be an integer type
         if *t == Type::Int || *t == Type::Uint {
             Vec::new()
@@ -297,7 +299,7 @@ impl<'a> Scope<'a> {
         }
     }
 
-    fn bool_check(t: &'a Type, source: ast::Node<'a>) -> Vec<Error<'a>> {
+    fn bool_check(t: &Type<'a>, source: ast::Node<'a>) -> Vec<Error<'a>> {
         match t {
             Type::Bool => Vec::new(),
             _ => vec![Error {
@@ -322,11 +324,11 @@ impl<'a> Scope<'a> {
     /// `a == b` is always `Type::Bool` whereas the type of `a + b` is the type of `a`.
     fn bin_op_types(
         op: &'a ast::BinOp,
-        left: &'a Type,
+        left: &Type<'a>,
         left_source: ast::Node<'a>,
-        right: &'a Type,
+        right: &Type<'a>,
         right_source: ast::Node<'a>,
-    ) -> (Vec<Error<'a>>, &'a Type<'a>) {
+    ) -> (Vec<Error<'a>>, Type<'a>) {
         use ast::BinOp::*;
 
         let mut errors: Vec<Error> = Vec::new();
@@ -335,28 +337,28 @@ impl<'a> Scope<'a> {
         match op {
             // Boolean to Boolean operators
             Or | And => {
-                errors.extend(Scope::bool_check(left, left_source.clone()));
-                output_type = &Type::Bool;
+                errors.extend(Scope::bool_check(&left, left_source.clone()));
+                output_type = Type::Bool;
             }
             // T x T => Boolean type operators
-            Eq => output_type = &Type::Bool,
+            Eq => output_type = Type::Bool,
             // Integer x Integer -> Integer operators
             Add | Sub | Mul | Div => {
-                errors.extend(Scope::integer_check(left, left_source.clone()));
-                output_type = left;
+                errors.extend(Scope::integer_check(&left, left_source.clone()));
+                output_type = left.clone();
             }
             // Integer x Integer -> Boolean operators
             Lt | Le | Gt | Ge => {
-                errors.extend(Scope::integer_check(left, left_source.clone()));
-                output_type = &Type::Bool;
+                errors.extend(Scope::integer_check(&left, left_source.clone()));
+                output_type = Type::Bool;
             }
         }
 
         // Check that the right operand has the same type as the left operand.
         errors.extend(Scope::same_type_check(
-            left,
+            &left,
             left_source,
-            right,
+            &right,
             right_source,
         ));
 
@@ -364,10 +366,10 @@ impl<'a> Scope<'a> {
     }
 
     fn prefix_op_types(
-        op: &'a ast::PrefixOp,
-        t: &'a Type,
+        op: &ast::PrefixOp,
+        t: &Type<'a>,
         source: ast::Node<'a>,
-    ) -> (Vec<Error<'a>>, &'a Type<'a>) {
+    ) -> (Vec<Error<'a>>, Type<'a>) {
         use ast::PrefixOp::*;
 
         let mut errors = Vec::new();
@@ -376,8 +378,8 @@ impl<'a> Scope<'a> {
         match op {
             // Boolean -> Boolean operators
             Not => {
-                errors.extend(Scope::bool_check(t, source));
-                output_type = &Type::Bool;
+                errors.extend(Scope::bool_check(&t, source));
+                output_type = Type::Bool;
             }
         }
 
@@ -385,7 +387,7 @@ impl<'a> Scope<'a> {
     }
 
     /// Returns any errors and the type of the given expression when evaluated in this scope.
-    fn check_expr(&'a self, expr: &'a ast::Expr) -> (Vec<Error<'a>>, &'a Type<'a>) {
+    fn check_expr(&'a self, expr: &'a ast::Expr) -> (Vec<Error<'a>>, Type<'a>) {
         use ast::ExprKind::{
             BinOp, Bracket, Empty, FieldAccess, FnCall, Named, Num, PrefixOp, Struct,
         };
@@ -396,25 +398,25 @@ impl<'a> Scope<'a> {
                 let (right_errors, right_type) = self.check_expr(right);
                 errors.extend(right_errors);
                 let (op_errors, final_type) =
-                    Self::bin_op_types(op, left_type, left.node(), right_type, right.node());
+                    Self::bin_op_types(op, &left_type, left.node(), &right_type, right.node());
                 errors.extend(op_errors);
                 (errors, final_type)
             }
             PrefixOp(op, inner_expr) => {
                 let (mut errors, expr_type) = self.check_expr(inner_expr);
                 let (op_errors, final_type) =
-                    Self::prefix_op_types(op, expr_type, inner_expr.node());
+                    Self::prefix_op_types(op, &expr_type, inner_expr.node());
                 errors.extend(op_errors);
                 (errors, final_type)
             }
-            Num(_) => (Vec::new(), &Type::Int), // Woo! No errors here!
+            Num(_) => (Vec::new(), Type::Int), // Woo! No errors here!
             // (Overflows will be handled when the int is
             //  parsed? If the interpreter is going to parse
             //  from the AST then we can validate here for
             //  now.)
             Bracket(block) => self.check_block(&block, 0),
             Named(name) => match self.get(name.name) {
-                Some(item) => (Vec::new(), item.variable.typ),
+                Some(item) => (Vec::new(), item.variable.typ.clone()),
                 None => (
                     vec![Error {
                         kind: error::Kind::VariableNotFound,
@@ -424,7 +426,7 @@ impl<'a> Scope<'a> {
                     // TODO Maybe we add a special `Unknown` type which this generates.
                     // Then, when a type error occurs, it would not be raised since this error
                     // would have already happened.
-                    &types::empty_struct,
+                    Type::Unknown,
                 ),
             },
             FnCall(fn_expr, args) => {
@@ -437,7 +439,7 @@ impl<'a> Scope<'a> {
                                 context: error::Context::Expr,
                                 source: fn_expr.node(),
                             }],
-                            &types::empty_struct,
+                            Type::Unknown,
                         )
                     }
                 };
@@ -451,7 +453,7 @@ impl<'a> Scope<'a> {
                                 context: error::Context::Expr,
                                 source: fn_expr.node(),
                             }],
-                            &types::empty_struct,
+                            Type::Unknown,
                         )
                     }
                 };
@@ -466,7 +468,7 @@ impl<'a> Scope<'a> {
                             context: error::Context::Expr,
                             source: ast::Node::Args(&args),
                         }],
-                        &types::empty_struct,
+                        Type::Unknown,
                     );
                 }
 
@@ -474,10 +476,10 @@ impl<'a> Scope<'a> {
                 for i in 0..args.len() {
                     let (arg_errors, arg_type) = self.check_expr(&args[i]);
                     errors.extend(arg_errors);
-                    if *arg_type != func.params[i].typ {
+                    if arg_type != *func.params[i] {
                         errors.push(Error {
                             kind: error::Kind::TypeMismatch {
-                                expected: vec![func.params[i].typ.clone()],
+                                expected: vec![func.params[i].clone()],
                                 found: arg_type.clone(),
                             },
                             context: error::Context::FnArg,
@@ -486,11 +488,45 @@ impl<'a> Scope<'a> {
                     }
                 }
 
-                (errors, &func.ret.typ)
+                (errors, func.ret.typ.clone())
             }
-            Empty => (Vec::new(), &types::empty_struct),
-            FieldAccess(_, _) => todo!(),
-            Struct(_) => todo!(),
+            Empty => (Vec::new(), types::EMPTY_STRUCT.clone()),
+            FieldAccess(expr, field_ident) => {
+                let (mut errors, expr_type) = self.check_expr(expr);
+                let fields = match &expr_type {
+                    Type::Struct(fields) => fields,
+                    _ => {
+                        errors.push(Error {
+                            kind: error::Kind::AccessFieldOnNotStruct,
+                            context: error::Context::FieldAccess,
+                            source: expr.node(),
+                        });
+                        return (errors, Type::Unknown);
+                    }
+                };
+                let field_type = match types::field_type(fields, field_ident.name) {
+                    Some(t) => t,
+                    None => {
+                        errors.push(Error {
+                            kind: error::Kind::AccessFieldOnNotStruct,
+                            context: error::Context::FieldAccess,
+                            source: expr.node(),
+                        });
+                        Type::Unknown
+                    }
+                };
+                (errors, field_type)
+            }
+            Struct(fields) => {
+                let mut errors = Vec::new();
+                let mut field_types = Vec::with_capacity(fields.len());
+                for (name, expr) in fields {
+                    let (expr_errors, typ) = self.check_expr(expr);
+                    errors.extend(expr_errors);
+                    field_types.push(types::StructField { name: *name, typ });
+                }
+                (errors, Type::Struct(field_types))
+            }
         }
     }
 
@@ -500,7 +536,7 @@ impl<'a> Scope<'a> {
         errors.extend(expr_errors);
         match self.get(ident.name) {
             Some(item) => {
-                if *item.variable.typ != *expr_type {
+                if item.variable.typ != expr_type {
                     errors.push(Error {
                         kind: error::Kind::TypeMismatch {
                             expected: vec![item.variable.typ.clone()],
@@ -520,7 +556,7 @@ impl<'a> Scope<'a> {
         errors
     }
 
-    fn check_block(&'a self, block: &'a ast::Block, start: usize) -> (Vec<Error<'a>>, &Type<'a>) {
+    fn check_block(&'a self, block: &'a ast::Block, start: usize) -> (Vec<Error<'a>>, Type<'a>) {
         use ast::StmtKind::{Assign, Eval, Let, Print};
 
         let mut errors = Vec::new();
