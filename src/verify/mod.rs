@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
-use crate::ast;
+use crate::ast::{
+    self, BinOp, Block, Expr, ExprKind, FnArgs, FnParams, Ident, Item, ItemKind, PrefixOp,
+    StmtKind, TypeExpr,
+};
 use crate::types::{self, Type};
 pub mod error;
 use error::Error;
@@ -19,12 +22,12 @@ use std::mem::transmute; // :)
 
 pub struct TopLevelErrors<'a>(TopLevelScope<'a>);
 
-pub fn verify<'a>(items: &'a [ast::Item<'a>]) -> TopLevelErrors<'a> {
+pub fn verify<'a>(items: &'a [Item<'a>]) -> TopLevelErrors<'a> {
     let mut top_level = TopLevelErrors(TopLevelScope::build(items));
 
     unsafe {
         let top_level: &mut TopLevelScope = transmute(&mut top_level.0);
-        let items: &[ast::Item] = transmute(items);
+        let items: &[Item] = transmute(items);
 
         top_level.check_items(items);
     }
@@ -48,7 +51,7 @@ struct Func<'a> {
     /// the number of parameters, when types are introduced this will likely be replaced with a
     /// list of type information for each parameter.
     params: Vec<&'a Type<'a>>,
-    ret: &'a ast::TypeExpr<'a>,
+    ret: &'a TypeExpr<'a>,
 }
 
 /// Currently variables are all isize so no information is required!
@@ -70,7 +73,7 @@ struct TopLevelScope<'a> {
 #[derive(Debug, Clone)]
 struct TopLevelItem<'a> {
     func: Func<'a>,
-    source: &'a ast::Item<'a>,
+    source: &'a Item<'a>,
 }
 
 /// Represents a lexical scope. These usually contain ScopeItems which are named variables.
@@ -93,7 +96,7 @@ struct ScopeItem<'a> {
 impl<'a> TopLevelScope<'a> {
     /// Takes a slice of top-level items and builds a `TopLevelScope` from them.
     /// It does not verify the items as this should be done after the scope is fully constructed.
-    fn build(items: &'a [ast::Item]) -> Self {
+    fn build(items: &'a [Item]) -> Self {
         let mut top = TopLevelScope {
             items: HashMap::with_capacity(items.len()),
             errors: Vec::new(),
@@ -101,18 +104,18 @@ impl<'a> TopLevelScope<'a> {
 
         for item in items {
             match &item.kind {
-                ast::ItemKind::FnDecl {
+                ItemKind::FnDecl {
                     name,
                     params,
-                    ret,
-                    body: _,
+                    return_type,
+                    ..
                 } => {
                     if let Some(conflict) = top.items.insert(
                         name.name,
                         TopLevelItem {
                             func: Func {
                                 params: params.iter().map(|param| &param.1).collect(),
-                                ret,
+                                ret: return_type,
                             },
                             source: item,
                         },
@@ -132,18 +135,18 @@ impl<'a> TopLevelScope<'a> {
 
     /// Checks a single top-level item (currently just functions), and adds any errors to the
     /// internal set
-    fn check_item(&'a mut self, item: &'a ast::ItemKind) {
+    fn check_item(&'a mut self, item: &'a ItemKind) {
         match item {
-            ast::ItemKind::FnDecl {
-                name: _,
+            ItemKind::FnDecl {
                 params,
-                ret,
+                return_type,
                 body,
-            } => self.check_fn(params, ret, body),
+                ..
+            } => self.check_fn(params, return_type, body),
         }
     }
 
-    fn check_items(&'a mut self, items: &'a [ast::Item]) {
+    fn check_items(&'a mut self, items: &'a [Item]) {
         for item in items {
             let this: *mut TopLevelScope = self as *mut TopLevelScope;
             let this: &mut TopLevelScope = unsafe { &mut *this };
@@ -154,12 +157,7 @@ impl<'a> TopLevelScope<'a> {
 
     /// Given a TopLevelScope, check_fn checks the body of the function and adds any errors to the
     /// internal set
-    fn check_fn(
-        &'a mut self,
-        params: &'a ast::FnParams,
-        ret: &'a ast::TypeExpr,
-        block: &'a ast::Block,
-    ) {
+    fn check_fn(&'a mut self, params: &'a FnParams, ret: &'a TypeExpr, block: &'a Block) {
         // Create a scope containing all the function arguments.
         let empty;
         let mut scopes;
@@ -236,6 +234,7 @@ impl<'a> Scope<'a> {
             top_level: parent.top_level,
         }
     }
+
     /// Creates a new empty scope - with no item and no parent.
     fn empty(top_level: &'a TopLevelScope) -> Self {
         Scope {
@@ -323,13 +322,13 @@ impl<'a> Scope<'a> {
     /// The type returned is dependent on the operator and the operands. For example, the type of
     /// `a == b` is always `Type::Bool` whereas the type of `a + b` is the type of `a`.
     fn bin_op_types(
-        op: &'a ast::BinOp,
+        op: &'a BinOp,
         left: &Type<'a>,
         left_source: ast::Node<'a>,
         right: &Type<'a>,
         right_source: ast::Node<'a>,
     ) -> (Vec<Error<'a>>, Type<'a>) {
-        use ast::BinOp::*;
+        use BinOp::{Add, And, Div, Eq, Ge, Gt, Le, Lt, Mul, Or, Sub};
 
         let mut errors: Vec<Error> = Vec::new();
         let output_type;
@@ -366,11 +365,11 @@ impl<'a> Scope<'a> {
     }
 
     fn prefix_op_types(
-        op: &ast::PrefixOp,
+        op: &PrefixOp,
         t: &Type<'a>,
         source: ast::Node<'a>,
     ) -> (Vec<Error<'a>>, Type<'a>) {
-        use ast::PrefixOp::*;
+        use PrefixOp::Not;
 
         let mut errors = Vec::new();
         let output_type;
@@ -387,8 +386,8 @@ impl<'a> Scope<'a> {
     }
 
     /// Returns any errors and the type of the given expression when evaluated in this scope.
-    fn check_expr(&'a self, expr: &'a ast::Expr) -> (Vec<Error<'a>>, Type<'a>) {
-        use ast::ExprKind::{
+    fn check_expr(&'a self, expr: &'a Expr) -> (Vec<Error<'a>>, Type<'a>) {
+        use ExprKind::{
             BinOp, Bracket, Empty, FieldAccess, FnCall, Malformed, Named, Num, PrefixOp, Struct,
         };
 
@@ -429,68 +428,7 @@ impl<'a> Scope<'a> {
                     Type::Unknown,
                 ),
             },
-            FnCall(fn_expr, args) => {
-                let name = match &fn_expr.kind {
-                    ast::ExprKind::Named(name) => name.name,
-                    _ => {
-                        return (
-                            vec![Error {
-                                kind: error::Kind::FunctionMustBeName,
-                                context: error::Context::Expr,
-                                source: fn_expr.node(),
-                            }],
-                            Type::Unknown,
-                        )
-                    }
-                };
-
-                let func = match self.get_fn(name) {
-                    Some(f) => f,
-                    None => {
-                        return (
-                            vec![Error {
-                                kind: error::Kind::FunctionNotFound,
-                                context: error::Context::Expr,
-                                source: fn_expr.node(),
-                            }],
-                            Type::Unknown,
-                        )
-                    }
-                };
-
-                if func.params.len() != args.len() {
-                    return (
-                        vec![Error {
-                            kind: error::Kind::IncorrectNumberOfArgs {
-                                n_given: args.len(),
-                                n_expected: func.params.len(),
-                            },
-                            context: error::Context::Expr,
-                            source: ast::Node::Args(&args),
-                        }],
-                        Type::Unknown,
-                    );
-                }
-
-                let mut errors = Vec::new();
-                for i in 0..args.len() {
-                    let (arg_errors, arg_type) = self.check_expr(&args[i]);
-                    errors.extend(arg_errors);
-                    if arg_type != *func.params[i] {
-                        errors.push(Error {
-                            kind: error::Kind::TypeMismatch {
-                                expected: vec![func.params[i].clone()],
-                                found: arg_type.clone(),
-                            },
-                            context: error::Context::FnArg,
-                            source: args[i].node(),
-                        });
-                    }
-                }
-
-                (errors, func.ret.typ.clone())
-            }
-            Empty => (Vec::new(), types::EMPTY_STRUCT.clone()),
+            FnCall(fn_expr, args) => self.check_fn_call_expr(fn_expr, args),
             FieldAccess(expr, field_ident) => {
                 let (mut errors, expr_type) = self.check_expr(expr);
                 let fields = match &expr_type {
@@ -527,11 +465,78 @@ impl<'a> Scope<'a> {
                 }
                 (errors, Type::Struct(field_types))
             }
+            Empty => (Vec::new(), types::EMPTY_STRUCT.clone()),
             Malformed => (Vec::new(), Type::Unknown), // the error will have already been raised
         }
     }
 
-    fn check_assign(&'a self, ident: &'a ast::Ident, expr: &'a ast::Expr) -> Vec<Error<'a>> {
+    fn check_fn_call_expr(
+        &'a self,
+        fn_expr: &'a Expr,
+        args: &'a FnArgs<'a>,
+    ) -> (Vec<Error<'a>>, Type<'a>) {
+        let name = match &fn_expr.kind {
+            ExprKind::Named(name) => name.name,
+            _ => {
+                return (
+                    vec![Error {
+                        kind: error::Kind::FunctionMustBeName,
+                        context: error::Context::Expr,
+                        source: fn_expr.node(),
+                    }],
+                    Type::Unknown,
+                )
+            }
+        };
+
+        let func = match self.get_fn(name) {
+            Some(f) => f,
+            None => {
+                return (
+                    vec![Error {
+                        kind: error::Kind::FunctionNotFound,
+                        context: error::Context::Expr,
+                        source: fn_expr.node(),
+                    }],
+                    Type::Unknown,
+                )
+            }
+        };
+
+        if func.params.len() != args.len() {
+            return (
+                vec![Error {
+                    kind: error::Kind::IncorrectNumberOfArgs {
+                        n_given: args.len(),
+                        n_expected: func.params.len(),
+                    },
+                    context: error::Context::Expr,
+                    source: ast::Node::Args(&args),
+                }],
+                Type::Unknown,
+            );
+        }
+
+        let mut errors = Vec::new();
+        for i in 0..args.len() {
+            let (arg_errors, arg_type) = self.check_expr(&args[i]);
+            errors.extend(arg_errors);
+            if arg_type != *func.params[i] {
+                errors.push(Error {
+                    kind: error::Kind::TypeMismatch {
+                        expected: vec![func.params[i].clone()],
+                        found: arg_type.clone(),
+                    },
+                    context: error::Context::FnArg,
+                    source: args[i].node(),
+                });
+            }
+        }
+
+        (errors, func.ret.typ.clone())
+    }
+
+    fn check_assign(&'a self, ident: &'a Ident, expr: &'a Expr) -> Vec<Error<'a>> {
         let mut errors = Vec::new();
         let (expr_errors, expr_type) = self.check_expr(&expr);
         errors.extend(expr_errors);
@@ -557,8 +562,8 @@ impl<'a> Scope<'a> {
         errors
     }
 
-    fn check_block(&'a self, block: &'a ast::Block, start: usize) -> (Vec<Error<'a>>, Type<'a>) {
-        use ast::StmtKind::{Assign, Eval, Let, Print};
+    fn check_block(&'a self, block: &'a Block, start: usize) -> (Vec<Error<'a>>, Type<'a>) {
+        use StmtKind::{Assign, Eval, Let, Print};
 
         let mut errors = Vec::new();
 

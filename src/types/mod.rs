@@ -1,4 +1,4 @@
-use crate::ast;
+use crate::ast::Ident;
 
 /// The kind of type expression
 ///
@@ -9,6 +9,8 @@ pub enum Type<'a> {
     /// These cannot be compared since they may be aliases so Named types should be resolved before
     /// verification.
     Named(&'a str),
+
+    /*
     /// A distinct type is a user defined type.
     ///
     /// Two distinct types may have the same underlying type, for example:
@@ -23,13 +25,18 @@ pub enum Type<'a> {
         /// which also includes source modules.
         name: &'a str,
     },
+    */
     /// A boolean
     Bool,
+
     /// An integer (architecture specific size)
     Int,
+
     /// An unsigned integer (architecture specific size)
     Uint,
+
     /// A struct consists of ordered fields.
+    ///
     /// The field order is user defined (the order in which they list the fields).
     /// TODO Much later on, struct ordering will probably be done differently.
     Struct(Vec<StructField<'a>>),
@@ -49,30 +56,23 @@ pub fn field_type<'a, 'b: 'a>(fields: &'a [StructField<'b>], name: &str) -> Opti
 }
 
 /// Represents a field of a struct.
-/// The typ field is a TypeExpr so to include source information. Equality checks between struct
-/// fields do not compare the source and so 2 struct fields are equal iff they have the same name
-/// and type.
 #[derive(Debug, Clone)]
 pub struct StructField<'a> {
-    pub name: ast::Ident<'a>,
+    pub name: Ident<'a>,
     pub typ: Type<'a>,
 }
 
 impl<'a> PartialEq for Type<'a> {
     fn eq(&self, other: &Self) -> bool {
-        use Type::*;
+        use Type::{Bool, Int, Named, Struct, Uint, Unknown};
 
         // So struct fields are equal iff they have the same name and type.
         if let Named(_) = other {
-            panic!("cannot compare TypeExprKind::Named");
+            panic!("cannot compare Type::Named");
         }
 
         match self {
-            Named(_) => panic!("cannot compare TypeExprKind::Named"),
-            Distinct { name } => match other {
-                Distinct { name: other_name } => name == other_name,
-                _ => false,
-            },
+            Named(_) => panic!("cannot compare Type::Named"),
             Bool => match other {
                 Bool => true,
                 _ => false,
@@ -107,6 +107,3 @@ impl<'a> PartialEq for StructField<'a> {
 }
 
 pub static EMPTY_STRUCT: Type = Type::Struct(Vec::new());
-pub fn new_empty_struct<'a>() -> Type<'a> {
-    Type::Struct(Vec::new())
-}

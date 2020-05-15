@@ -33,8 +33,6 @@ pub enum ErrorKind {
     ExpectingStmt,
     ExpectingType,
     ExpectingIdent,
-    ExpectingComma,
-    ExpectingTypeIdent,
     ExpectingColon,
     MalformedStructField,
     UnexpectedToken,

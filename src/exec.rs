@@ -82,6 +82,16 @@ impl Value {
             _ => panic!("{}", panic_msg.as_ref()),
         }
     }
+
+    /// Unwraps the `Value` into the inner value of the `Bool` variant
+    ///
+    /// If the value is not of type `Bool`, this will panic with the given message.
+    fn expect_bool(self, panic_msg: impl AsRef<str>) -> bool {
+        match self {
+            Value::Bool(b) => b,
+            _ => panic!("{}", panic_msg.as_ref()),
+        }
+    }
 }
 
 /// Generates the global scope of functions (with their attached bodies) from the list of items
@@ -93,10 +103,7 @@ pub fn generate_global_scope<'a>(items: Vec<Item<'a>>) -> GlobalScope<'a> {
     for item in items.into_iter() {
         match item.kind {
             ItemKind::FnDecl {
-                name,
-                params,
-                ret: _,
-                body,
+                name, params, body, ..
             } => {
                 // If we've already added a function with this name ot the global scope, we'll
                 // panic. We should have already validated that there aren't any name conflicts.
@@ -161,11 +168,6 @@ impl<'a> LocalScope<'a> {
 }
 
 impl<'a> GlobalScope<'a> {
-    /// Returns whether the global scope contains a function with the given name
-    pub fn contains(&self, fn_name: &str) -> bool {
-        self.funcs.contains_key(fn_name)
-    }
-
     /// Returns the number of arguments expected by the function in the global scope with the given
     /// name, if it exists.
     pub fn num_args(&self, fn_name: &str) -> Option<usize> {
@@ -344,33 +346,54 @@ fn exec_fn_call(fn_expr: &Expr, args: &FnArgs, scope: Rc<RefCell<LocalScope>>) -
     global_scope.exec(fn_name, args)
 }
 
+// It should be noted that certain boolean operators that would be expected to short-circuit in
+// other languages do not here.
 fn perform_bin_op(lhs: Value, op: BinOp, rhs: Value) -> Value {
     use BinOp::{Add, And, Div, Eq, Ge, Gt, Le, Lt, Mul, Or, Sub};
+    use Value::{Bool, Int};
 
-    let lhs = lhs.expect_int("expected integer-valued left-hand-side expressoin");
-    let rhs = rhs.expect_int("expected integer-valued right-hand-side expressoin");
+    match op {
+        // Boolean x Boolean
+        Or | And => {
+            let lhs = lhs.expect_bool("expected boolean-valued left-hand-side expression");
+            let rhs = rhs.expect_bool("expected boolean-valued right-hand-side expression");
 
-    let v = match op {
-        Add => lhs + rhs,
-        Sub => lhs - rhs,
-        Mul => lhs * rhs,
-        Div => lhs / rhs,
-
-        // @QUICK-FIX: boolean operators are currently unimplemented
-        Eq | Lt | Le | Gt | Ge | Or | And => {
-            panic!("boolean operators are currently unimplemented")
+            match op {
+                Or => Bool(lhs || rhs),
+                And => Bool(lhs && rhs),
+                _ => unreachable!(),
+            }
         }
-    };
 
-    Value::Int(v)
+        // T x T
+        Eq => todo!(),
+
+        // Integer x Integer
+        _ => {
+            let lhs = lhs.expect_int("expected integer-valued left-hand-side expression");
+            let rhs = rhs.expect_int("expected integer-valued right-hand-side expression");
+
+            match op {
+                Add => Int(lhs + rhs),
+                Sub => Int(lhs - rhs),
+                Mul => Int(lhs * rhs),
+                Div => Int(lhs / rhs),
+                Lt => Bool(lhs < rhs),
+                Le => Bool(lhs <= rhs),
+                Gt => Bool(lhs > rhs),
+                Ge => Bool(lhs >= rhs),
+                _ => unreachable!(),
+            }
+        }
+    }
 }
 
 fn perform_prefix_op(op: PrefixOp, rhs: Value) -> Value {
-    use PrefixOp::Not;
-
     match op {
-        // @QUICK-FIX: boolean operators are currently unimplemented
-        Not => panic!("boolean operators are currently unimplemented"),
+        PrefixOp::Not => {
+            let rhs = rhs.expect_bool("expected boolean-valued right-hand-side expression");
+            Value::Bool(!rhs)
+        }
     }
 }
 

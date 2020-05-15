@@ -6,7 +6,7 @@ pub fn tokenize(s: &str) -> Vec<Token> {
 
 /// Produces all of the invalid tokens from a list, recursively
 pub fn collect_invalid<'a>(tokens: &'a [Token<'a>]) -> Vec<&'a Token<'a>> {
-    use TokenKind::*;
+    use TokenKind::{Curlys, InvalidChar, Parens, Squares};
 
     // This is inefficient, but that's okay. We don't need this to be industrial grade right now.
     let mut invalids = Vec::new();
