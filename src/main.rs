@@ -39,7 +39,7 @@ fn main() {
         }
     };
 
-    println!("{:?}", parse_tree);
+    // println!("{:?}", parse_tree);
 
     match &verify(&parse_tree)[..] {
         [] => (),

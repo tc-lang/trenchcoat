@@ -5,14 +5,18 @@ fn hi(x: int) -> int {
 }
 
 fn foo(x: int, y: int) -> int {
-	x * 2 + y
+	x*2 + y + 2*bar(x, y, 3)
+}
+
+fn bar(x: int, y: int, z: int) -> int {
+	x * (y + z) + y
 }
 
 fn main() {
 	print foo(1, 2);
 }
 
-fn t(my_struct: { hello: uint, world: {x: int, y: uint, z: bool} }) -> {a: int, b: bool, c: uint} {
+fn t(my_struct: { hello: int, world: {x: int, y: int, z: bool} }) -> {a: int, b: bool, c: int} {
 	{
 		a: 2,
 		b: my_struct.world.z,
@@ -20,11 +24,11 @@ fn t(my_struct: { hello: uint, world: {x: int, y: uint, z: bool} }) -> {a: int, 
 	}
 }
 
-fn u(ooo: {a: int, b: bool, c: uint}) -> int {
+fn u(ooo: {a: int, b: bool, c: int}) -> int {
 	ooo.a
 }
 
-fn v(z: bool) -> { hello: int, world: {x: uint, y: uint, z: bool} } {
+fn v(z: bool) -> { hello: int, world: {x: int, y: int, z: bool} } {
 	{
 		hello: 5,
 		world: {

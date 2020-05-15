@@ -278,7 +278,9 @@ fn exec_stmt<'a>(stmt: &Stmt, scope: Rc<RefCell<LocalScope>>) {
 }
 
 fn exec_expr(expr: &Expr, scope: Rc<RefCell<LocalScope>>) -> Value {
-    use ExprKind::{BinOp, Bracket, Empty, FieldAccess, FnCall, Named, Num, PrefixOp, Struct};
+    use ExprKind::{
+        BinOp, Bracket, Empty, FieldAccess, FnCall, Malformed, Named, Num, PrefixOp, Struct,
+    };
 
     match &expr.kind {
         Empty => Value::Unit,
@@ -297,6 +299,7 @@ fn exec_expr(expr: &Expr, scope: Rc<RefCell<LocalScope>>) -> Value {
         Bracket(block) => exec_block(block, scope),
         FieldAccess(_, _) => todo!(),
         Struct(_) => todo!(),
+        Malformed => panic!("Malformed expression cannot be evaluated"),
     }
 }
 
