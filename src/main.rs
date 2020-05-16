@@ -2,6 +2,7 @@
 
 mod ast;
 mod exec;
+mod proof;
 mod tokens;
 mod types;
 mod verify;

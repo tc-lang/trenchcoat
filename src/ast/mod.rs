@@ -39,7 +39,7 @@ macro_rules! next_option {
 }
 
 mod error;
-mod proof;
+pub mod proof;
 mod u8_to_str;
 
 pub use error::{Context as ErrorContext, Error, ErrorKind};
