@@ -441,18 +441,14 @@ impl<'a> Item<'a> {
         );
 
         // Function parameters
-        let params = next_option!(
-            parse_fn_params(tokens.get(params_idx)),
-            errors
-        );
+        let params = next_option!(parse_fn_params(tokens.get(params_idx)), errors);
 
         // Function return type
-        let (return_type, ret_consumed) =
-            match parse_fn_return_type(&tokens[ret_typ_idx..]) {
-                // If no type is specified, we default to returning an empty struct
-                None => (empty_struct(), 0),
-                Some(pr) => next_option!(pr, errors),
-            };
+        let (return_type, ret_consumed) = match parse_fn_return_type(&tokens[ret_typ_idx..]) {
+            // If no type is specified, we default to returning an empty struct
+            None => (empty_struct(), 0),
+            Some(pr) => next_option!(pr, errors),
+        };
 
         // Function body, just 1 curly token.
         // This will later be replaced with a parser that may consume more tokens for the
