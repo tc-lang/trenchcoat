@@ -63,7 +63,7 @@ pub enum TokenKind<'a> {
     Parens(Vec<Token<'a>>),
     Curlys(Vec<Token<'a>>),
     Squares(Vec<Token<'a>>),
-    ProofLine(&'a str),
+    ProofLine(Vec<Token<'a>>),
     InvalidChar(char),
     Fake,
 }
@@ -76,6 +76,8 @@ pub enum Keyword {
     Type,
     Return,
     Print,
+    /// The `require` keyword, used for parsing proof statments
+    Require,
 }
 
 impl Keyword {
@@ -108,6 +110,7 @@ pub enum Oper {
     GtOrEqual,
     Not,
     RightArrow,
+    Implies,
     Or,
     And,
 }
@@ -129,6 +132,7 @@ impl Oper {
             ">=" => Some(GtOrEqual),
             "!" => Some(Not),
             "->" => Some(RightArrow),
+            "=>" => Some(Implies),
             "||" => Some(Or),
             "&&" => Some(And),
             _ => None,
@@ -283,7 +287,7 @@ impl TokenKind<'_> {
     /// Attempts to parse any of `TokenKind::{NameIdent, TypeIdent, Keyword}`
     fn name(s: &str) -> Option<(TokenKind, usize)> {
         let (name, i) = Self::consume(
-            |c| c.is_ascii_lowercase(),
+            |c| c.is_ascii_lowercase() || c == '_',
             |c| c.is_ascii_alphanumeric() || c == '_',
             |_| false,
             s,
@@ -313,7 +317,10 @@ impl TokenKind<'_> {
 
     fn proof(s: &str) -> Option<(TokenKind, usize)> {
         let (proof_line, i) = Self::consume(|c| c == '#', |_| true, |c| c == '\n', s)?;
-        Some((TokenKind::ProofLine(proof_line), i))
+        // We parse the entire line as a set of tokens, excluding the first character, because it's
+        // a `#` and is not used outside of distinguishing this line as for proof.
+        let (tokens, _) = Token::parse(|_| false, &proof_line[1..]);
+        Some((TokenKind::ProofLine(tokens), i))
     }
 
     /// parses a `Token::Bracketed` or a `Token::Curlied`

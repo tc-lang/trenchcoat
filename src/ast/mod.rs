@@ -5,8 +5,11 @@ use crate::types::{self, Type, EMPTY_STRUCT};
 use std::convert::TryFrom;
 
 mod error;
+mod proof;
 mod u8_to_str;
+
 pub use error::{Context as ErrorContext, Error, ErrorKind};
+use proof::consume_proof_lines;
 use u8_to_str::u8_to_str;
 
 macro_rules! next {
@@ -162,6 +165,8 @@ pub fn empty_struct<'a>() -> TypeExpr<'a> {
 #[derive(Debug)]
 pub enum ItemKind<'a> {
     FnDecl {
+        /// The proof statments associated with a function declaration
+        proof_stmts: Vec<proof::Stmt<'a>>,
         name: Ident<'a>,
         params: FnParams<'a>,
         return_type: TypeExpr<'a>,
@@ -395,23 +400,35 @@ impl<'a> Item<'a> {
     }
 
     fn parse_fn_decl(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Item<'a>>> {
-        match tokens.first()?.kind {
+        let mut errors = Vec::new();
+
+        // First, we'll attempt to parse any preceeding proof statments
+        //
+        // This isn't great moving forward because - with more types of items - the same proof
+        // lines could be parsed multiple times. A simple fix could be to skip those at the
+        // beginning (by filtering for the number of proof lines) and then parsing those once the
+        // rest of the function is done, but this isn't necessary at this time because there is
+        // only one type of top-level item.
+        let (consumed, ret) = consume_proof_lines(tokens);
+        let proof_stmts = next_option!(ret, errors);
+
+        let begin_decl_idx = consumed;
+
+        match tokens.get(begin_decl_idx)?.kind {
             TokenKind::Keyword(Keyword::Fn) => (),
             _ => return None,
         }
 
-        let mut errors = Vec::new();
-
-        // Token indexes
-        const NAME_IDX: usize = 1;
-        const PARAMS_IDX: usize = 2;
-        const RET_TYP_IDX: usize = 3;
+        // Token offsets from the start of the function declaration
+        const NAME_OFFSET: usize = 1;
+        const PARAMS_OFFSET: usize = 2;
+        const RET_TYP_OFFSET: usize = 3;
         // body_idx will be determined later
 
         // Function name (an identifier)
         let name = next_option!(
             tokens
-                .get(NAME_IDX)
+                .get(begin_decl_idx + NAME_OFFSET)
                 .map(Ident::parse)
                 .unwrap_or_else(|| ParseRet::single_err(Error {
                     kind: ErrorKind::EOF,
@@ -423,19 +440,23 @@ impl<'a> Item<'a> {
         );
 
         // Function parameters
-        let params = next_option!(parse_fn_params(tokens.get(PARAMS_IDX)), errors);
+        let params = next_option!(
+            parse_fn_params(tokens.get(begin_decl_idx + PARAMS_OFFSET)),
+            errors
+        );
 
         // Function return type
-        let (return_type, ret_consumed) = match parse_fn_return_type(&tokens[RET_TYP_IDX..]) {
-            // If no type is specified, we default to returning an empty struct
-            None => (empty_struct(), 0),
-            Some(pr) => next_option!(pr, errors),
-        };
+        let (return_type, ret_consumed) =
+            match parse_fn_return_type(&tokens[begin_decl_idx + RET_TYP_OFFSET..]) {
+                // If no type is specified, we default to returning an empty struct
+                None => (empty_struct(), 0),
+                Some(pr) => next_option!(pr, errors),
+            };
 
         // Function body, just 1 curly token.
         // This will later be replaced with a parser that may consume more tokens for the
         //  => ... syntax.
-        let body_idx = RET_TYP_IDX + ret_consumed;
+        let body_idx = begin_decl_idx + RET_TYP_OFFSET + ret_consumed;
         let body = next_option!(
             Block::parse_curlies(tokens.get(body_idx)).with_context(ErrorContext::FnBody),
             errors
@@ -444,6 +465,7 @@ impl<'a> Item<'a> {
         Some(ParseRet::with_soft_errs(
             Item {
                 kind: ItemKind::FnDecl {
+                    proof_stmts,
                     name,
                     params,
                     return_type,
