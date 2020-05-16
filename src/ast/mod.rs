@@ -2,15 +2,7 @@
 
 use crate::tokens::{self, Keyword, Oper, Punc, Token, TokenKind};
 use crate::types::{self, Type, EMPTY_STRUCT};
-use std::convert::TryFrom;
-
-mod error;
-mod proof;
-mod u8_to_str;
-
-pub use error::{Context as ErrorContext, Error, ErrorKind};
-use proof::consume_proof_lines;
-use u8_to_str::u8_to_str;
+use std::convert::{TryFrom, TryInto};
 
 macro_rules! next {
     ($f:expr , $errors:expr) => {{
@@ -45,6 +37,14 @@ macro_rules! next_option {
         }
     }};
 }
+
+mod error;
+mod proof;
+mod u8_to_str;
+
+pub use error::{Context as ErrorContext, Error, ErrorKind};
+use proof::consume_proof_lines;
+use u8_to_str::u8_to_str;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Top-level interface                                                        //
@@ -272,7 +272,8 @@ pub enum BinOp {
 /// Sub-slices consist of equal precedence operators. All prefix operators are higher precedence
 /// than binary operators.
 static BIN_OP_PRECEDENCE: &[&[BinOp]] = &[
-    &[BinOp::Or, BinOp::And],
+    &[BinOp::Or],
+    &[BinOp::And],
     &[BinOp::Eq, BinOp::Lt, BinOp::Gt, BinOp::Le, BinOp::Ge],
     &[BinOp::Add, BinOp::Sub],
     &[BinOp::Mul, BinOp::Div],
@@ -1254,13 +1255,10 @@ impl<'a> Expr<'a> {
             .iter()
             .enumerate()
             .filter_map(|(i, t)| match t.kind {
-                TokenKind::Oper(op) => match BinOp::try_from(op) {
-                    Ok(bin_op) => Some((i, bin_op)),
-                    Err(_) => None,
-                },
+                TokenKind::Oper(op) => op.try_into().ok().map(|op: BinOp| (i, op)),
                 _ => None,
             })
-            .rev() // since all operators are left-assiciative, we want to find the right-most operator first
+            .rev() // since all operators are left-associative, we want to find the right-most operator first
             .collect::<Vec<_>>();
 
         for ops in BIN_OP_PRECEDENCE.iter() {

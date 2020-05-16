@@ -40,6 +40,22 @@ pub enum ErrorKind {
     /// An integer literal represents a value larger than `isize::MAX`, and so we cannot construct
     /// it
     IntegerValueTooLarge,
+
+    /// An error resulting from proof statments. This occurs when two conditions were expected as
+    /// part of a contract, but only one was given. It is possible that the user is missing the
+    /// `require` keyword.
+    SingleContractCondition,
+
+    /// An error resulting from proof statments. This occurs when two conditions were expected as
+    /// part of a contract, but more than two were given. The number of these conditions is
+    TooManyContractConditions(usize),
+
+    /// A place where a proof condition expected to have a comparison operator but there was none
+    /// found.
+    CondWithoutCompareOp,
+
+    /// A place where a proof condition has multiple comparison operators; e.g. `x < y < 5`
+    ChainedComparison,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -65,6 +81,9 @@ pub enum Context {
     ParseAll,
     Struct,
     StructExpr,
+    ProofStmt,
+    ProofCond,
+    ProofExpr,
 }
 
 impl<'a> Error<'a> {

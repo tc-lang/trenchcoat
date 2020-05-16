@@ -90,6 +90,7 @@ impl Keyword {
             "type" => Some(Type),
             "print" => Some(Print),
             "return" => Some(Return),
+            "require" => Some(Require),
             _ => None,
         }
     }
@@ -319,7 +320,9 @@ impl TokenKind<'_> {
         let (proof_line, i) = Self::consume(|c| c == '#', |_| true, |c| c == '\n', s)?;
         // We parse the entire line as a set of tokens, excluding the first character, because it's
         // a `#` and is not used outside of distinguishing this line as for proof.
-        let (tokens, _) = Token::parse(|_| false, &proof_line[1..]);
+        //
+        // We also exclude the final character, because it is always guaranteed to be a newline.
+        let (tokens, _) = Token::parse(|_| false, &proof_line[1..proof_line.len() - 1]);
         Some((TokenKind::ProofLine(tokens), i))
     }
 
