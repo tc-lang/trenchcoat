@@ -2,12 +2,7 @@
 
 use crate::tokens::{self, Keyword, Oper, Punc, Token, TokenKind};
 use crate::types::{self, Type, EMPTY_STRUCT};
-use std::convert::TryFrom;
-
-mod error;
-mod u8_to_str;
-pub use error::{Context as ErrorContext, Error, ErrorKind};
-use u8_to_str::u8_to_str;
+use std::convert::{TryFrom, TryInto};
 
 macro_rules! next {
     ($f:expr , $errors:expr) => {{
@@ -42,6 +37,14 @@ macro_rules! next_option {
         }
     }};
 }
+
+mod error;
+mod proof;
+mod u8_to_str;
+
+pub use error::{Context as ErrorContext, Error, ErrorKind};
+use proof::consume_proof_lines;
+use u8_to_str::u8_to_str;
 
 ////////////////////////////////////////////////////////////////////////////////
 // Top-level interface                                                        //
@@ -162,6 +165,8 @@ pub fn empty_struct<'a>() -> TypeExpr<'a> {
 #[derive(Debug)]
 pub enum ItemKind<'a> {
     FnDecl {
+        /// The proof statments associated with a function declaration
+        proof_stmts: Vec<proof::Stmt<'a>>,
         name: Ident<'a>,
         params: FnParams<'a>,
         return_type: TypeExpr<'a>,
@@ -267,7 +272,8 @@ pub enum BinOp {
 /// Sub-slices consist of equal precedence operators. All prefix operators are higher precedence
 /// than binary operators.
 static BIN_OP_PRECEDENCE: &[&[BinOp]] = &[
-    &[BinOp::Or, BinOp::And],
+    &[BinOp::Or],
+    &[BinOp::And],
     &[BinOp::Eq, BinOp::Lt, BinOp::Gt, BinOp::Le, BinOp::Ge],
     &[BinOp::Add, BinOp::Sub],
     &[BinOp::Mul, BinOp::Div],
@@ -395,23 +401,35 @@ impl<'a> Item<'a> {
     }
 
     fn parse_fn_decl(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Item<'a>>> {
-        match tokens.first()?.kind {
+        let mut errors = Vec::new();
+
+        // First, we'll attempt to parse any preceeding proof statments
+        //
+        // This isn't great moving forward because - with more types of items - the same proof
+        // lines could be parsed multiple times. A simple fix could be to skip those at the
+        // beginning (by filtering for the number of proof lines) and then parsing those once the
+        // rest of the function is done, but this isn't necessary at this time because there is
+        // only one type of top-level item.
+        let (consumed, ret) = consume_proof_lines(tokens);
+        let proof_stmts = next_option!(ret, errors);
+
+        let begin_decl_idx = consumed;
+
+        match tokens.get(begin_decl_idx)?.kind {
             TokenKind::Keyword(Keyword::Fn) => (),
             _ => return None,
         }
 
-        let mut errors = Vec::new();
-
-        // Token indexes
-        const NAME_IDX: usize = 1;
-        const PARAMS_IDX: usize = 2;
-        const RET_TYP_IDX: usize = 3;
+        // Token indexs for each part
+        let name_idx = begin_decl_idx + 1;
+        let params_idx = begin_decl_idx + 2;
+        let ret_typ_idx = begin_decl_idx + 3;
         // body_idx will be determined later
 
         // Function name (an identifier)
         let name = next_option!(
             tokens
-                .get(NAME_IDX)
+                .get(name_idx)
                 .map(Ident::parse)
                 .unwrap_or_else(|| ParseRet::single_err(Error {
                     kind: ErrorKind::EOF,
@@ -423,10 +441,10 @@ impl<'a> Item<'a> {
         );
 
         // Function parameters
-        let params = next_option!(parse_fn_params(tokens.get(PARAMS_IDX)), errors);
+        let params = next_option!(parse_fn_params(tokens.get(params_idx)), errors);
 
         // Function return type
-        let (return_type, ret_consumed) = match parse_fn_return_type(&tokens[RET_TYP_IDX..]) {
+        let (return_type, ret_consumed) = match parse_fn_return_type(&tokens[ret_typ_idx..]) {
             // If no type is specified, we default to returning an empty struct
             None => (empty_struct(), 0),
             Some(pr) => next_option!(pr, errors),
@@ -435,7 +453,7 @@ impl<'a> Item<'a> {
         // Function body, just 1 curly token.
         // This will later be replaced with a parser that may consume more tokens for the
         //  => ... syntax.
-        let body_idx = RET_TYP_IDX + ret_consumed;
+        let body_idx = ret_typ_idx + ret_consumed;
         let body = next_option!(
             Block::parse_curlies(tokens.get(body_idx)).with_context(ErrorContext::FnBody),
             errors
@@ -444,6 +462,7 @@ impl<'a> Item<'a> {
         Some(ParseRet::with_soft_errs(
             Item {
                 kind: ItemKind::FnDecl {
+                    proof_stmts,
                     name,
                     params,
                     return_type,
@@ -1232,13 +1251,10 @@ impl<'a> Expr<'a> {
             .iter()
             .enumerate()
             .filter_map(|(i, t)| match t.kind {
-                TokenKind::Oper(op) => match BinOp::try_from(op) {
-                    Ok(bin_op) => Some((i, bin_op)),
-                    Err(_) => None,
-                },
+                TokenKind::Oper(op) => op.try_into().ok().map(|op: BinOp| (i, op)),
                 _ => None,
             })
-            .rev() // since all operators are left-assiciative, we want to find the right-most operator first
+            .rev() // since all operators are left-associative, we want to find the right-most operator first
             .collect::<Vec<_>>();
 
         for ops in BIN_OP_PRECEDENCE.iter() {

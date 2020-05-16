@@ -4,6 +4,8 @@ fn hi(x: int) -> int {
 	x
 }
 
+# require x >= 3
+# x <= 2 => 5 >= _
 fn foo(x: int, y: int) -> int {
 	x*2 + y + 2*bar(x, y, 3)
 }
