@@ -420,16 +420,16 @@ impl<'a> Item<'a> {
             _ => return None,
         }
 
-        // Token offsets from the start of the function declaration
-        const NAME_OFFSET: usize = 1;
-        const PARAMS_OFFSET: usize = 2;
-        const RET_TYP_OFFSET: usize = 3;
+        // Token indexs for each part
+        let name_idx = begin_decl_idx + 1;
+        let params_idx = begin_decl_idx + 2;
+        let ret_typ_idx = begin_decl_idx + 3;
         // body_idx will be determined later
 
         // Function name (an identifier)
         let name = next_option!(
             tokens
-                .get(begin_decl_idx + NAME_OFFSET)
+                .get(name_idx)
                 .map(Ident::parse)
                 .unwrap_or_else(|| ParseRet::single_err(Error {
                     kind: ErrorKind::EOF,
@@ -442,13 +442,13 @@ impl<'a> Item<'a> {
 
         // Function parameters
         let params = next_option!(
-            parse_fn_params(tokens.get(begin_decl_idx + PARAMS_OFFSET)),
+            parse_fn_params(tokens.get(params_idx)),
             errors
         );
 
         // Function return type
         let (return_type, ret_consumed) =
-            match parse_fn_return_type(&tokens[begin_decl_idx + RET_TYP_OFFSET..]) {
+            match parse_fn_return_type(&tokens[ret_typ_idx..]) {
                 // If no type is specified, we default to returning an empty struct
                 None => (empty_struct(), 0),
                 Some(pr) => next_option!(pr, errors),
@@ -457,7 +457,7 @@ impl<'a> Item<'a> {
         // Function body, just 1 curly token.
         // This will later be replaced with a parser that may consume more tokens for the
         //  => ... syntax.
-        let body_idx = begin_decl_idx + RET_TYP_OFFSET + ret_consumed;
+        let body_idx = ret_typ_idx + ret_consumed;
         let body = next_option!(
             Block::parse_curlies(tokens.get(body_idx)).with_context(ErrorContext::FnBody),
             errors
