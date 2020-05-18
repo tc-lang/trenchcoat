@@ -12,6 +12,9 @@ use tokens::tokenize;
 use verify::verify;
 
 fn main() {
+    proof::examples();
+    return;
+
     // Currently just a simple test of the tokenizer
     //let s = "a bc def 123hi  var2; let a = (b+c.x) / 2";
     let s = include_str!("test_input.tc");

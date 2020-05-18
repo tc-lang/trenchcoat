@@ -442,7 +442,7 @@ impl<'a> Condition<'a> {
 }
 
 impl<'a> Expr<'a> {
-    fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
+    pub fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
         Expr::parse_named(tokens)
             .or_else(|| Expr::parse_literal(tokens))
             .or_else(|| Expr::parse_compound(tokens))
