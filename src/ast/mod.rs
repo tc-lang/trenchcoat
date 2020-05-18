@@ -29,6 +29,7 @@ macro_rules! next_option {
             SoftErr(v, errs) => {
                 $errors.extend(errs);
                 v
+                // Solution 2
             }
             Err(errs) => {
                 $errors.extend(errs);
@@ -98,7 +99,7 @@ pub enum Node<'a> {
 
 /// Most parsing functions return a ParseRet.
 #[derive(Debug)]
-enum ParseRet<'a, T> {
+pub enum ParseRet<'a, T> {
     /// The parse was succesful.
     Ok(T),
 
@@ -178,6 +179,24 @@ pub enum ItemKind<'a> {
 pub struct Ident<'a> {
     pub name: &'a str,
     pub source: &'a Token<'a>,
+}
+
+impl<'a> PartialEq for Ident<'a> {
+    fn eq(&self, other: &Self) -> bool {
+        self.name == other.name
+    }
+}
+impl<'a> Eq for Ident<'a> {}
+
+impl<'a> PartialOrd for Ident<'a> {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+impl<'a> Ord for Ident<'a> {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.name.cmp(other.name)
+    }
 }
 
 pub type FnArgs<'a> = Vec<Expr<'a>>;
