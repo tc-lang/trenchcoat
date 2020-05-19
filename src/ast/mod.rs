@@ -29,7 +29,6 @@ macro_rules! next_option {
             SoftErr(v, errs) => {
                 $errors.extend(errs);
                 v
-                // Solution 2
             }
             Err(errs) => {
                 $errors.extend(errs);
