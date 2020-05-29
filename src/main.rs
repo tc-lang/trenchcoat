@@ -12,11 +12,11 @@ use tokens::tokenize;
 use verify::verify;
 
 fn main() {
-    proof::examples();
+    //for _ in 0..100000 {
+        proof::examples();
+    //}
     return;
 
-    // Currently just a simple test of the tokenizer
-    //let s = "a bc def 123hi  var2; let a = (b+c.x) / 2";
     let s = include_str!("test_input.tc");
     // "fn f(x) {x + 2};  fn hi (x, y){x * y; 1 + 5\nf(x)+3}; fn main() { print hi(f(2), 1); }";
     //let s = "fn f() {2}";
