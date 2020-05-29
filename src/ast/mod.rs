@@ -3,6 +3,7 @@
 use crate::tokens::{self, Keyword, Oper, Punc, Token, TokenKind};
 use crate::types::{self, Type, EMPTY_STRUCT};
 use std::convert::{TryFrom, TryInto};
+use std::fmt;
 
 macro_rules! next {
     ($f:expr , $errors:expr) => {{
@@ -195,6 +196,12 @@ impl<'a> PartialOrd for Ident<'a> {
 impl<'a> Ord for Ident<'a> {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.name.cmp(other.name)
+    }
+}
+
+impl<'a> fmt::Display for Ident<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}", self.name)
     }
 }
 

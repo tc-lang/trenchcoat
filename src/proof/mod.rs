@@ -5,8 +5,11 @@
 //! without error.
 
 mod error;
+mod int;
 use self::error::Error;
+use self::int::Int;
 use crate::ast::{self, Ident};
+use std::fmt;
 
 /// Attempts to prove that the entire contents of the program is within the bounds specified by the
 /// proof rules.
@@ -18,6 +21,7 @@ fn validate<'a>(top_level_items: &'a [ast::Item<'a>]) -> Vec<Error<'a>> {
 // !!!!! yet documented.
 // !!!!! Please scroll down to Expr
 
+/*
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct Requirement<'a> {
     or: Vec<RequirementTerm<'a>>,
@@ -27,8 +31,32 @@ struct Requirement<'a> {
 struct RequirementTerm<'a> {
     and: Vec<Condition<'a>>,
 }
+*/
 
-impl<'a> Requirement<'a> {
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+enum LogicExpr<'a> {
+    Or(Vec<LogicExpr<'a>>),
+    And(Vec<LogicExpr<'a>>),
+    Not(Box<LogicExpr<'a>>),
+    Condition(Condition<'a>),
+}
+
+impl<'a> LogicExpr<'a> {
+    /*fn andify(&self) -> Requirement<'a> {
+        use Requirement::{Or, And, Not, Condition, contra_positive};
+        match self {
+            Or(terms) => Not(Box::new(And(terms.iter().map(contra_positive).collect()))),
+        }
+    }
+
+    fn contra_positive(&self) -> Requirement<'a> {
+        use Requirement::{Or, And, Not, Condition, contra_positive};
+        match self {
+            Or(terms) => And(terms.iter().map(contra_positive).collect()),
+            And(terms) => And(terms.iter().map(contra_positive).collect()),
+        }
+    }*/
+    /*
     fn or_with(&mut self, req: Requirement<'a>) {
         self.or.extend(req.or);
     }
@@ -55,8 +83,10 @@ impl<'a> Requirement<'a> {
         out.and_with_term(term);
         out
     }
+    */
 }
 
+/*
 impl<'a> RequirementTerm<'a> {
     fn and_with(&mut self, term: RequirementTerm<'a>) {
         self.and.extend(term.and);
@@ -65,23 +95,11 @@ impl<'a> RequirementTerm<'a> {
         self.and.push(cond);
     }
 }
+*/
 
 /// A Condition is a boolean condition.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Condition<'a> {
-    /*/// lhs <= rhs
-    Le{
-        lhs: Expr<'a>,
-        rhs: Expr<'a>,
-    },
-    */
-    /*
-    /// lhs >= rhs
-    Ge{
-        lhs: Expr<'a>,
-        rhs: Expr<'a>,
-    },
-    */
     /// True iff the expression evaluates to a non-negative value
     Ge0(Expr<'a>),
     /// Always true
@@ -91,9 +109,28 @@ enum Condition<'a> {
 }
 
 /// This will (maybe) be used later
+#[derive(Debug, Clone)]
 enum Bound<'a> {
     Le(Expr<'a>),
     Ge(Expr<'a>),
+}
+
+/// Represents a relation between 2 expressions.
+/// For example: left <= (RelationKind::Le) right
+#[derive(Debug, Clone)]
+struct Relation<'a> {
+    left: Expr<'a>,
+    relation: RelationKind,
+    right: Expr<'a>,
+}
+
+/// A kind of a Relation
+#[derive(Debug, Clone, Copy)]
+enum RelationKind {
+    /// Less than or equal to (<=)
+    Le,
+    /// Greater than or equal to (>=)
+    Ge,
 }
 
 impl<'a> Condition<'a> {
@@ -108,8 +145,47 @@ impl<'a> Condition<'a> {
             Ge0(_) => todo!(),
         }
     }
-    fn bounds_on(name: Ident<'a>) -> Option<Bound<'a>> {
-        todo!()
+
+    /// Returns a Condition which is true iff self is false.
+    fn contra_positive(&self) -> Condition<'a> {
+        use Condition::{False, Ge0, True};
+        match self {
+            True => False,
+            False => True,
+            //  ¬(0 <= expr)
+            // => 0 > -expr
+            // => 0 >= -expr -1
+            Ge0(expr) => Ge0(Expr::Sum(vec![
+                Expr::Neg(Box::new(expr.clone())),
+                Expr::Neg(Box::new(ONE)),
+            ])),
+        }
+    }
+
+    fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
+        use Condition::{False, Ge0, True};
+        let name_expr = Expr::Atom(Atom::Named(*name));
+        match self {
+            True | False => None,
+            Ge0(expr) => Relation {
+                left: expr.single_x(&name_expr)?,
+                relation: RelationKind::Ge,
+                right: ZERO,
+            }
+            .bounds_on_unsafe(&name_expr),
+        }
+    }
+
+    fn bounds(&'a self) -> Vec<(Ident<'a>, Bound<'a>)> {
+        use Condition::{False, Ge0, True};
+        match self {
+            True | False => Vec::new(),
+            Ge0(expr) => expr
+                .variables()
+                .iter()
+                .filter_map(|x| self.bounds_on(x).map(|bounds| (*x, bounds)))
+                .collect(),
+        }
     }
 }
 
@@ -139,16 +215,16 @@ enum Expr<'a> {
 }
 
 /// An expression with the literal value 0
-const ZERO: Expr = Expr::Atom(Atom::Literal(0));
+const ZERO: Expr = Expr::Atom(Atom::Literal(Int::ZERO));
 /// An expression with the literal value 1
-const ONE: Expr = Expr::Atom(Atom::Literal(1));
+const ONE: Expr = Expr::Atom(Atom::Literal(Int::ONE));
 
-impl<'a> std::fmt::Display for Expr<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a> fmt::Display for Expr<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use Expr::{Atom, Neg, Prod, Recip, Sum};
         match self {
             Atom(atom) => write!(f, "{}", atom),
-            Neg(expr) => write!(f, "-{}", *expr),
+            Neg(expr) => write!(f, "-({})", *expr),
             Recip(expr) => write!(f, "1/({})", *expr),
             Sum(terms) => write!(
                 f,
@@ -164,7 +240,7 @@ impl<'a> std::fmt::Display for Expr<'a> {
                 "{}",
                 terms
                     .iter()
-                    .map(|term| format!("{}", term))
+                    .map(|term| format!("({})", term))
                     .collect::<Vec<String>>()
                     .join(" * ")
             ),
@@ -172,7 +248,46 @@ impl<'a> std::fmt::Display for Expr<'a> {
     }
 }
 
-impl<'a> Expr<'a> {
+impl<'a> fmt::Display for Relation<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{} {} {}", self.left, self.relation, self.right)
+    }
+}
+
+impl fmt::Display for RelationKind {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(
+            f,
+            "{}",
+            match self {
+                RelationKind::Ge => ">=",
+                RelationKind::Le => "<=",
+            }
+        )
+    }
+}
+
+impl<'a> fmt::Display for Bound<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        let (sign, expr) = match self {
+            Bound::Le(expr) => ("<=", expr),
+            Bound::Ge(expr) => (">=", expr),
+        };
+        write!(f, "{} {}", sign, expr)
+    }
+}
+
+impl<'b, 'a: 'b> Expr<'a> {
+    /// Returns true if the expressions are equal or if their simplified values are equal.
+    /// This is a more reliable equals method since, in the standard implementation of ==,
+    /// x + 2 != 2 + x whereas it would be equal with this definition.
+    ///
+    /// This is however much more expensive to compute since if 2 expressions aren't equal, they
+    /// are always simplified.
+    fn simplify_eq(&self, other: &Expr<'a>) -> bool {
+        self.eq(other) || self.simplify() == other.simplify()
+    }
+
     /// Returns a simplified version of self.
     /// The simplification rules have not yet been fully decided.
     /// Stable rules will be documented here with other rules documented in the code.
@@ -195,7 +310,7 @@ impl<'a> Expr<'a> {
 
             // Convert negative literals in to Neg(<positive literal>)
             Expr::Atom(Atom::Literal(x)) => {
-                if *x < 0 {
+                if *x < Int::ZERO {
                     Neg(Box::new(Expr::Atom(Atom::Literal(-*x))))
                 } else {
                     self.clone()
@@ -458,7 +573,7 @@ impl<'a> Expr<'a> {
     ///
     /// This assumes that the terms in any products in self are sorted and that there are no nested
     /// products - these assumptions can be made in the context of a simplifier.
-    fn get_number_and_term(&self) -> (isize, Expr<'a>) {
+    fn get_number_and_term(&self) -> (Int, Expr<'a>) {
         use Expr::{Neg, Prod};
         match self {
             // Allow for negative coefficients
@@ -480,10 +595,10 @@ impl<'a> Expr<'a> {
                     _ => None,
                 })
                 // By default, it's just 1 * self
-                .unwrap_or_else(|| (1, self.clone())),
+                .unwrap_or_else(|| (Int::ONE, self.clone())),
 
             //Again, the default case.
-            _ => (1, self.clone()),
+            _ => (Int::ONE, self.clone()),
         }
     }
 
@@ -493,7 +608,7 @@ impl<'a> Expr<'a> {
     fn add_collect(&self, other: &Expr<'a>) -> Option<Expr<'a>> {
         let (n1, expr1) = self.get_number_and_term();
         let (n2, expr2) = other.get_number_and_term();
-        if expr1 == expr2 {
+        if expr1.simplify_eq(&expr2) {
             // (n1+n2) * expr1
             Some(Expr::Prod(vec![Expr::Atom(Atom::Literal(n1 + n2)), expr1]))
         } else {
@@ -519,7 +634,7 @@ impl<'a> Expr<'a> {
                         let y = *y;
 
                         let res = y - x;
-                        if res < 0 {
+                        if res < Int::ZERO {
                             // Keep literals positive
                             Some(Neg(Box::new(Expr::Atom(Atom::Literal(-res)))))
                         } else {
@@ -613,31 +728,384 @@ impl<'a> Expr<'a> {
             _ => None,
         }
     }
+
+    /*
+    // FIXME Maybe min and max should return rationals?
+    fn min_value(&self, bounds_on: &mut impl FnMut(Ident<'a>) -> Bounds<'a>) -> isize {
+        use Expr::{Neg, Prod, Recip, Sum};
+        match self {
+            Sum(terms) => terms.iter().map(|term| term.min_value(bounds_on)).sum(),
+            Neg(expr) => -expr.max_value(bounds_on),
+            Prod(terms) => terms
+                .iter()
+                .map(|term| {
+                    let min = term.min_value(bounds_on);
+                    if min < 0 {
+                        panic!("cannot yet handle negative terms")
+                    }
+                    min
+                })
+                .product(),
+            Recip(expr) => {
+                let min = expr.min_value(bounds_on);
+                if min < 0 {
+                    if min == -1 {
+                        return -1;
+                    }
+                    if min == 0 {
+                        panic!("/0");
+                    }
+                    return 0;
+                }
+                let max = expr.max_value(bounds_on);
+                if max == 1 {
+                    return 1;
+                }
+                if max == 0 {
+                    panic!("/0");
+                }
+                return 0;
+            }
+            Expr::Atom(Atom::Literal(x)) => *x,
+            Expr::Atom(Atom::Named(ident)) => bounds_on(*ident).Ge.min_value(bounds_on),
+        }
+    }
+
+    fn max_value(&self, bounds_on: &mut impl FnMut(Ident<'a>) -> Bounds<'a>) -> isize {
+        use Expr::{Neg, Prod, Recip, Sum};
+        match self {
+            Sum(terms) => terms.iter().map(|term| term.max_value(bounds_on)).sum(),
+            Neg(expr) => -expr.min_value(bounds_on),
+            Prod(terms) => terms
+                .iter()
+                .map(|term| {
+                    let min = term.min_value(bounds_on);
+                    if min < 0 {
+                        panic!("cannot yet handle negative terms")
+                    }
+                    let max = term.max_value(bounds_on);
+                    max
+                })
+                .product(),
+            Recip(expr) => {
+                let min = expr.min_value(bounds_on);
+                if min < 0 {
+                    return 1 / min; // FIXME Round correcly
+                }
+                let max = expr.max_value(bounds_on);
+                return 1 / max;
+            }
+            Expr::Atom(Atom::Literal(x)) => *x,
+            Expr::Atom(Atom::Named(ident)) => bounds_on(*ident).Ge.min_value(bounds_on),
+        }
+    }
+    */
+
+    /// Returns true iff self contains expr or a simplification of.
+    fn contains(&self, expr: &Expr<'a>) -> bool {
+        use Expr::{Neg, Prod, Recip, Sum};
+        if self.simplify_eq(expr) {
+            return true;
+        }
+        match self {
+            Sum(terms) | Prod(terms) => terms.iter().find(|term| term.contains(expr)).is_some(),
+            Neg(term) | Recip(term) => term.contains(expr),
+            Expr::Atom(_) => false, // This will have been checked at the comparison at the start.
+        }
+    }
+
+    /// Divides self by expr, returning the result.
+    /// If it cannot be cleanly devided - i.e. if a term does not contain expr as a factor, None is
+    /// returned.
+    /// None is also returned if an instance of expr would be left in the resulting expr.
+    ///
+    /// FIXME This will work perfectly well with Atoms, which I think is all that will be required,
+    /// however other expressions will not work as expected. The signature should either be changed
+    /// or the behaviour corrected.
+    fn factor(&self, expr: &Expr<'a>) -> Option<Expr<'a>> {
+        use Expr::{Neg, Prod, Recip, Sum};
+
+        // x/x = 1
+        if self.simplify_eq(expr) {
+            return Some(ONE);
+        }
+
+        match self {
+            Sum(terms) => {
+                let mut factored_terms = Vec::with_capacity(terms.len());
+                // Call factor on each term of the sum, return None if one of the terms cannot be
+                // factored.
+                for term in terms {
+                    factored_terms.push(term.factor(expr)?);
+                }
+                Some(Sum(factored_terms))
+            }
+
+            Prod(terms) => {
+                let mut factored_terms = Vec::with_capacity(terms.len());
+
+                // Here, we want to factor expr from the product, so we wish to divide just 1 term
+                // by it - the rest should remain unchanged and should not contain expr.
+                for idx in 0..terms.len() {
+                    let term = &terms[idx];
+                    // Try to factor this term.
+                    match term.factor(expr) {
+                        // If it didn't factor, we leave it as is.
+                        None => factored_terms.push(term.clone()),
+
+                        Some(factored) => {
+                            // If it did factor, we want the factored term
+                            factored_terms.push(factored);
+
+                            // Then we want the remaining terms.
+                            let remaining_terms = &terms[idx + 1..];
+                            // These terms shouldn't contain expr though.
+                            if remaining_terms
+                                .iter()
+                                .find(|term| term.contains(expr))
+                                .is_some()
+                            {
+                                return None;
+                            }
+                            factored_terms.extend_from_slice(remaining_terms);
+
+                            // We've been through all the terms.
+                            break;
+                        }
+                    }
+                }
+                Some(Prod(factored_terms))
+            }
+
+            // We can take a factor directly out of a Neg
+            Neg(term) => Some(Neg(Box::new(term.factor(expr)?))),
+
+            // We can take the Recip factor out of a Recip
+            Recip(term) => Some(Recip(Box::new(
+                term.factor(&Recip(Box::new(expr.clone())))?,
+            ))),
+
+            // An Atom can't be factored. Note that if expr is this Atom then it would have been
+            // handled earlier.
+            Expr::Atom(_) => None,
+        }
+    }
+
+    /// Returns an Expr equivilent to that of Expr, but with only a single occurence of `expr`.
+    /// This is done primerily by factorisation.
+    /// If expr cannot be rewritten with only a single occurence of `expr` then None is returned.
+    fn single_x(&self, expr: &Expr<'a>) -> Option<Expr<'a>> {
+        use Expr::{Neg, Prod, Recip, Sum};
+        if self.simplify_eq(expr) {
+            return Some(expr.clone());
+        }
+        match self {
+            Sum(terms) => {
+                let mut x_terms = Vec::new();
+                let mut other_terms = Vec::new();
+                for term in terms {
+                    if term.contains(expr) {
+                        x_terms.push(term.clone());
+                    } else {
+                        other_terms.push(term.clone());
+                    }
+                }
+                if x_terms.len() == 1 {
+                    Some(Sum(vec![x_terms[0].single_x(expr)?, Sum(other_terms)]))
+                } else {
+                    // So self = (x_terms) + (other_terms)
+                    // Let's now try to take a factor of x out of x_terms to get
+                    //    self = x*(factored_terms) + (other_terms)
+                    let factored = Sum(x_terms).factor(expr)?;
+                    Some(Sum(vec![
+                        Prod(vec![expr.clone(), factored]),
+                        Sum(other_terms),
+                    ]))
+                }
+            }
+
+            Prod(terms) => {
+                let mut new_terms = terms.clone();
+                let mut found_x = false;
+                for term in new_terms.iter_mut() {
+                    if term.contains(expr) {
+                        if found_x {
+                            return None;
+                        }
+                        found_x = true;
+                        *term = term.single_x(expr)?;
+                    }
+                }
+                Some(Prod(new_terms))
+            }
+
+            Neg(term) => Some(Neg(Box::new(term.single_x(expr)?))),
+            Recip(term) => Some(Recip(Box::new(term.single_x(expr)?))),
+
+            Expr::Atom(_) => None,
+        }
+    }
+
+    /// Returns a vector of the atoms within the expression
+    /// This list will returns duplicated atoms
+    fn atoms(&'b self) -> Vec<&'b Atom<'a>> {
+        match self {
+            Expr::Neg(inner_expr) | Expr::Recip(inner_expr) => inner_expr.atoms(),
+            Expr::Sum(terms) | Expr::Prod(terms) => {
+                terms.iter().map(Self::atoms).flatten().collect()
+            }
+            Expr::Atom(atom) => vec![atom],
+        }
+    }
+
+    /// Returns a list of named atoms within self. Duplicates are removed.
+    fn variables(&'b self) -> Vec<Ident<'a>> {
+        let mut vars = self
+            .atoms()
+            .iter()
+            .filter_map(|atom| match atom {
+                Atom::Literal(_) => None,
+                Atom::Named(ident) => Some(*ident),
+            })
+            .collect::<Vec<Ident>>();
+        vars.dedup();
+        vars
+    }
+
+    fn exec(&self) -> Int {
+        todo!()
+    }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct SimpleExpr<'a> {
-    terms: Vec<SimpleTerm<'a>>,
+impl<'a> Bound<'a> {
+    /// Apply f to the bound expression
+    fn map(&self, f: impl Fn(&Expr<'a>) -> Expr<'a>) -> Bound<'a> {
+        use Bound::{Ge, Le};
+        match self {
+            Ge(expr) => Ge(f(expr)),
+            Le(expr) => Le(f(expr)),
+        }
+    }
+
+    /// Call Expr::simplify on the bound expression
+    fn simplify(&self) -> Bound<'a> {
+        self.map(Expr::simplify)
+    }
 }
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum SimpleTerm<'a> {
-    Pos(SimpleFrac<'a>),
-    Neg(SimpleFrac<'a>),
+
+impl RelationKind {
+    /// Returns the opposite kind - note that this IS NOT the contra-positive, but what you would
+    /// change the relation to if you multiplied both sides by -1 or took their reciprocals.
+    fn opposite(self) -> RelationKind {
+        use RelationKind::{Ge, Le};
+        match self {
+            Le => Ge,
+            Ge => Le,
+        }
+    }
 }
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct SimpleFrac<'a> {
-    Numerator: Vec<Atom<'a>>,
-    Denominator: Vec<Expr<'a>>,
+
+impl<'a> Relation<'a> {
+    /// Rearranges self to make `subject` the value of self.left.
+    /// If this is not possible, None is returned.
+    ///
+    /// This method makes the following assumptions:
+    /// - `subject` only occurs exactly once in self.left.
+    ///    This can be achieved by using `self.left = self.left.single_x(subject)?`
+    /// - `subject` does not occur in self.right
+    fn rearrange_unsafe(&self, subject: &Expr<'a>) -> Option<Relation<'a>> {
+        use Expr::{Neg, Prod, Recip, Sum};
+
+        // We are done if self.left = subject
+        if self.left.simplify_eq(subject) {
+            return Some(self.clone());
+        }
+
+        match &self.left {
+            Sum(terms) => {
+                let x_idx = terms
+                    .iter()
+                    .position(|term| term.contains(subject))
+                    .unwrap();
+
+                let new_left = terms[x_idx].clone();
+
+                let mut other_terms = Vec::with_capacity(terms.len() - 1);
+                other_terms.extend_from_slice(&terms[..x_idx]);
+                other_terms.extend_from_slice(&terms[x_idx + 1..]);
+                let new_right = Sum(vec![self.right.clone(), Neg(Box::new(Sum(other_terms)))]);
+
+                Relation {
+                    left: new_left,
+                    relation: self.relation,
+                    right: new_right,
+                }
+                .rearrange_unsafe(subject)
+            }
+            Prod(terms) => {
+                let x_idx = terms
+                    .iter()
+                    .position(|term| term.contains(subject))
+                    .unwrap();
+
+                let new_left = terms[x_idx].clone();
+
+                let mut other_terms = Vec::with_capacity(terms.len() - 1);
+                other_terms.extend_from_slice(&terms[..x_idx]);
+                other_terms.extend_from_slice(&terms[x_idx + 1..]);
+                let new_right = Prod(vec![self.right.clone(), Recip(Box::new(Sum(other_terms)))]);
+
+                Relation {
+                    left: new_left,
+                    relation: self.relation,
+                    right: new_right,
+                }
+                .rearrange_unsafe(subject)
+            }
+
+            Neg(term) => Relation {
+                left: *term.clone(),
+                relation: self.relation.opposite(),
+                right: Neg(Box::new(self.right.clone())),
+            }
+            .rearrange_unsafe(subject),
+
+            Recip(term) => Relation {
+                left: *term.clone(),
+                relation: self.relation.opposite(),
+                right: Recip(Box::new(self.right.clone())),
+            }
+            .rearrange_unsafe(subject),
+
+            Expr::Atom(_) => todo!(),
+        }
+    }
+
+    fn bounds_on_unsafe(&self, target: &Expr<'a>) -> Option<Bound<'a>> {
+        use RelationKind::{Ge, Le};
+        match self.rearrange_unsafe(target)? {
+            Relation {
+                left: _,
+                relation: Le,
+                right,
+            } => Some(Bound::Le(right)),
+            Relation {
+                left: _,
+                relation: Ge,
+                right,
+            } => Some(Bound::Ge(right)),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum Atom<'a> {
     Named(Ident<'a>),
-    Literal(isize),
+    Literal(Int),
 }
 
-impl<'a> std::fmt::Display for Atom<'a> {
-    fn fmt(&self, f: &mut std::fmt::Formatter) -> Result<(), std::fmt::Error> {
+impl<'a> fmt::Display for Atom<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         match self {
             Atom::Named(ident) => write!(f, "{}", ident.name),
             Atom::Literal(x) => write!(f, "{}", x),
@@ -651,7 +1119,7 @@ impl<'a> From<ast::proof::Expr<'a>> for Expr<'a> {
         use ast::proof::ExprKind::{Compound, Literal, Malformed, Named};
         match ast_expr.kind {
             Named(ident) => Expr::Atom(Atom::Named(ident)),
-            Literal(x) => Expr::Atom(Atom::Literal(x)),
+            Literal(x) => Expr::Atom(Atom::Literal(Int::from(x as i128))),
 
             Compound {
                 lhs,
@@ -695,16 +1163,356 @@ impl<'a> From<ast::proof::Condition<'a>> for Condition<'a> {
 }
 
 pub fn examples() {
-    use crate::tokens::tokenize;
+    /// Parse tokens into and Expr
+    fn parse_expr<'a>(tokens: &'a [crate::tokens::Token<'a>]) -> Expr<'a> {
+        match ast::proof::Expr::parse(tokens) {
+            ast::ParseRet::Ok(expr) => Expr::from(expr),
+            ast::ParseRet::Err(errs) | ast::ParseRet::SoftErr(_, errs) => {
+                panic!(format!("{:?}", errs))
+            }
+        }
+    }
+
+    use crate::tokens::{tokenize, FAKE_TOKEN};
+
     // should simplify to 2*x*y
     let tokens = tokenize("y * x/y * 1/x * x * y + 2 + x + y + 3 - 5 - x*y + 2*x*y - 2*x - y + x");
-    let ast_expr = match ast::proof::Expr::parse(&tokens) {
-        ast::ParseRet::Ok(expr) => expr,
-        _ => panic!("failed to parse example expression tokens"),
-    };
-    println!("{:?}", ast_expr);
-    let mut expr = Expr::from(ast_expr);
-    println!("{}", expr);
+    let mut expr = parse_expr(&tokens);
+    println!("1.0) {}", expr);
     expr = expr.simplify();
-    println!("{}", expr);
+    println!("1.1) {}", expr);
+
+    let tokens = tokenize("x + z*x + x*y + 2*x + 3 - y");
+    let mut expr = parse_expr(&tokens);
+    println!("2.0) {}", expr);
+    expr = expr.simplify();
+    println!("2.1) {}", expr);
+    let x = Expr::Atom(Atom::Named(Ident {
+        name: "x",
+        source: &FAKE_TOKEN,
+    }));
+    expr = expr.single_x(&x).unwrap();
+    println!("2.2) {}", expr);
+    let mut x_bounds = Relation {
+        left: expr.clone(),
+        relation: RelationKind::Le,
+        right: ZERO,
+    }
+    .rearrange_unsafe(&x)
+    .unwrap();
+    x_bounds.right = x_bounds.right.simplify();
+    println!("2.3) {}", x_bounds);
+
+    let tokens = tokenize("1/x - y");
+    let mut expr = parse_expr(&tokens);
+    println!("3.0) {}", expr);
+    expr = expr.simplify();
+    println!("3.1) {}", expr);
+    let x = Expr::Atom(Atom::Named(Ident {
+        name: "x",
+        source: &FAKE_TOKEN,
+    }));
+
+    expr = expr.single_x(&x).unwrap();
+    println!("3.2) {}", expr);
+    let mut x_bounds = Relation {
+        left: expr.clone(),
+        relation: RelationKind::Le,
+        right: ZERO,
+    }
+    .rearrange_unsafe(&x)
+    .unwrap();
+    x_bounds.right = x_bounds.right.simplify();
+    println!("3.3) {}", x_bounds);
+
+    let tokens = tokenize("10 - 2*x - y/4");
+    let expr = parse_expr(&tokens);
+    let cond = Condition::Ge0(expr); // so 10 - 2*x - y/4 >= 0
+    for (variable, bound) in cond.bounds() {
+        println!("{} {}", variable, bound.simplify());
+    }
+
+    let tokens = tokenize("10 - x - y");
+    let expr = parse_expr(&tokens);
+    let cond = Condition::Ge0(expr); // so  10 - x - y >= 0  thus  x + y <= 10
+    for (variable, bound) in cond.bounds() {
+        println!("{} {}", variable, bound.simplify());
+    }
+
+    let mut given = cond.bounds();
+
+    let tokens = tokenize("x");
+    let expr = parse_expr(&tokens);
+    let cond = Condition::Ge0(expr); // so x >= 0
+    given.extend(cond.bounds());
+
+    let tokens = tokenize("y");
+    let expr = parse_expr(&tokens);
+    let cond = Condition::Ge0(expr.clone()); // so y >= 0
+    given.extend(cond.bounds());
+
+    println!("Let's bound x+y");
+    for (x, bound) in given.clone() {
+        println!("Given {} {}", x, bound);
+    }
+
+    let tokens = tokenize("x+y");
+    let expr = parse_expr(&tokens);
+    let mini = Minimizer::new(given.clone(), expr.clone(), 10);
+    for bound in mini {
+        println!("x+y >= {}", bound.simplify());
+    }
+
+    let maxi = Maximizer::new(given.clone(), expr, 10);
+    for bound in maxi {
+        println!("x+y <= {}", bound.simplify());
+    }
+
+    given = given.iter().map(|(x, bound)| (*x, bound.simplify())).collect();
+
+    println!("Let's bound 2*x+y");
+    for (x, bound) in given.clone() {
+        println!("Given {} {}", x, bound);
+    }
+
+    let tokens = tokenize("2*x+y");
+    let expr = parse_expr(&tokens).simplify();
+    let mini = Minimizer::new(given.clone(), expr.clone(), 10);
+    for bound in mini {
+        println!("2*x+y >= {}", bound.simplify());
+    }
+
+    let maxi = Maximizer::new(given, expr, 10);
+    for bound in maxi {
+        println!(
+            "2*x+y <= {}",
+            Maximizer::unbounded(&bound.simplify()).simplify()
+        );
+    }
+}
+
+use std::iter::Iterator;
+
+struct Minimizer<'a> {
+    solving: Expr<'a>,
+    vars: Vec<Ident<'a>>,
+    given: Vec<(Ident<'a>, Bound<'a>)>,
+    i: usize,
+    max_depth: usize,
+    child: Option<Box<Minimizer<'a>>>,
+}
+
+struct Maximizer<'a> {
+    solving: Expr<'a>,
+    vars: Vec<Ident<'a>>,
+    given: Vec<(Ident<'a>, Bound<'a>)>,
+    i: usize,
+    max_depth: usize,
+    child: Option<Box<Maximizer<'a>>>,
+}
+
+impl<'a> Minimizer<'a> {
+    fn new(given: Vec<(Ident<'a>, Bound<'a>)>, solve: Expr<'a>, max_depth: usize) -> Minimizer<'a> {
+        let vars = solve.variables();
+        Minimizer {
+            solving: solve,
+            vars,
+            given,
+            i: 0,
+            max_depth,
+            child: None,
+        }
+    }
+}
+
+impl<'a> Maximizer<'a> {
+    fn new(given: Vec<(Ident<'a>, Bound<'a>)>, solve: Expr<'a>, max_depth: usize) -> Maximizer<'a> {
+        let vars = solve.variables();
+        Maximizer {
+            solving: solve,
+            vars,
+            given,
+            i: 0,
+            max_depth,
+            child: None,
+        }
+    }
+}
+
+macro_rules! optimizer_body {
+    ($self:expr) => {{
+        if let Some(child) = &mut $self.child {
+            match child.next() {
+                Some(x) => return Some(x),
+                None => (),
+            }
+        }
+
+        // Handle the maximum depth being reached - we just assume everything is unbounded.
+        if $self.max_depth == 0 {
+            // Since `i` has no use to the final child, we may as well use it to keep track of if
+            // we've already given a bound.
+            if $self.i != 0 {
+                return None;
+            }
+            $self.i = 1;
+            return Some($self.solving.clone());
+        }
+
+        let (x, bound) = loop {
+            if $self.i >= $self.given.len() {
+                $self.max_depth = 0;
+                $self.i = 0;
+                return $self.next();
+            }
+
+            let (x_ident, bound) = &$self.given[$self.i];
+            if $self.vars.contains(x_ident) {
+                break (Expr::Atom(Atom::Named(*x_ident)), bound);
+            }
+            $self.i += 1;
+        };
+
+        let mut new_given = $self.given.clone();
+        new_given.remove($self.i);
+
+        $self.i += 1;
+
+        $self.child = Some(Box::new(Self::new(
+            new_given,
+            Self::sub_bound(&$self.solving, &x, bound).simplify(),
+            $self.max_depth - 1,
+        )));
+        $self.next()
+    }};
+}
+
+impl<'a> Iterator for Minimizer<'a> {
+    type Item = Expr<'a>;
+    fn next(&mut self) -> Option<Expr<'a>> {
+        optimizer_body!(self)
+    }
+}
+impl<'a> Iterator for Maximizer<'a> {
+    type Item = Expr<'a>;
+    fn next(&mut self) -> Option<Expr<'a>> {
+        optimizer_body!(self)
+    }
+}
+
+macro_rules! prod_optimise {
+    ($terms:expr, $x:expr, $bound:expr, $Self:ty) => {{
+        // We now want to minimize a product, for now, we will only simplify products in
+        // the form: [expr]*literal0*literal1*... (the other expression is optional)
+        // Where all the literals are non-negative.
+        // Since the expression is simplified we are allowed to assume that all literals
+        // are non-negative and that literals are the last terms.
+        //
+        // It is clear that the optimum of an expression with this form is
+        // optimum(expr)*literal0*literal1*...
+        //
+        // Other forms would be more complex.
+        let mut out = Vec::with_capacity($terms.len());
+        for i in 0..$terms.len() {
+            let term = &$terms[i];
+            out.push(match term {
+                Expr::Atom(Atom::Literal(x)) => {
+                    if *x < Int::ZERO {
+                        panic!("literal < 0")
+                    } else {
+                        // Just copy any literals
+                        term.clone()
+                    }
+                }
+
+                _ => {
+                    // Only optimise if it's the first term.
+                    // Any subsequent terms MUST be literals.
+                    // (Also note that the first term cannot be a literal if another kind
+                    // of expression exists since the bound expression is simplified).
+                    if i == 0 {
+                        Self::sub_bound(term, $x, $bound)
+                    } else {
+                        todo!()
+                    }
+                }
+            });
+        }
+        Expr::Prod(out)
+    }};
+}
+
+impl<'a> Minimizer<'a> {
+    fn unbounded(expr: &Expr<'a>) -> Expr<'a> {
+        match expr {
+            Expr::Neg(inner_expr) => Expr::Neg(Box::new(Maximizer::unbounded(inner_expr))),
+            Expr::Recip(inner_expr) => Expr::Recip(Box::new(Maximizer::unbounded(inner_expr))),
+            Expr::Sum(terms) => Expr::Sum(terms.iter().map(Self::unbounded).collect()),
+            Expr::Prod(_) => todo!(),
+            Expr::Atom(Atom::Literal(_)) => expr.clone(),
+            Expr::Atom(Atom::Named(_)) => Expr::Atom(Atom::Literal(-Int::Infinity)),
+        }
+    }
+
+    fn sub_bound(expr: &Expr<'a>, x: &Expr<'a>, bound: &Bound<'a>) -> Expr<'a> {
+        if expr.eq(x) {
+            return match bound {
+                Bound::Ge(bound_expr) => bound_expr.clone(),
+                Bound::Le(_) => expr.clone(),
+            };
+        }
+        match expr {
+            Expr::Neg(inner_expr) => {
+                Expr::Neg(Box::new(Maximizer::sub_bound(inner_expr, x, bound)))
+            }
+            Expr::Recip(inner_expr) => {
+                Expr::Recip(Box::new(Maximizer::sub_bound(inner_expr, x, bound)))
+            }
+            Expr::Sum(terms) => Expr::Sum(
+                terms
+                    .iter()
+                    .map(|term| Self::sub_bound(term, x, bound))
+                    .collect(),
+            ),
+            Expr::Prod(terms) => prod_optimise!(terms, x, bound, Self),
+            Expr::Atom(_) => expr.clone(),
+        }
+    }
+}
+
+impl<'a> Maximizer<'a> {
+    fn unbounded(expr: &Expr<'a>) -> Expr<'a> {
+        match expr {
+            Expr::Neg(inner_expr) => Expr::Neg(Box::new(Minimizer::unbounded(inner_expr))),
+            Expr::Recip(inner_expr) => Expr::Recip(Box::new(Minimizer::unbounded(inner_expr))),
+            Expr::Sum(terms) => Expr::Sum(terms.iter().map(Self::unbounded).collect()),
+            Expr::Prod(_) => todo!(),
+            Expr::Atom(Atom::Literal(_)) => expr.clone(),
+            Expr::Atom(Atom::Named(_)) => Expr::Atom(Atom::Literal(Int::Infinity)),
+        }
+    }
+    fn sub_bound(expr: &Expr<'a>, x: &Expr<'a>, bound: &Bound<'a>) -> Expr<'a> {
+        if expr.eq(x) {
+            return match bound {
+                Bound::Le(bound_expr) => bound_expr.clone(),
+                Bound::Ge(_) => expr.clone(),
+            };
+        }
+        match expr {
+            Expr::Neg(inner_expr) => {
+                Expr::Neg(Box::new(Minimizer::sub_bound(inner_expr, x, bound)))
+            }
+            Expr::Recip(inner_expr) => {
+                Expr::Recip(Box::new(Minimizer::sub_bound(inner_expr, x, bound)))
+            }
+            Expr::Sum(terms) => Expr::Sum(
+                terms
+                    .iter()
+                    .map(|term| Self::sub_bound(term, x, bound))
+                    .collect(),
+            ),
+            Expr::Prod(terms) => prod_optimise!(terms, x, bound, Self),
+            Expr::Atom(_) => expr.clone(),
+        }
+    }
 }
