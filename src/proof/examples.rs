@@ -1,8 +1,10 @@
 use super::expr::{Atom, Expr, ONE, ZERO};
 use super::optimiser::{Maximizer, Minimizer};
-use super::{Condition, Relation, RelationKind};
+use super::{Relation, RelationKind};
+use super::bound_method::FullProver;
 use crate::ast::{self, Ident};
 
+/*
 pub fn examples() {
     /// Parse tokens into and Expr
     fn parse_expr<'a>(tokens: &'a [crate::tokens::Token<'a>]) -> Expr<'a> {
@@ -171,3 +173,4 @@ pub fn examples() {
         println!("2*x+y <= {}", bound);
     }
 }
+*/

@@ -333,7 +333,7 @@ impl<'a> Stmt<'a> {
 
 impl<'a> Condition<'a> {
     /// Attempts to parse a condition from the entirety of the given set of tokens
-    fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
+    pub fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
         // There are fundamentally two types of conditions: compound conditions, which consist of a
         // condition joined by a logical operator, and 'simple' conditions, which consist of two
         // (integer-valued) expressions joined by a comparison operator.

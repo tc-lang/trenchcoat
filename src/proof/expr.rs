@@ -685,6 +685,31 @@ impl<'b, 'a: 'b> Expr<'a> {
         vars
     }
 
+    /// Substitute `x` with `with` in self and return the result.
+    pub fn substitute(&self, x: Ident<'a>, with: &Expr<'a>) -> Expr<'a> {
+        match self {
+            Expr::Atom(Atom::Named(y)) => {
+                if x == *y {
+                    with.clone()
+                } else {
+                    self.clone()
+                }
+            }
+
+            Expr::Atom(Atom::Literal(_)) => self.clone(),
+
+            Expr::Sum(terms) => {
+                Expr::Sum(terms.iter().map(|term| term.substitute(x, with)).collect())
+            }
+            Expr::Prod(terms) => {
+                Expr::Prod(terms.iter().map(|term| term.substitute(x, with)).collect())
+            }
+
+            Expr::Neg(term) => Expr::Neg(Box::new(term.substitute(x, with))),
+            Expr::Recip(term) => Expr::Recip(Box::new(term.substitute(x, with))),
+        }
+    }
+
     /// Tries to evaluate self.
     /// This requires all atoms to be literals - None will be returned if this is not the case.
     /// It also assumes self is simplified. The behaviour of eval is undefined if the expression is
@@ -726,42 +751,42 @@ impl<'b, 'a: 'b> Expr<'a> {
     }
 }
 
-impl<'a> From<ast::proof::Expr<'a>> for Expr<'a> {
-    fn from(ast_expr: ast::proof::Expr<'a>) -> Expr<'a> {
+impl<'a> From<&ast::proof::Expr<'a>> for Expr<'a> {
+    fn from(ast_expr: &ast::proof::Expr<'a>) -> Expr<'a> {
         use ast::proof::ArithOp as Op;
         use ast::proof::ExprKind::{Compound, Literal, Malformed, Named};
-        match ast_expr.kind {
-            Named(ident) => Expr::Atom(Atom::Named(ident)),
-            Literal(x) => Expr::Atom(Atom::Literal(Int::from(x as i128))),
+        match &ast_expr.kind {
+            Named(ident) => Expr::Atom(Atom::Named(*ident)),
+            Literal(x) => Expr::Atom(Atom::Literal(Int::from(*x as i128))),
 
             Compound {
                 lhs,
                 op: Op::Add,
                 rhs,
-            } => Expr::Sum(vec![Expr::from(*lhs), Expr::from(*rhs)]),
+            } => Expr::Sum(vec![Expr::from(&**lhs), Expr::from(&**rhs)]),
 
             Compound {
                 lhs,
                 op: Op::Sub,
                 rhs,
             } => Expr::Sum(vec![
-                Expr::from(*lhs),
-                Expr::Neg(Box::new(Expr::from(*rhs))),
+                Expr::from(&**lhs),
+                Expr::Neg(Box::new(Expr::from(&**rhs))),
             ]),
 
             Compound {
                 lhs,
                 op: Op::Mul,
                 rhs,
-            } => Expr::Prod(vec![Expr::from(*lhs), Expr::from(*rhs)]),
+            } => Expr::Prod(vec![Expr::from(&**lhs), Expr::from(&**rhs)]),
 
             Compound {
                 lhs,
                 op: Op::Div,
                 rhs,
             } => Expr::Prod(vec![
-                Expr::from(*lhs),
-                Expr::Recip(Box::new(Expr::from(*rhs))),
+                Expr::from(&**lhs),
+                Expr::Recip(Box::new(Expr::from(&**rhs))),
             ]),
 
             Malformed => panic!("malformed expression"),

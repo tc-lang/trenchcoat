@@ -13,7 +13,7 @@ use verify::verify;
 
 fn main() {
     //for _ in 0..100000 {
-    proof::examples::examples();
+    //proof::examples::examples();
     //}
     return;
 

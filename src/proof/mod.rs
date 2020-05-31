@@ -5,15 +5,20 @@
 //! without error.
 
 mod bound;
+mod bound_method;
 pub mod error;
 pub mod examples;
 mod expr;
 mod int;
 mod optimiser;
+
+#[cfg(test)]
+mod tests;
+
 use self::bound::{Bound, Relation, RelationKind};
 use self::error::Error;
 use self::expr::{Atom, Expr, ONE, ZERO};
-use crate::ast::{self, Ident};
+use crate::ast::{self, Ident, proof::Condition as AstCondition};
 
 /// Attempts to prove that the entire contents of the program is within the bounds specified by the
 /// proof rules.
@@ -21,159 +26,167 @@ fn validate<'a>(top_level_items: &'a [ast::Item<'a>]) -> Vec<Error<'a>> {
     todo!()
 }
 
-// !!!!! Requirements have had very little work. These data structures are likely to change and not
-// !!!!! yet documented.
-// !!!!! Please scroll down to Expr
-
-/*
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Requirement<'a> {
-    or: Vec<RequirementTerm<'a>>,
+/// Represents the requirement `ge0 >= 0`
+/// All requirements can written in this form.
+pub struct Requirement<'a> {
+    pub ge0: Expr<'a>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct RequirementTerm<'a> {
-    and: Vec<Condition<'a>>,
-}
-*/
-
-/*
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-enum LogicExpr<'a> {
-    Or(Vec<LogicExpr<'a>>),
-    And(Vec<LogicExpr<'a>>),
-    Not(Box<LogicExpr<'a>>),
-    Condition(Condition<'a>),
-}
-
-impl<'a> LogicExpr<'a> {
-    /*fn andify(&self) -> Requirement<'a> {
-        use Requirement::{Or, And, Not, Condition, contra_positive};
-        match self {
-            Or(terms) => Not(Box::new(And(terms.iter().map(contra_positive).collect()))),
-        }
+impl<'a> Requirement<'a> {
+    pub fn map_ge0(&self, f: impl Fn(&Expr<'a>) -> Expr<'a>) -> Requirement<'a> {
+        Requirement { ge0: f(&self.ge0) }
     }
 
-    fn contra_positive(&self) -> Requirement<'a> {
-        use Requirement::{Or, And, Not, Condition, contra_positive};
-        match self {
-            Or(terms) => And(terms.iter().map(contra_positive).collect()),
-            And(terms) => And(terms.iter().map(contra_positive).collect()),
-        }
-    }*/
-    /*
-    fn or_with(&mut self, req: Requirement<'a>) {
-        self.or.extend(req.or);
-    }
-    fn and(&mut self, req: Requirement<'a>) -> Requirement<'a> {
-        // let s = self
-        // let r = req
-        // s && ( r[0] || r[1] || r[2] || ...)
-        // s && r[0] || s && r[1] || s && r[2] || ...
-        let mut out = Requirement {
-            or: Vec::with_capacity(self.or.len() * req.or.len()),
-        };
-        for term in req.or.iter() {
-            out.or_with(self.and_term(term.clone()));
-        }
-        out
-    }
-    fn and_with_term(&mut self, term: RequirementTerm<'a>) {
-        self.or
-            .iter_mut()
-            .for_each(|self_term| self_term.and_with(term.clone()));
-    }
-    fn and_term(&self, term: RequirementTerm<'a>) -> Requirement<'a> {
-        let mut out = self.clone();
-        out.and_with_term(term);
-        out
-    }
-    */
-}
-
-/*
-impl<'a> RequirementTerm<'a> {
-    fn and_with(&mut self, term: RequirementTerm<'a>) {
-        self.and.extend(term.and);
-    }
-    fn and_with_condition(&mut self, cond: Condition<'a>) {
-        self.and.push(cond);
-    }
-}
-*/
-*/
-
-/// A Condition is a boolean condition.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Condition<'a> {
-    /// True iff the expression evaluates to a non-negative value
-    Ge0(Expr<'a>),
-    /// Always true
-    True,
-    /// Always false
-    False,
-}
-
-impl<'a> Condition<'a> {
-    /// Takes another condition and tries to combine it with self.
-    /// If a single condition combination exists - i.e. self && other can be written as a single
-    /// Condition, it is returned wrapped in a Some; otherwise, None is returned.
-    fn and(&self, other: &Condition<'a>) -> Option<Condition<'a>> {
-        use Condition::{False, Ge0, True};
-        match self {
-            False => Some(Condition::False),
-            True => Some(other.clone()),
-            Ge0(_) => todo!(),
-        }
-    }
-
-    /// Returns a Condition which is true iff self is false.
-    fn contra_positive(&self) -> Condition<'a> {
-        use Condition::{False, Ge0, True};
-        match self {
-            True => False,
-            False => True,
-            //  ¬(0 <= expr)
-            // => 0 > -expr
-            // => 0 >= -expr -1
-            Ge0(expr) => Ge0(Expr::Sum(vec![
+    /// Returns a Requirement which is true iff self is false.
+    pub fn contra_positive(&self) -> Requirement<'a> {
+        //  ¬(0 <= expr)
+        // => 0 >  expr
+        // => 0 <  -expr
+        // => 0 <= -expr -1
+        self.map_ge0(|expr| {
+            Expr::Sum(vec![
                 Expr::Neg(Box::new(expr.clone())),
                 Expr::Neg(Box::new(ONE)),
-            ])),
-        }
+            ])
+        })
     }
 
-    fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
-        use Condition::{False, Ge0, True};
+    /// Substitute `x` with `with` in self and return the result.
+    pub fn substitute(&self, x: Ident<'a>, with: &Expr<'a>) -> Requirement<'a> {
+        self.map_ge0(|expr| expr.substitute(x, with))
+    }
+
+    /// Returns the bounds on `name` given by self.
+    /// If no bounds are given or if they cannot be computed, None is returned.
+    pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
         let name_expr = Expr::Atom(Atom::Named(*name));
-        match self {
-            True | False => None,
-            Ge0(expr) => Some(
-                Relation {
-                    left: expr.single_x(&name_expr)?,
-                    relation: RelationKind::Ge,
-                    right: ZERO,
-                }
-                .bounds_on_unsafe(&name_expr),
-            ),
-        }
+        Some(
+            Relation {
+                left: self.ge0.single_x(&name_expr)?,
+                relation: RelationKind::Ge,
+                right: ZERO,
+            }
+            .bounds_on_unsafe(&name_expr),
+        )
     }
 
-    fn bounds(&'a self) -> Vec<(Ident<'a>, Bound<'a>)> {
-        use Condition::{False, Ge0, True};
-        match self {
-            True | False => Vec::new(),
-            Ge0(expr) => expr
-                .variables()
-                .iter()
-                .filter_map(|x| self.bounds_on(x).map(|bounds| (*x, bounds)))
-                .collect(),
+    /// Returns bounds specified by self.
+    /// The tuple contains the variable the bound is on and the bound itself.
+    /// It may not return all bounds since some bounds cannot yet be calculated.
+    fn bounds(&self) -> Vec<(Ident<'a>, Bound<'a>)> {
+        self.ge0
+            .variables()
+            .iter()
+            .filter_map(|x| self.bounds_on(x).map(|bounds| (*x, bounds)))
+            .collect()
+    }
+}
+
+impl<'a> From<&AstCondition<'a>> for Requirement<'a> {
+    fn from(cond: &AstCondition<'a>) -> Requirement<'a> {
+        use ast::proof::ConditionKind::{Simple, Compound, Malformed};
+        use ast::proof::CompareOp::{Le, Ge};
+        match &cond.kind {
+            // lhs <= rhs => 0 <= rhs-lhs
+            Simple{ lhs, op: Le, rhs } => Requirement {
+                ge0: Expr::Sum(vec![Expr::from(rhs), Expr::Neg(Box::new(Expr::from(lhs)))]),
+            },
+
+            // lhs >= rhs => lhs-rhs >= 0
+            Simple{ lhs, op: Ge, rhs } => Requirement {
+                ge0: Expr::Sum(vec![Expr::from(lhs), Expr::Neg(Box::new(Expr::from(rhs)))]),
+            },
+
+            Compound{ lhs: _, op: _, rhs: _ } => todo!(),
+
+            Malformed => panic!("cannot create requirement from malformed condition"),
         }
     }
 }
 
-impl<'a> From<ast::proof::Condition<'a>> for Condition<'a> {
-    fn from(pc: ast::proof::Condition<'a>) -> Condition<'a> {
+/// A result from an attempt to prove something.
+#[derive(Debug, PartialEq, Eq)]
+pub enum ProofResult {
+    /// The statement was false.
+    False,
+    /// The statement cannot be proven either true or false.
+    Undetermined,
+    /// The statement was true.
+    True,
+}
+
+pub trait SimpleProver<'a> {
+    /// Create a SimpleProver with the given requirements.
+    fn new(reqs: Vec<Requirement<'a>>) -> Self;
+
+    /// Try to prove `req`. This will assume that the requirements passed to `new` are true.
+    fn prove(&self, req: &Requirement) -> ProofResult;
+}
+
+pub trait Prover<'a> {
+    /// Create a Prover with the given requirements.
+    fn new(reqs: Vec<Requirement<'a>>) -> Self;
+
+    /// Try to prove `req`. This will assume that the requirements passed to `new` are true.
+    fn prove(&self, req: &Requirement) -> ProofResult;
+
+    /// Return a new prover whereby `x` is substituted for `expr` before proofs are made.
+    /// `x` may refer to an identity which already exists, in which case the new `x` will be mapped
+    /// to an expression involving the old `x`.
+    ///
+    /// For example,
+    /// # x < 2
+    /// fn f(x: Int) {
+    ///     x = x+2
+    /// }
+    /// Then you might do `let prover2 = prover1.define(x, x+2)`
+    /// then expressions passed to prover2 will map `x` in `prover2` to `x+2` in `prover1`.
+    fn define(&'a self, x: Ident<'a>, expr: &'a Expr<'a>) -> Self;
+
+    /// Create a new prover whereby `x` is treated as a new identifier even if `x` was an
+    /// identifier in self.
+    fn shadow(&self, x: Ident<'a>) -> Self;
+}
+
+/// A utility type for implementing Prover with a SimpleProver
+///
+/// This creates a simple tree, the root of which is a SimpleProver created with some given bounds.
+/// The childeren all store definitions and when asked to prove something, substitute their
+/// definition before handing the proof on to their parent.
+///
+/// It does not yet implement the shadow method.
+pub enum ScopedSimpleProver<'a, P: SimpleProver<'a>> {
+    Root(P),
+    Defn {
+        x: Ident<'a>,
+        expr: &'a Expr<'a>,
+
+        parent: &'a ScopedSimpleProver<'a, P>,
+    },
+}
+
+impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
+    fn new(reqs: Vec<Requirement<'a>>) -> Self {
+        Self::Root(P::new(reqs))
+    }
+
+    fn prove(&self, req: &Requirement) -> ProofResult {
+        use ScopedSimpleProver::{Defn, Root};
+        match self {
+            Root(prover) => prover.prove(req),
+            Defn { x, expr, parent } => parent.prove(&req.substitute(*x, expr)),
+        }
+    }
+
+    fn define(&'a self, x: Ident<'a>, expr: &'a Expr<'a>) -> Self {
+        Self::Defn {
+            x,
+            expr,
+            parent: self,
+        }
+    }
+
+    fn shadow(&self, _: Ident<'a>) -> Self {
         todo!()
     }
 }

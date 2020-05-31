@@ -253,7 +253,9 @@ fn sub_bound_into<'a>(
                         if i == 0 {
                             self_sub(term, x, bound)
                         } else {
-                            todo!()
+                            // TODO
+                            // For now, we won't make any substitution
+                            term.clone()
                         }
                     }
                 });
