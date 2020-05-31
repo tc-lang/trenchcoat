@@ -23,6 +23,7 @@ pub fn examples() {
     expr = expr.simplify();
     println!("1.1) {}", expr);
 
+    /*
     let tokens = tokenize("x + z*x + x*y + 2*x + 3 - y");
     let mut expr = parse_expr(&tokens);
     println!("2.0) {}", expr);
@@ -65,6 +66,7 @@ pub fn examples() {
     .unwrap();
     x_bounds.right = x_bounds.right.simplify();
     println!("3.3) {}", x_bounds);
+    */
 
     let tokens = tokenize("10 - 2*x - y/4");
     let expr = parse_expr(&tokens);
@@ -110,7 +112,7 @@ pub fn examples() {
 
     let tokens = tokenize("17-2*y");
     let expr = parse_expr(&tokens);
-    let cond = Condition::Ge0(expr.clone()); // so 17 >= 1*y
+    let cond = Condition::Ge0(expr.clone()); // so 17 >= 2*y
     given.extend(cond.bounds());
 
     given = given
@@ -125,13 +127,12 @@ pub fn examples() {
 
     let tokens = tokenize("y");
     let expr = parse_expr(&tokens);
-    let mini =
-        Minimizer::new(given.clone(), expr.clone(), 10).filter_map(|expr| expr.simplify().eval());
+    let mini = Minimizer::new(given.clone(), expr.clone(), 10).int_bounds();
     for bound in mini {
         println!("y >= {}", bound);
     }
 
-    let maxi = Maximizer::new(given.clone(), expr, 10).filter_map(|expr| expr.simplify().eval());
+    let maxi = Maximizer::new(given.clone(), expr, 10).int_bounds();
     for bound in maxi {
         println!("y <= {}", bound);
     }
@@ -143,13 +144,12 @@ pub fn examples() {
 
     let tokens = tokenize("x+y");
     let expr = parse_expr(&tokens);
-    let mini =
-        Minimizer::new(given.clone(), expr.clone(), 10).filter_map(|expr| expr.simplify().eval());
+    let mini = Minimizer::new(given.clone(), expr.clone(), 10).int_bounds();
     for bound in mini {
         println!("x+y >= {}", bound);
     }
 
-    let maxi = Maximizer::new(given.clone(), expr, 10).filter_map(|expr| expr.simplify().eval());
+    let maxi = Maximizer::new(given.clone(), expr, 10).int_bounds();
     for bound in maxi {
         println!("x+y <= {}", bound);
     }
@@ -161,13 +161,12 @@ pub fn examples() {
 
     let tokens = tokenize("2*x+y");
     let expr = parse_expr(&tokens).simplify();
-    let mini =
-        Minimizer::new(given.clone(), expr.clone(), 10).filter_map(|expr| expr.simplify().eval());
+    let mini = Minimizer::new(given.clone(), expr.clone(), 10).int_bounds();
     for bound in mini {
         println!("2*x+y >= {}", bound);
     }
 
-    let maxi = Maximizer::new(given, expr, 10).filter_map(|expr| expr.simplify().eval());
+    let maxi = Maximizer::new(given, expr, 10).int_bounds();
     for bound in maxi {
         println!("2*x+y <= {}", bound);
     }

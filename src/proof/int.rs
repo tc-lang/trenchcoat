@@ -1,7 +1,7 @@
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::convert::From;
 use std::fmt;
-use std::ops::{Add, Div, Mul, Neg, Sub};
+use std::ops::{Add, Div, Mul, Neg, Rem, Sub};
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum Int {
@@ -139,6 +139,7 @@ impl Mul for Int {
 
 impl Div for Int {
     type Output = Int;
+    /// Integer division. The result is floored.
     fn div(self, rhs: Int) -> Int {
         use Int::{Infinity, NegInfinity, I};
         match (&self, &rhs) {
@@ -173,6 +174,45 @@ impl Div for Int {
             | (NegInfinity, Infinity)
             | (NegInfinity, NegInfinity) => panic!(format!("cannot divide {} by {}", self, rhs)),
         }
+    }
+}
+
+impl Rem for Int {
+    type Output = Int;
+    fn rem(self, rhs: Int) -> Int {
+        use Int::{Infinity, NegInfinity, I};
+        match (&self, &rhs) {
+            (_, I(0)) => panic!("mod by 0"),
+
+            (I(x), I(y)) => I(x % y),
+
+            (I(x), Infinity) | (I(x), NegInfinity) => I(*x),
+
+            (Infinity, I(_)) => panic!("mod of infinity"),
+            (NegInfinity, I(_)) => panic!("mod of -infinity"),
+
+            (Infinity, Infinity)
+            | (Infinity, NegInfinity)
+            | (NegInfinity, Infinity)
+            | (NegInfinity, NegInfinity) => panic!(format!("cannot mod {} with {}", self, rhs)),
+        }
+    }
+}
+
+impl Int {
+    /// Divide and round up
+    pub fn div_ceil(self, rhs: Int) -> Int {
+        (self / rhs)
+            + if self % rhs == Int::ZERO {
+                Int::ZERO
+            } else {
+                Int::ONE
+            }
+    }
+
+    /// Divide and round down
+    pub fn div_floor(self, rhs: Int) -> Int {
+        self / rhs
     }
 }
 
