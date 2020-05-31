@@ -687,23 +687,24 @@ impl<'b, 'a: 'b> Expr<'a> {
 
     /// Tries to evaluate self.
     /// This requires all atoms to be literals - None will be returned if this is not the case.
-    /// It also assumes self is simplified. A panic may occur or an incorrect result given if this
-    /// is not the case.
-    /// TODO We need to consider how rounding effects bounds. For now, we always round down. This
-    /// may not be optimal but I *think* it doesn't lead to incorrect results.
-    pub fn eval(&self) -> Option<Int> {
+    /// It also assumes self is simplified. The behaviour of eval is undefined if the expression is
+    /// not simplified.
+    ///
+    /// `div` is a function used for division. This can be used to determine the rounding
+    /// direction.
+    pub fn eval(&self, div: impl Fn(Int, Int) -> Int + Copy) -> Option<Int> {
         match self {
-            Expr::Neg(inner_expr) => Some(-inner_expr.eval()?),
-            Expr::Recip(inner_expr) => Some(Int::ONE / inner_expr.eval()?),
+            Expr::Neg(inner_expr) => Some(-inner_expr.eval(div)?),
+            Expr::Recip(inner_expr) => Some(Int::ONE / inner_expr.eval(div)?),
 
             Expr::Sum(terms) => terms
                 .iter()
-                .map(Expr::eval)
+                .map(|term| term.eval(div))
                 .fold(Some(Int::ZERO), |sum, term| Some(sum? + term?)),
             Expr::Prod(terms) => match terms.len() {
                 2 => match (&terms[0], &terms[1]) {
                     (Expr::Recip(recip), Expr::Atom(Atom::Literal(x))) => match **recip {
-                        Expr::Atom(Atom::Literal(y)) => Some(*x / y),
+                        Expr::Atom(Atom::Literal(y)) => Some(div(*x, y)),
                         _ => None, //panic!("eval expression is not simplified (case 3)"),
                     },
                     _ => None, //panic!(format!("eval expression is not simplified (case 2) {}", self)),
@@ -714,6 +715,14 @@ impl<'b, 'a: 'b> Expr<'a> {
             Expr::Atom(Atom::Literal(x)) => Some(*x),
             Expr::Atom(Atom::Named(_)) => None,
         }
+    }
+
+    pub fn eval_floor(&self) -> Option<Int> {
+        self.eval(Int::div_floor)
+    }
+
+    pub fn eval_ceil(&self) -> Option<Int> {
+        self.eval(Int::div_ceil)
     }
 }
 

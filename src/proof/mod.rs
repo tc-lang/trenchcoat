@@ -4,16 +4,16 @@
 //! It is assumed here that the AST nodes given as input have passed through the checks in `verify`
 //! without error.
 
+mod bound;
 pub mod error;
 pub mod examples;
 mod expr;
 mod int;
 mod optimiser;
+use self::bound::{Bound, Relation, RelationKind};
 use self::error::Error;
 use self::expr::{Atom, Expr, ONE, ZERO};
-use self::int::Int;
 use crate::ast::{self, Ident};
-use std::fmt;
 
 /// Attempts to prove that the entire contents of the program is within the bounds specified by the
 /// proof rules.
@@ -37,6 +37,7 @@ struct RequirementTerm<'a> {
 }
 */
 
+/*
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum LogicExpr<'a> {
     Or(Vec<LogicExpr<'a>>),
@@ -100,6 +101,7 @@ impl<'a> RequirementTerm<'a> {
     }
 }
 */
+*/
 
 /// A Condition is a boolean condition.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -110,31 +112,6 @@ pub enum Condition<'a> {
     True,
     /// Always false
     False,
-}
-
-/// This will (maybe) be used later
-#[derive(Debug, Clone)]
-pub enum Bound<'a> {
-    Le(Expr<'a>),
-    Ge(Expr<'a>),
-}
-
-/// Represents a relation between 2 expressions.
-/// For example: left <= (RelationKind::Le) right
-#[derive(Debug, Clone)]
-pub struct Relation<'a> {
-    left: Expr<'a>,
-    relation: RelationKind,
-    right: Expr<'a>,
-}
-
-/// A kind of a Relation
-#[derive(Debug, Clone, Copy)]
-pub enum RelationKind {
-    /// Less than or equal to (<=)
-    Le,
-    /// Greater than or equal to (>=)
-    Ge,
 }
 
 impl<'a> Condition<'a> {
@@ -171,12 +148,14 @@ impl<'a> Condition<'a> {
         let name_expr = Expr::Atom(Atom::Named(*name));
         match self {
             True | False => None,
-            Ge0(expr) => Relation {
-                left: expr.single_x(&name_expr)?,
-                relation: RelationKind::Ge,
-                right: ZERO,
-            }
-            .bounds_on_unsafe(&name_expr),
+            Ge0(expr) => Some(
+                Relation {
+                    left: expr.single_x(&name_expr)?,
+                    relation: RelationKind::Ge,
+                    right: ZERO,
+                }
+                .bounds_on_unsafe(&name_expr),
+            ),
         }
     }
 
@@ -189,156 +168,6 @@ impl<'a> Condition<'a> {
                 .iter()
                 .filter_map(|x| self.bounds_on(x).map(|bounds| (*x, bounds)))
                 .collect(),
-        }
-    }
-}
-
-impl<'a> fmt::Display for Relation<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{} {} {}", self.left, self.relation, self.right)
-    }
-}
-
-impl fmt::Display for RelationKind {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(
-            f,
-            "{}",
-            match self {
-                RelationKind::Ge => ">=",
-                RelationKind::Le => "<=",
-            }
-        )
-    }
-}
-
-impl<'a> fmt::Display for Bound<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        let (sign, expr) = match self {
-            Bound::Le(expr) => ("<=", expr),
-            Bound::Ge(expr) => (">=", expr),
-        };
-        write!(f, "{} {}", sign, expr)
-    }
-}
-
-impl<'a> Bound<'a> {
-    /// Apply f to the bound expression
-    fn map(&self, f: impl Fn(&Expr<'a>) -> Expr<'a>) -> Bound<'a> {
-        use Bound::{Ge, Le};
-        match self {
-            Ge(expr) => Ge(f(expr)),
-            Le(expr) => Le(f(expr)),
-        }
-    }
-
-    /// Call Expr::simplify on the bound expression
-    fn simplify(&self) -> Bound<'a> {
-        self.map(Expr::simplify)
-    }
-}
-
-impl RelationKind {
-    /// Returns the opposite kind - note that this IS NOT the contra-positive, but what you would
-    /// change the relation to if you multiplied both sides by -1 or took their reciprocals.
-    fn opposite(self) -> RelationKind {
-        use RelationKind::{Ge, Le};
-        match self {
-            Le => Ge,
-            Ge => Le,
-        }
-    }
-}
-
-impl<'a> Relation<'a> {
-    /// Rearranges self to make `subject` the value of self.left.
-    /// If this is not possible, None is returned.
-    ///
-    /// This method makes the following assumptions:
-    /// - `subject` only occurs exactly once in self.left.
-    ///    This can be achieved by using `self.left = self.left.single_x(subject)?`
-    /// - `subject` does not occur in self.right
-    fn rearrange_unsafe(&self, subject: &Expr<'a>) -> Option<Relation<'a>> {
-        use Expr::{Neg, Prod, Recip, Sum};
-
-        // We are done if self.left = subject
-        if self.left.simplify_eq(subject) {
-            return Some(self.clone());
-        }
-
-        match &self.left {
-            Sum(terms) => {
-                let x_idx = terms
-                    .iter()
-                    .position(|term| term.contains(subject))
-                    .unwrap();
-
-                let new_left = terms[x_idx].clone();
-
-                let mut other_terms = Vec::with_capacity(terms.len() - 1);
-                other_terms.extend_from_slice(&terms[..x_idx]);
-                other_terms.extend_from_slice(&terms[x_idx + 1..]);
-                let new_right = Sum(vec![self.right.clone(), Neg(Box::new(Sum(other_terms)))]);
-
-                Relation {
-                    left: new_left,
-                    relation: self.relation,
-                    right: new_right,
-                }
-                .rearrange_unsafe(subject)
-            }
-            Prod(terms) => {
-                let x_idx = terms
-                    .iter()
-                    .position(|term| term.contains(subject))
-                    .unwrap();
-
-                let new_left = terms[x_idx].clone();
-
-                let mut other_terms = Vec::with_capacity(terms.len() - 1);
-                other_terms.extend_from_slice(&terms[..x_idx]);
-                other_terms.extend_from_slice(&terms[x_idx + 1..]);
-                let new_right = Prod(vec![self.right.clone(), Recip(Box::new(Sum(other_terms)))]);
-
-                Relation {
-                    left: new_left,
-                    relation: self.relation,
-                    right: new_right,
-                }
-                .rearrange_unsafe(subject)
-            }
-
-            Neg(term) => Relation {
-                left: *term.clone(),
-                relation: self.relation.opposite(),
-                right: Neg(Box::new(self.right.clone())),
-            }
-            .rearrange_unsafe(subject),
-
-            Recip(term) => Relation {
-                left: *term.clone(),
-                relation: self.relation.opposite(),
-                right: Recip(Box::new(self.right.clone())),
-            }
-            .rearrange_unsafe(subject),
-
-            Expr::Atom(_) => todo!(),
-        }
-    }
-
-    fn bounds_on_unsafe(&self, target: &Expr<'a>) -> Option<Bound<'a>> {
-        use RelationKind::{Ge, Le};
-        match self.rearrange_unsafe(target)? {
-            Relation {
-                left: _,
-                relation: Le,
-                right,
-            } => Some(Bound::Le(right)),
-            Relation {
-                left: _,
-                relation: Ge,
-                right,
-            } => Some(Bound::Ge(right)),
         }
     }
 }
