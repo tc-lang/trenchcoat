@@ -1,7 +1,7 @@
+use super::bound_method::FullProver;
 use super::expr::{Atom, Expr, ONE, ZERO};
 use super::optimiser::{Maximizer, Minimizer};
 use super::{Relation, RelationKind};
-use super::bound_method::FullProver;
 use crate::ast::{self, Ident};
 
 /*

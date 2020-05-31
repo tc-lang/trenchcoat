@@ -86,7 +86,7 @@ impl<'a> Minimizer<'a> {
     pub fn int_bounds(
         self,
     ) -> std::iter::FilterMap<Self, fn(Expr<'a>) -> std::option::Option<Int>> {
-        self.filter_map(|expr| expr.eval_ceil())
+        self.filter_map(|expr| expr.eval_max())
     }
 }
 
@@ -126,7 +126,7 @@ impl<'a> Maximizer<'a> {
     pub fn int_bounds(
         self,
     ) -> std::iter::FilterMap<Self, fn(Expr<'a>) -> std::option::Option<Int>> {
-        self.filter_map(|expr| expr.eval_floor())
+        self.filter_map(|expr| expr.eval_min())
     }
 }
 

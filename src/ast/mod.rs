@@ -394,7 +394,7 @@ impl<'a, T> ParseRet<'a, T> {
     }
 
     pub fn unwrap(self) -> T {
-        use ParseRet::{Ok, SoftErr, Err};
+        use ParseRet::{Err, Ok, SoftErr};
         match self {
             Ok(v) => v,
             SoftErr(_, errs) => panic!(format!("{:?}", errs)),

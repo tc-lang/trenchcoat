@@ -1,7 +1,7 @@
 use super::bound::Bound;
 use super::int::Int;
 use super::optimiser::{Maximizer, Minimizer};
-use super::{ProofResult, Requirement, SimpleProver, ScopedSimpleProver};
+use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
 use crate::ast::Ident;
 
 pub type FullProver<'a> = ScopedSimpleProver<'a, Prover<'a>>;
@@ -35,6 +35,10 @@ impl<'a> SimpleProver<'a> for Prover<'a> {
 }
 
 impl<'a> Prover<'a> {
-    pub fn max_depth(&self) -> usize { self.max_depth }
-    pub fn set_max_depth(&mut self, max_depth: usize) { self.max_depth = max_depth }
+    pub fn max_depth(&self) -> usize {
+        self.max_depth
+    }
+    pub fn set_max_depth(&mut self, max_depth: usize) {
+        self.max_depth = max_depth
+    }
 }

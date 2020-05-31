@@ -717,19 +717,50 @@ impl<'b, 'a: 'b> Expr<'a> {
     ///
     /// `div` is a function used for division. This can be used to determine the rounding
     /// direction.
+    /// See also: `Self::eval2`
     pub fn eval(&self, div: impl Fn(Int, Int) -> Int + Copy) -> Option<Int> {
+        self.eval2(div, div)
+    }
+
+    /// Tries to evaluate self, rounding down for division.
+    /// This calls `self.eval(Int::div_floor)`.
+    pub fn eval_floor(&self) -> Option<Int> {
+        self.eval(Int::div_floor)
+    }
+
+    /// Tries to evaluate self, rounding up for division.
+    /// This calls `self.eval(Int::div_ceil)`.
+    pub fn eval_ceil(&self) -> Option<Int> {
+        self.eval(Int::div_ceil)
+    }
+
+    /// This is an extension of `eval`. See there for the main documentation.
+    ///
+    /// `div1` and `div2` are used for division.
+    /// `div1` is the primary choice but this is flipped for every Neg or Recip expression that the
+    /// division occurs witihin.
+    ///
+    /// The purpose if this is to find a minimum or maximum values that will satisfy something by
+    /// alternating between `Int::div_floor` and `Int::div_ceil`.
+    ///
+    /// See `eval_min` and `eval_max` which you are more likely to use.
+    pub fn eval2(
+        &self,
+        div1: impl Fn(Int, Int) -> Int + Copy,
+        div2: impl Fn(Int, Int) -> Int + Copy,
+    ) -> Option<Int> {
         match self {
-            Expr::Neg(inner_expr) => Some(-inner_expr.eval(div)?),
-            Expr::Recip(inner_expr) => Some(Int::ONE / inner_expr.eval(div)?),
+            Expr::Neg(inner_expr) => Some(-inner_expr.eval2(div2, div1)?),
+            Expr::Recip(inner_expr) => Some(Int::ONE / inner_expr.eval2(div2, div1)?),
 
             Expr::Sum(terms) => terms
                 .iter()
-                .map(|term| term.eval(div))
+                .map(|term| term.eval2(div1, div2))
                 .fold(Some(Int::ZERO), |sum, term| Some(sum? + term?)),
             Expr::Prod(terms) => match terms.len() {
                 2 => match (&terms[0], &terms[1]) {
                     (Expr::Recip(recip), Expr::Atom(Atom::Literal(x))) => match **recip {
-                        Expr::Atom(Atom::Literal(y)) => Some(div(*x, y)),
+                        Expr::Atom(Atom::Literal(y)) => Some(div1(*x, y)),
                         _ => None, //panic!("eval expression is not simplified (case 3)"),
                     },
                     _ => None, //panic!(format!("eval expression is not simplified (case 2) {}", self)),
@@ -742,12 +773,16 @@ impl<'b, 'a: 'b> Expr<'a> {
         }
     }
 
-    pub fn eval_floor(&self) -> Option<Int> {
-        self.eval(Int::div_floor)
+    /// Round in division to minimize the result.
+    /// Calls `self.eval2(Int::div_floor, Int::div_ceil)`
+    pub fn eval_min(&self) -> Option<Int> {
+        self.eval2(Int::div_floor, Int::div_ceil)
     }
 
-    pub fn eval_ceil(&self) -> Option<Int> {
-        self.eval(Int::div_ceil)
+    /// Round in division to maximize the result.
+    /// Calls `self.eval2(Int::div_ceil, Int::div_floor)`
+    pub fn eval_max(&self) -> Option<Int> {
+        self.eval2(Int::div_ceil, Int::div_floor)
     }
 }
 
