@@ -392,6 +392,15 @@ impl<'a, T> ParseRet<'a, T> {
         self.change_errs(|e| e.context = new_ctx);
         self
     }
+
+    pub fn unwrap(self) -> T {
+        use ParseRet::{Ok, SoftErr, Err};
+        match self {
+            Ok(v) => v,
+            SoftErr(_, errs) => panic!(format!("{:?}", errs)),
+            Err(errs) => panic!(format!("{:?}", errs)),
+        }
+    }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
