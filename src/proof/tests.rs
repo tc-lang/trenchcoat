@@ -1,10 +1,14 @@
-use super::{Prover, Requirement, ProofResult};
 use super::bound_method::FullProver;
+use super::{ProofResult, Prover, Requirement};
 use crate::ast::proof::Condition;
 use crate::tokens::tokenize;
 
 #[test]
 fn example_test() {
+    // Also, to get an idea for the running time of the algorithm, this would be the time for a
+    // function with 5 requirements and 21 unique statements to prove.
+
+    // These are our function requirements
     let cond0 = tokenize("x >= 0");
     let cond1 = tokenize("0 <= y");
     let cond2 = tokenize("x+y <= 10");
@@ -33,16 +37,38 @@ fn example_test() {
         prover.prove(&req)
     }
 
+    // First off, let's start with the obvious proofs
     assert!(prove(&prover, "0 <= x") == ProofResult::True);
+    assert!(prove(&prover, "0 <= y") == ProofResult::True);
+    assert!(prove(&prover, "x+y <= 10") == ProofResult::True);
+    // We can also say that
+    assert!(prove(&prover, "0-3 <= x") == ProofResult::True);
+    // But
+    assert!(prove(&prover, "3 <= x") == ProofResult::Undetermined);
+    // and
+    assert!(prove(&prover, "11 <= x") == ProofResult::False);
+    // Or that
     assert!(prove(&prover, "x <= 10") == ProofResult::True);
     assert!(prove(&prover, "y <= 10") == ProofResult::True);
-    assert!(prove(&prover, "y <= 9") == ProofResult::True);
-    assert!(prove(&prover, "x+y <= 10") == ProofResult::True);
+    // In fact, 2*y <= 17 ==> y <= 8
+    assert!(prove(&prover, "y <= 8") == ProofResult::True);
+    // If we go too tight though, y *could* be in that range, but it won't always be:
+    assert!(prove(&prover, "y <= 7") == ProofResult::Undetermined);
+    assert!(prove(&prover, "y <= 5") == ProofResult::Undetermined);
+    // Or, if we go crazy, the result is always false:
+    assert!(prove(&prover, "y <= 0-1") == ProofResult::False);
+    // We could also make some other combinations:
     assert!(prove(&prover, "2*x+y <= 20") == ProofResult::True);
     assert!(prove(&prover, "x+2*y <= 20") == ProofResult::True);
-    assert!(prove(&prover, "x+2*y <= 19") == ProofResult::True);
+    assert!(prove(&prover, "x+2*y >= 0") == ProofResult::True);
+    // Also, x/2 + y >= 1
+    //   ==> x + 2*y >= 2
+    assert!(prove(&prover, "x+2*y >= 1") == ProofResult::True);
+    assert!(prove(&prover, "x+2*y >= 2") == ProofResult::True);
+    assert!(prove(&prover, "x+2*y >= 3") == ProofResult::Undetermined);
+    assert!(prove(&prover, "x+2*y >= 31") == ProofResult::False);
+    assert!(prove(&prover, "2*x+y <= 19") == ProofResult::Undetermined);
+    // With some tighter bounds!
+    assert!(prove(&prover, "x+2*y <= 18") == ProofResult::True);
+    assert!(prove(&prover, "x+2*y <= 17") == ProofResult::Undetermined);
 }
-
-/* BBQ
- * Shed
- * Paracol */

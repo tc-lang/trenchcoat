@@ -18,7 +18,7 @@ mod tests;
 use self::bound::{Bound, Relation, RelationKind};
 use self::error::Error;
 use self::expr::{Atom, Expr, ONE, ZERO};
-use crate::ast::{self, Ident, proof::Condition as AstCondition};
+use crate::ast::{self, proof::Condition as AstCondition, Ident};
 
 /// Attempts to prove that the entire contents of the program is within the bounds specified by the
 /// proof rules.
@@ -84,20 +84,24 @@ impl<'a> Requirement<'a> {
 
 impl<'a> From<&AstCondition<'a>> for Requirement<'a> {
     fn from(cond: &AstCondition<'a>) -> Requirement<'a> {
-        use ast::proof::ConditionKind::{Simple, Compound, Malformed};
-        use ast::proof::CompareOp::{Le, Ge};
+        use ast::proof::CompareOp::{Ge, Le};
+        use ast::proof::ConditionKind::{Compound, Malformed, Simple};
         match &cond.kind {
             // lhs <= rhs => 0 <= rhs-lhs
-            Simple{ lhs, op: Le, rhs } => Requirement {
+            Simple { lhs, op: Le, rhs } => Requirement {
                 ge0: Expr::Sum(vec![Expr::from(rhs), Expr::Neg(Box::new(Expr::from(lhs)))]),
             },
 
             // lhs >= rhs => lhs-rhs >= 0
-            Simple{ lhs, op: Ge, rhs } => Requirement {
+            Simple { lhs, op: Ge, rhs } => Requirement {
                 ge0: Expr::Sum(vec![Expr::from(lhs), Expr::Neg(Box::new(Expr::from(rhs)))]),
             },
 
-            Compound{ lhs: _, op: _, rhs: _ } => todo!(),
+            Compound {
+                lhs: _,
+                op: _,
+                rhs: _,
+            } => todo!(),
 
             Malformed => panic!("cannot create requirement from malformed condition"),
         }
