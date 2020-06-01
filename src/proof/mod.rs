@@ -194,3 +194,9 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
         todo!()
     }
 }
+
+impl<'a, P: SimpleProver<'a>> ScopedSimpleProver<'a, P> {
+    pub fn from(sp: P) -> Self {
+        Self::Root(sp)
+    }
+}
