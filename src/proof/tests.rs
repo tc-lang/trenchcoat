@@ -1,7 +1,14 @@
-use super::bound_method::FullProver;
-use super::{ProofResult, Prover, Requirement};
+use super::bound_method::{FullProver, Prover as BoundsProver};
+use super::{ProofResult, Prover, Requirement, SimpleProver};
 use crate::ast::proof::Condition;
 use crate::tokens::tokenize;
+
+fn prove<'a>(prover: &impl Prover<'a>, stmt: &'a str) -> ProofResult {
+    let tokens = tokenize(stmt);
+    let cond = Condition::parse(&tokens).unwrap();
+    let req = Requirement::from(&cond);
+    prover.prove(&req)
+}
 
 #[test]
 fn example_test() {
@@ -28,14 +35,10 @@ fn example_test() {
     reqs.push(Requirement::from(&cond3));
     reqs.push(Requirement::from(&cond4));
 
-    let prover = FullProver::new(reqs);
-
-    fn prove<'a>(prover: &impl Prover<'a>, stmt: &'a str) -> ProofResult {
-        let tokens = tokenize(stmt);
-        let cond = Condition::parse(&tokens).unwrap();
-        let req = Requirement::from(&cond);
-        prover.prove(&req)
-    }
+    let mut bounds_prover = BoundsProver::new(reqs);
+    // We can garentee that this will be worst case O(n^4)
+    bounds_prover.set_max_depth(4);
+    let prover = FullProver::from(bounds_prover);
 
     // First off, let's start with the obvious proofs
     assert!(prove(&prover, "0 <= x") == ProofResult::True);
@@ -72,3 +75,52 @@ fn example_test() {
     assert!(prove(&prover, "x+2*y <= 18") == ProofResult::True);
     assert!(prove(&prover, "x+2*y <= 17") == ProofResult::Undetermined);
 }
+
+#[test]
+fn test_3_vars_different_coeffs() {
+    // These are our function requirements
+    let cond0 = tokenize("x <= y+3");
+    let cond1 = tokenize("x <= 2*y");
+    let cond2 = tokenize("y <= z+2");
+
+    let cond0 = Condition::parse(&cond0).unwrap();
+    let cond1 = Condition::parse(&cond1).unwrap();
+    let cond2 = Condition::parse(&cond2).unwrap();
+
+    let mut reqs = Vec::new();
+    reqs.push(Requirement::from(&cond0));
+    reqs.push(Requirement::from(&cond1));
+    reqs.push(Requirement::from(&cond2));
+
+    let mut bounds_prover = BoundsProver::new(reqs);
+    // We can garentee that this will be worst case O(n^4)
+    bounds_prover.set_max_depth(3);
+    let prover = FullProver::from(bounds_prover);
+
+    assert!(prove(&prover, "x <= z+5") == ProofResult::True);
+}
+
+#[test]
+fn test_3_vars_different_coeffs2() {
+    // These are our function requirements
+    let cond0 = tokenize("x <= y+3");
+    let cond1 = tokenize("x <= 2*y");
+    let cond2 = tokenize("y <= z/2+2");
+
+    let cond0 = Condition::parse(&cond0).unwrap();
+    let cond1 = Condition::parse(&cond1).unwrap();
+    let cond2 = Condition::parse(&cond2).unwrap();
+
+    let mut reqs = Vec::new();
+    reqs.push(Requirement::from(&cond0));
+    reqs.push(Requirement::from(&cond1));
+    reqs.push(Requirement::from(&cond2));
+
+    let mut bounds_prover = BoundsProver::new(reqs);
+    // We can garentee that this will be worst case O(n^4)
+    bounds_prover.set_max_depth(3);
+    let prover = FullProver::from(bounds_prover);
+
+    assert!(prove(&prover, "x <= z+4") == ProofResult::True);
+}
+
