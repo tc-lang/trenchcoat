@@ -332,7 +332,6 @@ impl<'a, 'b> From<&AstCondition<'b>> for Requirement<'a> {
             }
 
             Compound { lhs, op, rhs } => todo!(),
-
             Malformed => panic!("cannot create requirement from malformed condition"),
         }
     }
@@ -369,10 +368,12 @@ pub trait Prover<'a> {
     /// to an expression involving the old `x`.
     ///
     /// For example,
+    /// ```trenchcoat
     /// # x < 2
     /// fn f(x: Int) {
     ///     x = x+2
     /// }
+    /// ```
     /// Then you might do `let prover2 = prover1.define(x, x+2)`
     /// then expressions passed to prover2 will map `x` in `prover2` to `x+2` in `prover1`.
     fn define(&'a self, x: Ident<'a>, expr: &'a Expr<'a>) -> Self;
@@ -383,6 +384,7 @@ pub trait Prover<'a> {
 }
 
 /*
+
 /// A utility type for implementing Prover with a SimpleProver
 ///
 /// This creates a simple tree, the root of which is a SimpleProver created with some given bounds.
@@ -398,6 +400,10 @@ pub enum ScopedSimpleProver<'a, P: SimpleProver<'a>> {
 
         parent: &'a ScopedSimpleProver<'a, P>,
     },
+    Shadow {
+        x: Ident<'a>,
+        parent: &'a ScopedSimpleProver<'a, P>,
+    },
 }
 
 impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
@@ -406,10 +412,20 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
     }
 
     fn prove(&self, req: &Requirement) -> ProofResult {
-        use ScopedSimpleProver::{Defn, Root};
+        use ScopedSimpleProver::{Defn, Root, Shadow};
         match self {
             Root(prover) => prover.prove(req),
             Defn { x, expr, parent } => parent.prove(&req.substitute(*x, expr)),
+            Shadow { x, parent } => {
+                // If the requirement to be proven requires something of x, then we can't prove it
+                // since we know nothing about x!
+                // Otherwise, hand it up.
+                if req.variables().contains(x) {
+                    ProofResult::Undetermined
+                } else {
+                    parent.prove(req)
+                }
+            }
         }
     }
 
@@ -421,10 +437,11 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
         }
     }
 
-    fn shadow(&self, _: Ident<'a>) -> Self {
-        todo!()
+    fn shadow(&'a self, x: Ident<'a>) -> Self {
+        Self::Shadow { x, parent: self }
     }
 }
+
 impl<'a, P: SimpleProver<'a>> ScopedSimpleProver<'a, P> {
     pub fn from(sp: P) -> Self {
         Self::Root(sp)

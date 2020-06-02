@@ -77,10 +77,10 @@ impl<'b, 'a: 'b> Expr<'a> {
                 // we don't want this to happen.
                 // There are cases where this can happen - these need to be fixed. After fixing,
                 // this will be useful for debugging.
-                println!(
+                /*println!(
                     "Dodgy simplification: {} -> {} -> {}",
                     self, simplified, simplified2
-                );
+                );*/
                 return simplified2;
             }
         }
@@ -105,7 +105,6 @@ impl<'b, 'a: 'b> Expr<'a> {
             Neg(expr) => match expr.simplify() {
                 // -0 = 0
                 ZERO => ZERO,
-                Expr::Atom(_) => self.clone(),
 
                 // -(-x) = x
                 Neg(inner_expr) => *inner_expr,
@@ -471,6 +470,10 @@ impl<'b, 'a: 'b> Expr<'a> {
                         let x = *x;
                         let y = *y;
 
+                        // We can't simplify if we're are doing anything with 1/0
+                        if x == Int::ZERO {
+                            return None;
+                        }
                         let res = y / x;
                         // Only simplify if res is exact
                         if res * x == y {
