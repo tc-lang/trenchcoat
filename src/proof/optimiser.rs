@@ -21,12 +21,17 @@ pub struct Minimizer<'a> {
     /// The expression to find bounds on
     /// This must be simplified.
     solving: Expr<'a>,
-    /// The variables in `solving` (as returned by `solving.variables()`
+    /// The variables in `solving` (as returned by `solving.variables()`)
     vars: Vec<Ident<'a>>,
-    /// The bounds we can assume to be true. Probably given by the function requirements/lemmas.
-    given: Vec<(Ident<'a>, Bound<'a>)>,
-    /// The index of the next substitution to make.
-    i: usize,
+    /// A list of the bounds given by the requirements/lemmas that we can assume to be true.
+    /// This is the vector of the requirements mapped to their bounds as returned by
+    /// `requirements.bounds()`
+    given: Vec<Vec<(Ident<'a>, Bound<'a>)>>,
+    /// The index of the next requirement to try and substitute.
+    given_idx: usize,
+    /// The index of the next bound in the requirement to try and substitute.
+    /// This makes the next substitution `self.given[self.given_idx][self.bound_idx]`
+    bound_idx: usize,
     /// The maximum number of childeren, equivilent to the number of substitutions that will be
     /// made.
     max_depth: usize,
@@ -44,8 +49,9 @@ pub struct Maximizer<'a> {
     /// Note that expressions and bounds must be simplified.
     solving: Expr<'a>,
     vars: Vec<Ident<'a>>,
-    given: Vec<(Ident<'a>, Bound<'a>)>,
-    i: usize,
+    given: Vec<Vec<(Ident<'a>, Bound<'a>)>>,
+    given_idx: usize,
+    bound_idx: usize,
     max_depth: usize,
     child: Option<Box<Maximizer<'a>>>,
 }
@@ -66,7 +72,7 @@ impl<'a> Minimizer<'a> {
     /// substitutions can be made at each stage. Also, the iterator will likely not be fully
     /// consumed.
     pub fn new(
-        given: Vec<(Ident<'a>, Bound<'a>)>,
+        given: Vec<Vec<(Ident<'a>, Bound<'a>)>>,
         solve: Expr<'a>,
         max_depth: usize,
     ) -> Minimizer<'a> {
@@ -75,7 +81,8 @@ impl<'a> Minimizer<'a> {
             solving: solve,
             vars,
             given,
-            i: 0,
+            given_idx: 0,
+            bound_idx: 0,
             max_depth,
             child: None,
         }
@@ -106,7 +113,7 @@ impl<'a> Maximizer<'a> {
     /// substitutions can be made at each stage. Also, the iterator will likely not be fully
     /// consumed.
     pub fn new(
-        given: Vec<(Ident<'a>, Bound<'a>)>,
+        given: Vec<Vec<(Ident<'a>, Bound<'a>)>>,
         solve: Expr<'a>,
         max_depth: usize,
     ) -> Maximizer<'a> {
@@ -115,7 +122,8 @@ impl<'a> Maximizer<'a> {
             solving: solve,
             vars,
             given,
-            i: 0,
+            given_idx: 0,
+            bound_idx: 0,
             max_depth,
             child: None,
         }
@@ -131,6 +139,7 @@ impl<'a> Maximizer<'a> {
 }
 
 /// Used to construct the body of the Iterator next method for Minimizer and Maximizer.
+    /// The bounds we can assume to be true. Probably given by the function requirements/lemmas.
 macro_rules! optimizer_next_body {
     ($self:expr) => {{
         // First, if we have a child, we want to iterate all the way through it.
@@ -152,26 +161,33 @@ macro_rules! optimizer_next_body {
             // If there are no more substitutions to make, we can finish.
             // To do this, we'll mark this as the final child (see the early return case above) and
             // return the current expression since it is a bound of itself.
-            if $self.i >= $self.given.len() {
+            if $self.given_idx >= $self.given.len() {
                 $self.max_depth = 0;
                 return Some($self.solving.clone());
             }
 
+            let this_requirement = &$self.given[$self.given_idx];
+
+            if $self.bound_idx >= this_requirement.len() {
+                $self.bound_idx = 0;
+                $self.given_idx += 1;
+                continue;
+            }
+
             // Get the identity and the bound
-            let (x_ident, bound) = &$self.given[$self.i];
+            let (x_ident, bound) = &this_requirement[$self.bound_idx];
+
+            $self.bound_idx += 1;
 
             // We only need to make a substitution if the expression contains the variable.
             if $self.vars.contains(x_ident) {
                 break (Expr::Atom(Atom::Named(*x_ident)), bound);
             }
-            $self.i += 1;
         };
 
         // The child should not make the same substitution again.
         let mut new_given = $self.given.clone();
-        new_given.remove($self.i);
-
-        $self.i += 1;
+        new_given.remove($self.given_idx);
 
         // Create the new child
         $self.child = Some(Box::new(Self::new(
