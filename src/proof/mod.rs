@@ -28,6 +28,7 @@ fn validate<'a>(top_level_items: &'a [ast::Item<'a>]) -> Vec<Error<'a>> {
 
 /// Represents the requirement `ge0 >= 0`
 /// All requirements can written in this form.
+#[derive(Debug, Clone)]
 pub struct Requirement<'a> {
     pub ge0: Expr<'a>,
 }
@@ -49,6 +50,11 @@ impl<'a> Requirement<'a> {
                 Expr::Neg(Box::new(ONE)),
             ])
         })
+    }
+
+    /// Returns a requirement with a simplified ge0 expression
+    pub fn simplify(&self) -> Requirement<'a> {
+        self.map_ge0(Expr::simplify)
     }
 
     /// Substitute `x` with `with` in self and return the result.
@@ -139,10 +145,12 @@ pub trait Prover<'a> {
     /// to an expression involving the old `x`.
     ///
     /// For example,
+    /// ```trenchcoat
     /// # x < 2
     /// fn f(x: Int) {
     ///     x = x+2
     /// }
+    /// ```
     /// Then you might do `let prover2 = prover1.define(x, x+2)`
     /// then expressions passed to prover2 will map `x` in `prover2` to `x+2` in `prover1`.
     fn define(&'a self, x: Ident<'a>, expr: &'a Expr<'a>) -> Self;

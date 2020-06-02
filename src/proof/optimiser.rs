@@ -218,18 +218,19 @@ fn sub_bound_into<'a>(
 
         Expr::Prod(terms) => {
             // We now want to minimize a product, for now, we will only simplify products in
-            // the form: [expr]*literal0*literal1*... (the other expression is optional)
-            // Where all the literals are non-negative.
-            // Since the expression is simplified we are allowed to assume that all literals
-            // are non-negative and that literals are the last terms.
-            // EXPR ORDER ASSUMED, ATOM ORDER ASSUMED
-            //
+            // the form: [expr]*literal0*literal1*... (expr is optional)
+            // Where all the literals are non-negative (we can assume this since the expression is
+            // simplified).
             // It is clear that the optimum of an expression with this form is
             // optimum(expr)*literal0*literal1*...
-            //
-            // Other forms would be more complex.
+            // Other forms would be more complex. TODO Handle non-linear things!
 
             let mut out = Vec::with_capacity(terms.len());
+            // This is to keep track of if we've made a substitution; if we've already made one
+            // when we come to do another then we've encountered more than 1 non-literal expression
+            // so we will return the expression we started with since we don't get have a valid
+            // algorithm for this.
+            let mut made_sub = false;
             for i in 0..terms.len() {
                 let term = &terms[i];
                 out.push(match term {
@@ -244,19 +245,35 @@ fn sub_bound_into<'a>(
                         }
                     }
 
-                    _ => {
-                        // Only optimise if it's the first term.
-                        // Any subsequent terms MUST be literals.
-                        // (Also note that the first term cannot be a literal if another kind
-                        // of expression exists since the bound expression is simplified so literals
-                        // will be the last terms in the product).
-                        if i == 0 {
-                            self_sub(term, x, bound)
-                        } else {
-                            // TODO
-                            // For now, we won't make any substitution
-                            term.clone()
+                    // We will also treat a recip of a literal as a literal since it's constant.
+                    Expr::Recip(inner_expr) => match &**inner_expr {
+                        Expr::Atom(Atom::Literal(x)) => {
+                            if *x < Int::ZERO {
+                                panic!("literal < 0")
+                            } else {
+                                term.clone()
+                            }
                         }
+
+                        _ => {
+                            // We can't handle non-linear things yet :(
+                            // See the comment above
+                            if made_sub {
+                                return expr.clone();
+                            }
+                            made_sub = true;
+                            self_sub(term, x, bound)
+                        }
+                    },
+
+                    _ => {
+                        // We can't handle non-linear things yet :(
+                        // See the comment above
+                        if made_sub {
+                            return expr.clone();
+                        }
+                        made_sub = true;
+                        self_sub(term, x, bound)
                     }
                 });
             }

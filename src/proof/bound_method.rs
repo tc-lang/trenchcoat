@@ -20,6 +20,10 @@ impl<'a> SimpleProver<'a> for Prover<'a> {
     }
 
     fn prove(&self, req: &Requirement) -> ProofResult {
+        // The SimpleProver trait doesn't allow us to assume that req is simplified so we must
+        // simplify it ourself.
+        let req = req.simplify();
+
         let mini = Minimizer::new(self.bounds.clone(), req.ge0.clone(), self.max_depth);
         // The statement is always true if a lower bound is >= 0
         if mini.int_bounds().any(|bound| bound >= Int::ZERO) {
