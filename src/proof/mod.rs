@@ -62,6 +62,11 @@ impl<'a> Requirement<'a> {
         self.map_ge0(|expr| expr.substitute(x, with))
     }
 
+    /// Returns a vector of the distinct variables the requirement applies to.
+    pub fn variables(&self) -> Vec<Ident<'a>> {
+        self.ge0.variables()
+    }
+
     /// Returns the bounds on `name` given by self.
     /// If no bounds are given or if they cannot be computed, None is returned.
     pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
@@ -157,7 +162,7 @@ pub trait Prover<'a> {
 
     /// Create a new prover whereby `x` is treated as a new identifier even if `x` was an
     /// identifier in self.
-    fn shadow(&self, x: Ident<'a>) -> Self;
+    fn shadow(&'a self, x: Ident<'a>) -> Self;
 }
 
 /// A utility type for implementing Prover with a SimpleProver
@@ -175,6 +180,10 @@ pub enum ScopedSimpleProver<'a, P: SimpleProver<'a>> {
 
         parent: &'a ScopedSimpleProver<'a, P>,
     },
+    Shadow {
+        x: Ident<'a>,
+        parent: &'a ScopedSimpleProver<'a, P>,
+    },
 }
 
 impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
@@ -183,10 +192,20 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
     }
 
     fn prove(&self, req: &Requirement) -> ProofResult {
-        use ScopedSimpleProver::{Defn, Root};
+        use ScopedSimpleProver::{Defn, Root, Shadow};
         match self {
             Root(prover) => prover.prove(req),
             Defn { x, expr, parent } => parent.prove(&req.substitute(*x, expr)),
+            Shadow { x, parent } => {
+                // If the requirement to be proven requires something of x, then we can't prove it
+                // since we know nothing about x!
+                // Otherwise, hand it up.
+                if req.variables().contains(x) {
+                    ProofResult::Undetermined
+                } else {
+                    parent.prove(req)
+                }
+            }
         }
     }
 
@@ -198,8 +217,8 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
         }
     }
 
-    fn shadow(&self, _: Ident<'a>) -> Self {
-        todo!()
+    fn shadow(&'a self, x: Ident<'a>) -> Self {
+        Self::Shadow { x, parent: self }
     }
 }
 
