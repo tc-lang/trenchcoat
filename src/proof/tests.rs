@@ -1,15 +1,16 @@
-use super::bound_method::{FullProver, Prover as BoundsProver};
-use super::{ProofResult, Prover, Requirement, SimpleProver};
+use super::graph::Prover;
+use super::{ProofResult, Prover as _, Requirement, SimpleProver};
 use crate::ast::proof::Condition;
 use crate::tokens::tokenize;
 
-fn prove<'a>(prover: &impl Prover<'a>, stmt: &'a str) -> ProofResult {
+fn prove<'a>(prover: &impl super::Prover<'a>, stmt: &'a str) -> ProofResult {
     let tokens = tokenize(stmt);
     let cond = Condition::parse(&tokens).unwrap();
     let req = Requirement::from(&cond);
     prover.prove(&req)
 }
 
+/*
 #[test]
 fn example_test() {
     // Also, to get an idea for the running time of the algorithm, this would be the time for a
@@ -35,10 +36,7 @@ fn example_test() {
     reqs.push(Requirement::from(&cond3));
     reqs.push(Requirement::from(&cond4));
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    // We can garentee that this will be worst case O(n^4)
-    bounds_prover.set_max_depth(4);
-    let prover = FullProver::from(bounds_prover);
+    let prover = Prover::new(reqs);
 
     // First off, let's start with the obvious proofs
     assert!(prove(&prover, "0 <= x") == ProofResult::True);
@@ -75,6 +73,7 @@ fn example_test() {
     assert!(prove(&prover, "x+2*y <= 18") == ProofResult::True);
     assert!(prove(&prover, "x+2*y <= 17") == ProofResult::Undetermined);
 }
+*/
 
 #[test]
 fn test_3_vars_different_coeffs() {
@@ -92,10 +91,7 @@ fn test_3_vars_different_coeffs() {
     reqs.push(Requirement::from(&cond1));
     reqs.push(Requirement::from(&cond2));
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    // We can garentee that this will be worst case O(n^4)
-    bounds_prover.set_max_depth(3);
-    let prover = FullProver::from(bounds_prover);
+    let prover = Prover::new(reqs);
 
     assert!(prove(&prover, "x <= z+5") == ProofResult::True);
 }
@@ -116,11 +112,7 @@ fn test_3_vars_different_coeffs2() {
     reqs.push(Requirement::from(&cond1));
     reqs.push(Requirement::from(&cond2));
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    // We can garentee that this will be worst case O(n^4)
-    bounds_prover.set_max_depth(3);
-    let prover = FullProver::from(bounds_prover);
+    let prover = Prover::new(reqs);
 
     assert!(prove(&prover, "x <= z+4") == ProofResult::True);
 }
-

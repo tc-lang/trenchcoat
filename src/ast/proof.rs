@@ -138,7 +138,7 @@ pub enum ConditionKind<'a> {
 #[derive(Debug, Clone)]
 pub struct Expr<'a> {
     pub kind: ExprKind<'a>,
-    source: &'a [Token<'a>],
+    pub source: &'a [Token<'a>],
 }
 
 #[derive(Debug, Clone)]
