@@ -190,13 +190,42 @@ impl Prover {
             None => return ProofResult::Undetermined,
         };
 
-        let mut term_idxs = vec![0; rhs.len()];
+        struct Info {
+            idx: usize,
+            num: i128,
+            denom: i128,
+        }
+
+        let mut infos: Vec<Vec<Info>> = Vec::with_capacity(rhs.len());
         for i in 0..rhs.len() {
             let term = &rhs[i..i + 1];
-            term_idxs[i] = match self.nodes.iter().position(|n| n.expr == term) {
-                Some(idx) => idx,
-                None => return ProofResult::Undetermined,
+
+            let same_vars = |n: &Node| {
+                if n.expr.len() != 1 {
+                    return false;
+                }
+                let t = &term[0];
+                let n = &n.expr[0];
+                t.vars == n.vars && t.coef.signum() == n.coef.signum()
             };
+
+            let info = self
+                .nodes
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| same_vars(n))
+                .map(|(idx, _)| Info {
+                    idx,
+                    num: term[0].coef,
+                    denom: self.nodes[idx].expr[0].coef,
+                })
+                .collect::<Vec<_>>();
+
+            if info.len() == 0 {
+                return ProofResult::Undetermined;
+            }
+
+            infos.push(info);
         }
 
         // And now we execute the algorithm, just as in `Prover::prove`.
@@ -233,10 +262,19 @@ impl Prover {
         }
 
         // Now, we find the sum of the distances to get the total distance
-        let opt_sum = term_idxs
+        let opt_sum = infos
             .into_iter()
-            .map(|i| distances[i])
-            .fold(Some(0_i128), |acc, d| acc.and_then(|a| a.checked_add(d)));
+            .map(|set| {
+                set.into_iter()
+                    .map(|info| {
+                        distances[info.idx]
+                            .checked_mul(info.num)
+                            .map(|x| x / info.denom)
+                    })
+                    .min()
+                    .unwrap()
+            })
+            .fold(Some(0_i128), |acc, d| acc.and_then(|a| a.checked_add(d?)));
 
         if !opt_sum.is_none() || !recurse {
             return match opt_sum {

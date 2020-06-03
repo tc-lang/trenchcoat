@@ -50,10 +50,8 @@ fn example_test() {
     // Or that
     assert!(prove(&prover, "x <= 10") == ProofResult::True);
     assert!(prove(&prover, "y <= 10") == ProofResult::True);
-    /*
     // In fact, 2*y <= 17 ==> y <= 8
     assert!(prove(&prover, "y <= 8") == ProofResult::True);
-    */
     // If we go too tight though, y *could* be in that range, but it won't always be:
     assert!(prove(&prover, "y <= 7") == ProofResult::Undetermined);
     assert!(prove(&prover, "y <= 5") == ProofResult::Undetermined);
@@ -75,8 +73,8 @@ fn example_test() {
     // With some tighter bounds!
     /*
     assert!(prove(&prover, "x+2*y <= 18") == ProofResult::True);
-    assert!(prove(&prover, "x+2*y <= 17") == ProofResult::Undetermined);
     */
+    assert!(prove(&prover, "x+2*y <= 17") == ProofResult::Undetermined);
 }
 
 #[test]
@@ -174,6 +172,7 @@ fn test_3_variables() {
     assert!(prove(&prover, "x+y+y+z <= 25-z") == ProofResult::True);
     assert!(prove(&prover, "x+y+2*y+z-y <= 24-z") == ProofResult::True);
     */
+
     assert!(prove(&prover, "x+y+y+z <= 23-z") == ProofResult::Undetermined);
     assert!(prove(&prover, "x+y+y+z <= 23") == ProofResult::Undetermined);
     assert!(prove(&prover, "x+y+y+z <= 24") == ProofResult::Undetermined);
@@ -255,7 +254,6 @@ fn test_3_variables_2() {
     */
 }
 
-/*
 #[test]
 fn test_lots_of_variables() {
     // These are our function requirements
@@ -289,48 +287,70 @@ fn test_lots_of_variables() {
 
     let prover = Prover::new(reqs);
 
+    /*
     assert!(prove(&prover, "0 <= n") == ProofResult::True);
     assert!(prove(&prover, "1 <= n") == ProofResult::True);
     assert!(prove(&prover, "4 <= n") == ProofResult::True);
+    */
     assert!(prove(&prover, "5 <= n") == ProofResult::Undetermined);
+    /*
     assert!(prove(&prover, "n <= 6") == ProofResult::True);
     assert!(prove(&prover, "n <= 7") == ProofResult::True);
+    */
     assert!(prove(&prover, "0 <= m") == ProofResult::True);
     assert!(prove(&prover, "0 <= x") == ProofResult::True);
+    /*
     assert!(prove(&prover, "0 <= y") == ProofResult::True);
+    */
     assert!(prove(&prover, "z <= 200") == ProofResult::True);
     assert!(prove(&prover, "10*y+x <= z") == ProofResult::True);
     assert!(prove(&prover, "0 <= x") == ProofResult::True);
+    /*
     assert!(prove(&prover, "10*y <= z") == ProofResult::True);
     assert!(prove(&prover, "10*y <= 200") == ProofResult::True);
     assert!(prove(&prover, "10*y <= 199") == ProofResult::True);
     assert!(prove(&prover, "10*y <= 198") == ProofResult::True);
+    */
     // TODO The next statement is true but quite hard to prove.
     // Maybe we can prove it?
     //assert!(prove(&prover, "10*y <= 197") == ProofResult::True);
+    /*
     assert!(prove(&prover, "y <= 20") == ProofResult::True);
     assert!(prove(&prover, "y <= 19") == ProofResult::True);
     assert!(prove(&prover, "0 <= z") == ProofResult::True);
+    */
     // 3*(m-x-y-z) <= 3*n <= y
     // 3*(m-x-z) <= 4*y
+    /*
     assert!(prove(&prover, "3*m-3*x-3*z <= 4*y") == ProofResult::True);
     assert!(prove(&prover, "3*m-3*x-3*z <= 5*y") == ProofResult::True);
+    */
     // x <= m
+    /*
     assert!(prove(&prover, "3*x-3*x-3*z <= 4*y") == ProofResult::True);
     assert!(prove(&prover, "3*z >= 0-4*y") == ProofResult::True);
-    assert!(prove(&prover, "0-4*y/3 <= z") == ProofResult::True);
+    */
+    // assert!(prove(&prover, "0-4*y/3 <= z") == ProofResult::True);
+    // ^ FIXME - This is broken because an implementation hasn't been provided yet
     // But this is obvious anyway!
+    /*
     assert!(prove(&prover, "0-y <= z") == ProofResult::True);
+    */
 
+    /*
     assert!(prove(&prover, "y <= z") == ProofResult::True);
     assert!(prove(&prover, "10*y >= z") == ProofResult::False);
+    */
     // 3n <= y
+    /*
     assert!(prove(&prover, "y >= z+1") == ProofResult::False);
     assert!(prove(&prover, "x <= z") == ProofResult::True);
+    */
 
+    /*
     assert!(prove(&prover, "3*n <= y") == ProofResult::True);
     assert!(prove(&prover, "3*n <= y+x") == ProofResult::True);
     assert!(prove(&prover, "2*n <= y") == ProofResult::True);
+    */
     assert!(prove(&prover, "4*n <= y") == ProofResult::Undetermined);
 }
-*/
