@@ -50,7 +50,7 @@ struct Edge(i128);
 impl Prover {
     /// An identical function to `super::Prover::prove`, except this is a helper for the recursion,
     /// which we use to manage attempting to prove the contrapositive.
-    fn prove(&self, req: &Requirement, recurse: bool) -> ProofResult {
+    fn prove(&mut self, req: &Requirement, recurse: bool) -> ProofResult {
         // Attempts to prove the requirement by finding the path the shortest length from req.lhs
         // to req.rhs
         //
@@ -110,6 +110,7 @@ impl Prover {
         }
 
         if distances[end_node_idx] <= req.constant {
+            self.add_req(req.clone());
             return ProofResult::True;
         }
 
@@ -151,7 +152,7 @@ impl Prover {
     /// A dedicated function for attempting to prove via the "split" method
     ///
     /// This is detailed above, in the doc comment for `Prover.try_splits`.
-    fn prove_splits(&self, req: Requirement, recurse: bool) -> ProofResult {
+    fn prove_splits(&mut self, req: Requirement, recurse: bool) -> ProofResult {
         // We require that the requirement has all terms on the right-hand side in order to properly
         // break it apart to find the upper bound - that way we can simply start from 0 and find
         // the upper bound on the negation, just as we would in `prove`.
@@ -160,8 +161,8 @@ impl Prover {
         // so we'll need to account for that as well.
 
         // This snippet is largely duplicated from `Term::simplify_to_lists`
-        let mut rhs = req.rhs;
-        for mut term in req.lhs {
+        let mut rhs = req.rhs.clone();
+        for mut term in req.lhs.clone() {
             term.coef *= -1;
             match rhs.binary_search_by_key(&&term.vars, |t| &t.vars) {
                 Ok(i) => {
@@ -279,7 +280,10 @@ impl Prover {
         if !opt_sum.is_none() || !recurse {
             return match opt_sum {
                 None => ProofResult::Undetermined,
-                Some(d) if d <= req.constant => ProofResult::True,
+                Some(d) if d <= req.constant => {
+                    self.add_req(req);
+                    ProofResult::True
+                }
                 Some(_) /* d > req.constant */ => ProofResult::Undetermined,
             };
         }
@@ -299,54 +303,48 @@ impl Prover {
             ProofResult::False => panic!("unexpected false result from proof recursion"),
         }
     }
-}
 
-impl<'a> super::Prover<'a> for Prover {
-    fn new(mut reqs: Vec<Requirement<'a>>) -> Self {
-        if EXHAUSTIVE_REQ_SIDES {
-            fn expand(req: Requirement) -> Vec<Requirement> {
-                // group all of the terms onto the left-hand side
-                let mut lhs = req.lhs;
-                for mut term in req.rhs {
-                    term.coef *= -1;
-                    match lhs.binary_search_by_key(&&term.vars, |t| &t.vars) {
-                        Ok(i) => {
-                            lhs[i].coef += term.coef;
-                            if lhs[i].coef == 0 {
-                                lhs.remove(i);
-                            }
+    fn add_req(&mut self, req: Requirement) {
+        let reqs = if EXHAUSTIVE_REQ_SIDES {
+            // group all of the terms onto the left-hand side
+            let mut lhs = req.lhs;
+            for mut term in req.rhs {
+                term.coef *= -1;
+                match lhs.binary_search_by_key(&&term.vars, |t| &t.vars) {
+                    Ok(i) => {
+                        lhs[i].coef += term.coef;
+                        if lhs[i].coef == 0 {
+                            lhs.remove(i);
                         }
-                        Err(i) => lhs.insert(i, term),
                     }
+                    Err(i) => lhs.insert(i, term),
                 }
-
-                let constant = req.constant;
-                let max_state = 1_i128 << lhs.len();
-                (0..max_state)
-                    .map(|state| {
-                        let mut new_lhs = Vec::new();
-                        let mut new_rhs = Vec::new();
-                        for (idx, mut term) in lhs.iter().cloned().enumerate() {
-                            match state & (1 << idx as i128) {
-                                0 => new_lhs.push(term),
-                                _ => {
-                                    term.coef *= -1;
-                                    new_rhs.push(term);
-                                }
-                            }
-                        }
-
-                        Requirement {
-                            lhs: new_lhs,
-                            rhs: new_rhs,
-                            constant,
-                            _marker: PhantomData,
-                        }
-                    })
-                    .collect()
             }
 
-            reqs = reqs.into_iter().map(expand).flatten().collect();
+            let constant = req.constant;
+            let max_state = 1_i128 << lhs.len();
+            (0..max_state)
+                .map(|state| {
+                    let mut new_lhs = Vec::new();
+                    let mut new_rhs = Vec::new();
+                    for (idx, mut term) in lhs.iter().cloned().enumerate() {
+                        match state & (1 << idx as i128) {
+                            0 => new_lhs.push(term),
+                            _ => {
+                                term.coef *= -1;
+                                new_rhs.push(term);
+                            }
+                        }
+                    }
+
+                    Requirement {
+                        lhs: new_lhs,
+                        rhs: new_rhs,
+                        constant,
+                        _marker: PhantomData,
+                    }
+                })
+                .collect()
         } else if DOUBLE_NEGATE_REQS {
             // One way we can expand the capabilities of the solver is to provide equal connections for
             // the inverses of all requirements, for example:
@@ -360,63 +358,67 @@ impl<'a> super::Prover<'a> for Prover {
                 term
             };
 
-            let inverse_reqs = reqs
-                .iter()
-                .map(|req| {
-                    // swap lhs and rhs, and reverse both
-                    let lhs = req.rhs.iter().cloned().map(negate).collect();
-                    let rhs = req.lhs.iter().cloned().map(negate).collect();
+            let lhs = req.rhs.iter().cloned().map(negate).collect();
+            let rhs = req.lhs.iter().cloned().map(negate).collect();
 
-                    // the coefficient stays the same, as detailed above
-                    Requirement {
-                        lhs,
-                        rhs,
-                        constant: req.constant,
-                        _marker: PhantomData,
-                    }
-                })
-                .collect::<Vec<_>>();
+            let new_req = Requirement {
+                lhs,
+                rhs,
+                constant: req.constant,
+                _marker: PhantomData,
+            };
 
-            reqs.extend(inverse_reqs);
-        }
+            vec![req, new_req]
+        } else {
+            vec![req]
+        };
 
-        let mut nodes: Vec<Node> = Vec::new();
         for req in reqs {
-            let lhs_idx = match nodes.iter().position(|n| n.expr == req.lhs) {
+            let lhs_idx = match self.nodes.iter().position(|n| n.expr == req.lhs) {
                 Some(i) => i,
                 None => {
-                    nodes.push(Node {
+                    self.nodes.push(Node {
                         expr: req.lhs.clone(),
                         less_than: Vec::new(),
                     });
-                    nodes.len() - 1
+                    self.nodes.len() - 1
                 }
             };
 
-            let rhs_idx = match nodes.iter().position(|n| n.expr == req.rhs) {
+            let rhs_idx = match self.nodes.iter().position(|n| n.expr == req.rhs) {
                 Some(i) => i,
                 None => {
-                    nodes.push(Node {
+                    self.nodes.push(Node {
                         expr: req.rhs.clone(),
                         less_than: Vec::new(),
                     });
-                    nodes.len() - 1
+                    self.nodes.len() - 1
                 }
             };
 
-            nodes[lhs_idx]
+            self.nodes[lhs_idx]
                 .less_than
                 .push((Edge(req.constant), NodeId(rhs_idx)));
         }
+    }
+}
 
-        Prover {
-            nodes,
+impl<'a> super::Prover<'a> for Prover {
+    fn new(reqs: Vec<Requirement<'a>>) -> Self {
+        let mut prover = Prover {
+            nodes: Vec::new(),
             try_splits: DEFAULT_TRY_SPLITS,
+        };
+
+        for req in reqs {
+            prover.add_req(req);
         }
+
+        prover
     }
 
-    fn prove(&self, req: &Requirement) -> ProofResult {
-        self.prove(req, true)
+    fn prove(&mut self, req: &Requirement) -> ProofResult {
+        Prover::prove(self, req, true)
     }
 
     fn define(&'a self, x: Ident<'a>, expr: &'a Expr<'a>) -> Self {

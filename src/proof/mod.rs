@@ -367,7 +367,7 @@ pub trait Prover<'a> {
     fn new(reqs: Vec<Requirement<'a>>) -> Self;
 
     /// Try to prove `req`. This will assume that the requirements passed to `new` are true.
-    fn prove(&self, req: &Requirement) -> ProofResult;
+    fn prove(&mut self, req: &Requirement) -> ProofResult;
 
     /// Return a new prover whereby `x` is substituted for `expr` before proofs are made.
     /// `x` may refer to an identity which already exists, in which case the new `x` will be mapped
