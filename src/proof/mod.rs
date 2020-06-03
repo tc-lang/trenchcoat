@@ -161,6 +161,19 @@ impl Term {
         let (mut lhs, mut lhs_const, lhs_mul) = lhs;
         let (mut rhs, mut rhs_const, rhs_mul) = rhs;
 
+        let aggregate = match (&lhs_mul, &rhs_mul) {
+            (Some(ex), None) | (None, Some(ex)) => Some(ex.clone()),
+            (None, None) => None,
+            (Some(l), Some(r)) => Some(AstExpr {
+                kind: Compound {
+                    lhs: Box::new(l.clone()),
+                    op: Mul,
+                    rhs: Box::new(r.clone()),
+                },
+                source: &[],
+            }),
+        };
+
         let mut lhs_mul = lhs_mul.map(|ex| ex.clone());
         let mut rhs_mul = rhs_mul.map(|ex| ex.clone());
 
@@ -201,19 +214,6 @@ impl Term {
 
             current_left = !current_left;
         }
-
-        let aggregate = match (lhs_mul, rhs_mul) {
-            (Some(ex), None) | (None, Some(ex)) => Some(ex.clone()),
-            (None, None) => None,
-            (Some(l), Some(r)) => Some(AstExpr {
-                kind: Compound {
-                    lhs: Box::new(l.clone()),
-                    op: Mul,
-                    rhs: Box::new(r.clone()),
-                },
-                source: &[],
-            }),
-        };
 
         (lhs, lhs_const, rhs, rhs_const, aggregate)
     }
@@ -288,7 +288,7 @@ impl Term {
 
 /// Represents a requirement of the form `φ ≤ Γ + C`, where `φ` and `Γ` are defined by a sum of
 /// terms (where each term is composed of at least one variable) and `C` is an integer constant.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Requirement<'a> {
     /// Equivalent to `φ` from above. These are sorted and simplified
     lhs: Vec<Term>,
@@ -299,14 +299,6 @@ pub struct Requirement<'a> {
     /// A marker in order to ensure compatibility with other versions by giving `Requirement` a
     /// lifetime.
     _marker: PhantomData<&'a ()>,
-}
-
-impl Requirement<'_> {
-    /// Produce the requirement that would be formed after substituting in a certain expression for
-    /// a variable
-    fn substitute(&self, x: Ident, with: &Expr) -> Requirement {
-        todo!()
-    }
 }
 
 impl<'a, 'b> From<&AstCondition<'b>> for Requirement<'a> {
