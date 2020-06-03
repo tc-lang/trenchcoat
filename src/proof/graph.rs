@@ -40,23 +40,13 @@ impl Prover {
         // graph; if they aren't, we'll return that the statement is undetermined.
 
         // find the starting and ending points of the path through the graph
-        let start_node_idx = match self
-            .nodes
-            .iter()
-            .enumerate()
-            .find(|(_, n)| n.expr == req.lhs)
-        {
-            Some((i, _)) => i,
+        let start_node_idx = match self.nodes.iter().position(|n| n.expr == req.lhs) {
+            Some(i) => i,
             None => return ProofResult::Undetermined,
         };
 
-        let end_node_idx = match self
-            .nodes
-            .iter()
-            .enumerate()
-            .find(|(_, n)| n.expr == req.rhs)
-        {
-            Some((i, _)) => i,
+        let end_node_idx = match self.nodes.iter().position(|n| n.expr == req.rhs) {
+            Some(i) => i,
             None => return ProofResult::Undetermined,
         };
 
@@ -130,8 +120,8 @@ impl<'a> super::Prover<'a> for Prover {
     fn new(reqs: Vec<Requirement<'a>>) -> Self {
         let mut nodes: Vec<Node> = Vec::new();
         for req in reqs {
-            let lhs_idx = match nodes.iter().enumerate().find(|(_, n)| n.expr == req.lhs) {
-                Some((i, _)) => i,
+            let lhs_idx = match nodes.iter().position(|n| n.expr == req.lhs) {
+                Some(i) => i,
                 None => {
                     nodes.push(Node {
                         expr: req.lhs.clone(),
@@ -141,8 +131,8 @@ impl<'a> super::Prover<'a> for Prover {
                 }
             };
 
-            let rhs_idx = match nodes.iter().enumerate().find(|(_, n)| n.expr == req.rhs) {
-                Some((i, _)) => i,
+            let rhs_idx = match nodes.iter().position(|n| n.expr == req.rhs) {
+                Some(i) => i,
                 None => {
                     nodes.push(Node {
                         expr: req.rhs.clone(),
