@@ -60,8 +60,21 @@ impl Term {
                     let (mut lhs, lhs_const, rhs, rhs_const, aggregate) =
                         Term::multiply_sides(lhs, rhs);
 
-                    lhs.extend(rhs);
-                    lhs.sort();
+                    // Insert the elements of rhs into lhs, grouping like terms
+                    for term in rhs {
+                        match lhs.binary_search_by_key(&&term.vars, |t| &t.vars) {
+                            Ok(i) => {
+                                lhs[i].coef += term.coef;
+                                if lhs[i].coef == 0 {
+                                    lhs.remove(i);
+                                }
+                            }
+                            Err(i) => lhs.insert(i, term),
+                        }
+                    }
+
+                    // lhs.extend(rhs);
+                    // lhs.sort();
                     (lhs, lhs_const + rhs_const, aggregate)
                 }
                 Div => {
