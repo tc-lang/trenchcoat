@@ -66,7 +66,7 @@ impl Prover {
 
             for (u, node) in self.nodes.iter().enumerate() {
                 for &(Edge(weight), NodeId(v)) in node.less_than.iter() {
-                    if distances[u] + weight < distances[v] {
+                    if distances[u] != i128::MAX && distances[u] + weight < distances[v] {
                         changed = true;
                         distances[v] = distances[u] + weight;
                     }
