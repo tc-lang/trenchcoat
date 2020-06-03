@@ -10,7 +10,6 @@ fn prove<'a>(prover: &impl super::Prover<'a>, stmt: &'a str) -> ProofResult {
     prover.prove(&req)
 }
 
-/*
 #[test]
 fn example_test() {
     // Also, to get an idea for the running time of the algorithm, this would be the time for a
@@ -51,16 +50,20 @@ fn example_test() {
     // Or that
     assert!(prove(&prover, "x <= 10") == ProofResult::True);
     assert!(prove(&prover, "y <= 10") == ProofResult::True);
+    /*
     // In fact, 2*y <= 17 ==> y <= 8
     assert!(prove(&prover, "y <= 8") == ProofResult::True);
+    */
     // If we go too tight though, y *could* be in that range, but it won't always be:
     assert!(prove(&prover, "y <= 7") == ProofResult::Undetermined);
     assert!(prove(&prover, "y <= 5") == ProofResult::Undetermined);
     // Or, if we go crazy, the result is always false:
     assert!(prove(&prover, "y <= 0-1") == ProofResult::False);
     // We could also make some other combinations:
+    /*
     assert!(prove(&prover, "2*x+y <= 20") == ProofResult::True);
     assert!(prove(&prover, "x+2*y <= 20") == ProofResult::True);
+    */
     assert!(prove(&prover, "x+2*y >= 0") == ProofResult::True);
     // Also, x/2 + y >= 1
     //   ==> x + 2*y >= 2
@@ -70,10 +73,11 @@ fn example_test() {
     assert!(prove(&prover, "x+2*y >= 31") == ProofResult::False);
     assert!(prove(&prover, "2*x+y <= 19") == ProofResult::Undetermined);
     // With some tighter bounds!
+    /*
     assert!(prove(&prover, "x+2*y <= 18") == ProofResult::True);
     assert!(prove(&prover, "x+2*y <= 17") == ProofResult::Undetermined);
+    */
 }
-*/
 
 #[test]
 fn test_3_vars_different_coeffs() {
@@ -156,10 +160,10 @@ fn test_3_variables() {
     assert!(prove(&prover, "x <= 0-11") == ProofResult::False);
     assert!(prove(&prover, "x <= 0-12") == ProofResult::False);
 
-    /*
     assert!(prove(&prover, "y+z <= 7") == ProofResult::True);
     assert!(prove(&prover, "y+z <= 8") == ProofResult::True);
     assert!(prove(&prover, "y+z <= 6") == ProofResult::Undetermined);
+    /*
     assert!(prove(&prover, "x+y+z <= 17") == ProofResult::True);
     assert!(prove(&prover, "x+y+z <= 18") == ProofResult::True);
     assert!(prove(&prover, "x+y+z <= 16") == ProofResult::Undetermined);
@@ -227,10 +231,10 @@ fn test_3_variables_2() {
     assert!(prove(&prover, "x <= 0-2") == ProofResult::False);
     assert!(prove(&prover, "x <= 0-1") == ProofResult::Undetermined);
 
-    /*
     assert!(prove(&prover, "y+z <= 7") == ProofResult::True);
     assert!(prove(&prover, "y+z <= 8") == ProofResult::True);
     assert!(prove(&prover, "y+z <= 6") == ProofResult::Undetermined);
+    /*
     assert!(prove(&prover, "x+y+z <= 17") == ProofResult::True);
     assert!(prove(&prover, "x+y+z <= 18") == ProofResult::True);
     assert!(prove(&prover, "x+y+z <= 16") == ProofResult::Undetermined);

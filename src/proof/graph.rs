@@ -24,13 +24,15 @@ pub struct Prover {
 
 /// A flag for whether the prover should - by defualt - try to split requirements apart if they are
 /// not present in the graph.
-const DEFAULT_TRY_SPLITS: bool = false;
+const DEFAULT_TRY_SPLITS: bool = true;
 
 /// A flag for whether requirements should be doubled so that their negations are also added (so
 /// that upper bounds on `x` provide lower bounds on `-x`)
 ///
 /// Note that this should be enabled if DEFAULT_TRY_SPLITS is enabled.
 const DOUBLE_NEGATE_REQS: bool = false;
+
+const EXHAUSTIVE_REQ_SIDES: bool = true;
 
 #[derive(Copy, Clone, Debug)]
 struct NodeId(usize);
@@ -263,7 +265,51 @@ impl Prover {
 
 impl<'a> super::Prover<'a> for Prover {
     fn new(mut reqs: Vec<Requirement<'a>>) -> Self {
-        if DOUBLE_NEGATE_REQS {
+        if EXHAUSTIVE_REQ_SIDES {
+            fn expand(req: Requirement) -> Vec<Requirement> {
+                // group all of the terms onto the left-hand side
+                let mut lhs = req.lhs;
+                for mut term in req.rhs {
+                    term.coef *= -1;
+                    match lhs.binary_search_by_key(&&term.vars, |t| &t.vars) {
+                        Ok(i) => {
+                            lhs[i].coef += term.coef;
+                            if lhs[i].coef == 0 {
+                                lhs.remove(i);
+                            }
+                        }
+                        Err(i) => lhs.insert(i, term),
+                    }
+                }
+
+                let constant = req.constant;
+                let max_state = 1_i128 << lhs.len();
+                (0..max_state)
+                    .map(|state| {
+                        let mut new_lhs = Vec::new();
+                        let mut new_rhs = Vec::new();
+                        for (idx, mut term) in lhs.iter().cloned().enumerate() {
+                            match state & (1 << idx as i128) {
+                                0 => new_lhs.push(term),
+                                _ => {
+                                    term.coef *= -1;
+                                    new_rhs.push(term);
+                                }
+                            }
+                        }
+
+                        Requirement {
+                            lhs: new_lhs,
+                            rhs: new_rhs,
+                            constant,
+                            _marker: PhantomData,
+                        }
+                    })
+                    .collect()
+            }
+
+            reqs = reqs.into_iter().map(expand).flatten().collect();
+        } else if DOUBLE_NEGATE_REQS {
             // One way we can expand the capabilities of the solver is to provide equal connections for
             // the inverses of all requirements, for example:
             //   x ≤ y + 3  =>       -x ≥ -y + -3
