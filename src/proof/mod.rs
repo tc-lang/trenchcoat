@@ -288,6 +288,7 @@ impl Term {
 
 /// Represents a requirement of the form `φ ≤ Γ + C`, where `φ` and `Γ` are defined by a sum of
 /// terms (where each term is composed of at least one variable) and `C` is an integer constant.
+#[derive(Debug)]
 pub struct Requirement<'a> {
     /// Equivalent to `φ` from above. These are sorted and simplified
     lhs: Vec<Term>,
@@ -339,7 +340,7 @@ impl<'a, 'b> From<&AstCondition<'b>> for Requirement<'a> {
                 Requirement {
                     lhs,
                     rhs,
-                    constant: shift - lhs_shift - rhs_shift,
+                    constant: shift - lhs_shift + rhs_shift,
                     _marker: PhantomData,
                 }
             }
