@@ -64,6 +64,10 @@ fn example_test() {
     assert!(prove(&prover, "2*x+y <= 20") == ProofResult::True);
     assert!(prove(&prover, "x+2*y <= 20") == ProofResult::True);
     assert!(prove(&prover, "x+2*y >= 0") == ProofResult::True);
+    // And duplicating the above, using parentheticals
+    assert!(prove(&prover, "2*(x+y)-y <= 20") == ProofResult::True);
+    assert!(prove(&prover, "2*(x+y)-x <= 20") == ProofResult::True);
+    assert!(prove(&prover, "2*(x+y)-x >= 0") == ProofResult::True);
     // Also, x/2 + y >= 1
     //   ==> x + 2*y >= 2
     assert!(prove(&prover, "x+2*y >= 1") == ProofResult::True);
