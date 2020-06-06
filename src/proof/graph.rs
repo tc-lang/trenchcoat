@@ -34,6 +34,8 @@ const DOUBLE_NEGATE_REQS: bool = false;
 
 const EXHAUSTIVE_REQ_SIDES: bool = true;
 
+const LINK_MUL_COEFS: bool = true;
+
 #[derive(Copy, Clone, Debug)]
 struct NodeId(usize);
 
@@ -44,8 +46,20 @@ struct Node {
     less_than: Vec<(Edge, NodeId)>,
 }
 
+/// An edge represents the relation between two nodes in the graph
+///
+/// For two nodes, A and B (each representing a list of terms), an edge from A to B indicates that
+/// the following relation holds:
+/// `A ≤ B*num/denom + offset`
+///
+/// Note that `num` and `denom` are both unsigned, meaning that nodes of opposite signs cannot be
+/// compared.
 #[derive(Copy, Clone, Debug)]
-struct Edge(i128);
+struct Edge {
+    offset: i128,
+    num: u128,
+    denom: u128,
+}
 
 impl Prover {
     /// An identical function to `super::Prover::prove`, except this is a helper for the recursion,
@@ -74,40 +88,9 @@ impl Prover {
             None => return ProofResult::Undetermined,
         };
 
-        // We're going to perform the Bellman-Ford algorithm to compute the shortest path between
-        // start_node and end_node.
-        //
-        // This is largely replicated from the excellent wikipedia pseudocode for the algorithm,
-        // available here: https://en.wikipedia.org/wiki/Bellman%E2%80%93Ford_algorithm#Algorithm
-
-        // initialize distances. We don't track predecesssors here because we don't actually care
-        // about the path itself, just the distance
-        let mut distances = vec![i128::MAX; self.nodes.len()];
-        distances[start_node_idx] = 0_i128;
-
-        for _loop_iter in 0..self.nodes.len() {
-            let mut changed = false;
-
-            for (u, node) in self.nodes.iter().enumerate() {
-                for &(Edge(weight), NodeId(v)) in node.less_than.iter() {
-                    if distances[u] != i128::MAX && distances[u] + weight < distances[v] {
-                        changed = true;
-                        distances[v] = distances[u] + weight;
-                    }
-                }
-            }
-
-            // We don't actually check for negative-weight cycles right now, because that's a
-            // contradiction, and (1) contradictions can imply anything, and (2) that will probably
-            // be checked at creation later.
-            // if loop_iter == self.nodes.len() - 1 && changed {
-            //    // negative-weight cycle
-            // }
-
-            if !changed {
-                break;
-            }
-        }
+        // Generate the distances according to the Bellman-Ford algorithm to compute the shortest
+        // path between start_node and end_node.
+        let distances = self.gen_distances(NodeId(start_node_idx));
 
         if distances[end_node_idx] <= req.constant {
             self.add_req(req.clone());
@@ -230,37 +213,7 @@ impl Prover {
         }
 
         // And now we execute the algorithm, just as in `Prover::prove`.
-        //
-        // This is directly copied from above - it could be made into a separate function, but
-        // it'll work for now.
-        // ^ FIXME
-
-        let mut distances = vec![i128::MAX; self.nodes.len()];
-        distances[empty_idx] = 0_i128;
-
-        for _loop_iter in 0..self.nodes.len() {
-            let mut changed = false;
-
-            for (u, node) in self.nodes.iter().enumerate() {
-                for &(Edge(weight), NodeId(v)) in node.less_than.iter() {
-                    if distances[u] != i128::MAX && distances[u] + weight < distances[v] {
-                        changed = true;
-                        distances[v] = distances[u] + weight;
-                    }
-                }
-            }
-
-            // We don't actually check for negative-weight cycles right now, because that's a
-            // contradiction, and (1) contradictions can imply anything, and (2) that will probably
-            // be checked at creation later.
-            // if loop_iter == self.nodes.len() - 1 && changed {
-            //    // negative-weight cycle
-            // }
-
-            if !changed {
-                break;
-            }
-        }
+        let distances = self.gen_distances(NodeId(empty_idx));
 
         // Now, we find the sum of the distances to get the total distance
         let opt_sum = infos
@@ -373,33 +326,122 @@ impl Prover {
             vec![req]
         };
 
-        for req in reqs {
-            let lhs_idx = match self.nodes.iter().position(|n| n.expr == req.lhs) {
-                Some(i) => i,
-                None => {
-                    self.nodes.push(Node {
-                        expr: req.lhs.clone(),
-                        less_than: Vec::new(),
-                    });
-                    self.nodes.len() - 1
-                }
+        for req in reqs.iter() {
+            // These create nodes corresponding to the lists of terms, if they do not already
+            // exist. Otherwise, `create_node_idx` returns the index of a node `n` satisfying
+            // `n.expr == req.lhs` (or rhs).
+            let lhs_idx = self.create_node_idx(&req.lhs);
+            let rhs_idx = self.create_node_idx(&req.rhs);
+
+            let edge = Edge {
+                offset: req.constant,
+                num: 1,
+                denom: 1,
             };
 
-            let rhs_idx = match self.nodes.iter().position(|n| n.expr == req.rhs) {
-                Some(i) => i,
-                None => {
-                    self.nodes.push(Node {
-                        expr: req.rhs.clone(),
-                        less_than: Vec::new(),
-                    });
-                    self.nodes.len() - 1
-                }
-            };
-
-            self.nodes[lhs_idx]
-                .less_than
-                .push((Edge(req.constant), NodeId(rhs_idx)));
+            self.nodes[lhs_idx].less_than.push((edge, NodeId(rhs_idx)));
         }
+
+        if LINK_MUL_COEFS {
+            for req in reqs {
+                // If we can factor these out so that we have:
+                //   d*A ≤ n*B + C
+                // we then have:
+                //   A ≤ B*n/d + C/d
+                // which is nearly identical to the inequality given in the doc-comment for edges.
+
+                let (lhs, lhs_gcd) = Term::div_gcd(req.lhs);
+                let (rhs, rhs_gcd) = Term::div_gcd(req.rhs);
+
+                let edge = Edge {
+                    offset: req.constant / (lhs_gcd as i128),
+                    num: rhs_gcd,
+                    denom: lhs_gcd,
+                };
+
+                let lhs_idx = self.create_node_idx(&lhs);
+                let rhs_idx = self.create_node_idx(&rhs);
+
+                self.nodes[lhs_idx].less_than.push((edge, NodeId(rhs_idx)));
+            }
+        }
+    }
+
+    /// Generates the distances from the given starting node to all others, as given by the
+    /// Bellman-Ford algorithm
+    ///
+    /// More details are given periodically within the body of the function itself.
+    fn gen_distances(&self, start_node: NodeId) -> Vec<i128> {
+        // The code is largely replicated from the excellent wikipedia pseudocode for the
+        // algorithm, available here:
+        //   https://en.wikipedia.org/wiki/Bellman%E2%80%93Ford_algorithm#Algorithm
+
+        let NodeId(start_node_idx) = start_node;
+
+        // Initialize the distances. We don't track predecessors here because we don't actually
+        // care about the path itself, just the distance.
+        //
+        // i128::MAX serves as our value of "infinity"
+        let mut distances = vec![i128::MAX; self.nodes.len()];
+        distances[start_node_idx] = 0_i128;
+
+        for _loop_iter in 0..self.nodes.len() {
+            // We end early if there's no changes (this is very likely to happen)
+            let mut changed = false;
+
+            for (u, node) in self.nodes.iter().enumerate() {
+                // We'll filter out all source nodes that have distances of infinity (i128::MAX),
+                // because those haven't been reached yet.
+                if distances[u] == i128::MAX {
+                    continue;
+                }
+
+                // When we calculate an update distance, there are only two cases where we can
+                // guarantee that everything is comparable:
+                //  1. The muliplier (num / denom) is equal to one; or
+                //  2. The starting node is a constant (i.e. start_node.expr == [])
+                //
+                // If neither of these are true, we can't compare, so we must skip that edge.
+
+                let valid = |&&(Edge { num, denom, .. }, _): &&(_, NodeId)| {
+                    num == denom || &self.nodes[start_node_idx].expr == &[]
+                };
+
+                for &(Edge { offset, num, denom }, NodeId(v)) in node.less_than.iter().filter(valid)
+                {
+                    let updated = distances[u] * (num as i128) / (denom as i128) + offset;
+                    if updated < distances[v] {
+                        changed = true;
+                        distances[v] = updated;
+                    }
+                }
+            }
+
+            // We don't actually check for negative-weight cycles right now, because that's a
+            // contradiction, and (1) contradictions can imply anything and (2) that will probably
+            // be checked at creation later.
+            // if loop_iter == self.nodes.len() - 1 && changed {
+            //    // negative-weight cycle
+            // }
+
+            if !changed {
+                break;
+            }
+        }
+
+        distances
+    }
+
+    fn create_node_idx(&mut self, matching_expr: &[Term]) -> usize {
+        if let Some(i) = self.nodes.iter().position(|n| n.expr == matching_expr) {
+            return i;
+        }
+
+        self.nodes.push(Node {
+            expr: Vec::from(matching_expr),
+            less_than: Vec::new(),
+        });
+        self.nodes.len() - 1
     }
 }
 

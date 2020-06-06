@@ -15,6 +15,7 @@ mod tests;
 use crate::ast::{self, proof::Condition as AstCondition, proof::Expr as AstExpr, Ident};
 use error::Error;
 use expr::Expr;
+use gcd::Gcd;
 use std::marker::PhantomData;
 use std::ops::Deref;
 
@@ -284,6 +285,32 @@ impl Term {
             coef: 1,
         }
     }
+
+    /// A helper function for dividing a set of terms by their greatest common divisor, returning
+    /// that value and the updated terms
+    ///
+    /// If the list of terms is empty, the returned gcd will be one.
+    fn div_gcd(mut terms: Vec<Term>) -> (Vec<Term>, u128) {
+        if terms.is_empty() {
+            return (terms, 1);
+        }
+
+        fn abs(x: i128) -> u128 {
+            x.abs() as u128
+        }
+
+        let gcd = terms[1..]
+            .iter()
+            .map(|t| t.coef)
+            .map(abs)
+            .fold(abs(terms[0].coef), Gcd::gcd);
+
+        for t in terms.iter_mut() {
+            t.coef /= gcd as i128;
+        }
+
+        (terms, gcd)
+    }
 }
 
 /// Represents a requirement of the form `φ ≤ Γ + C`, where `φ` and `Γ` are defined by a sum of
@@ -329,12 +356,14 @@ impl<'a, 'b> From<&AstCondition<'b>> for Requirement<'a> {
                 // keeping with the statement of the requirement.
                 let (lhs, lhs_shift, rhs, rhs_shift, _aggregate) = Term::multiply_sides(lhs, rhs);
 
-                Requirement {
+                let req = Requirement {
                     lhs,
                     rhs,
                     constant: shift - lhs_shift + rhs_shift,
                     _marker: PhantomData,
-                }
+                };
+
+                req
             }
 
             Compound { lhs, op, rhs } => todo!(),

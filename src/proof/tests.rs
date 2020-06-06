@@ -254,6 +254,7 @@ fn test_3_variables_2() {
     */
 }
 
+/*
 #[test]
 fn test_lots_of_variables() {
     // These are our function requirements
@@ -354,3 +355,4 @@ fn test_lots_of_variables() {
     */
     assert!(prove(&mut prover, "4*n <= y") == ProofResult::Undetermined);
 }
+*/
