@@ -353,6 +353,10 @@ impl Prover {
                 let (lhs, lhs_gcd) = Term::div_gcd(req.lhs);
                 let (rhs, rhs_gcd) = Term::div_gcd(req.rhs);
 
+                if rhs_gcd == 1 && lhs_gcd == 1 {
+                    continue;
+                }
+
                 let edge = Edge {
                     offset: req.constant / (lhs_gcd as i128),
                     num: rhs_gcd,
