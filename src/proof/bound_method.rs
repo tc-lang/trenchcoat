@@ -7,14 +7,14 @@ use crate::ast::Ident;
 pub type FullProver<'a> = ScopedSimpleProver<'a, Prover<'a>>;
 
 pub struct Prover<'a> {
-    bounds: Vec<(Ident<'a>, Bound<'a>)>,
+    bounds: Vec<Vec<(Ident<'a>, Bound<'a>)>>,
     max_depth: usize,
 }
 
 impl<'a> SimpleProver<'a> for Prover<'a> {
     fn new(reqs: Vec<Requirement<'a>>) -> Prover<'a> {
         Prover {
-            bounds: reqs.iter().map(|req| req.bounds()).flatten().collect(),
+            bounds: reqs.iter().map(|req| req.simplify().bounds()).collect(),
             max_depth: 10,
         }
     }
