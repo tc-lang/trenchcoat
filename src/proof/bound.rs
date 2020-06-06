@@ -2,7 +2,7 @@ use super::expr::Expr;
 use std::fmt;
 
 /// Represents a bound on something.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Bound<'a> {
     /// The thing must be <= expr
     Le(Expr<'a>),
@@ -118,7 +118,16 @@ impl<'a> Relation<'a> {
                 other_terms.extend_from_slice(&terms[..x_idx]);
                 other_terms.extend_from_slice(&terms[x_idx + 1..]);
 
-                let new_right = Prod(vec![self.right.clone(), Recip(Box::new(Sum(other_terms)))]);
+                let new_right = Prod(vec![
+                    self.right.clone(),
+                    Recip(Box::new(Sum(other_terms)), {
+                        // TODO Decide and document rounding directions
+                        match self.relation {
+                            RelationKind::Le => true,
+                            RelationKind::Ge => false,
+                        }
+                    }),
+                ]);
 
                 Relation {
                     left: new_left,
@@ -137,10 +146,10 @@ impl<'a> Relation<'a> {
             .rearrange_unsafe(subject),
 
             // Recip both sides to unwrap this Recip
-            Recip(term) => Relation {
+            Recip(term, rounding) => Relation {
                 left: *term.clone(),
                 relation: self.relation.opposite(),
-                right: Recip(Box::new(self.right.clone())),
+                right: Recip(Box::new(self.right.clone()), todo!()),
             }
             .rearrange_unsafe(subject),
 

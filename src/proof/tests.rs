@@ -21,6 +21,9 @@ fn example_test() {
     let cond2 = tokenize("x+y <= 10");
     let cond3 = tokenize("2*y <= 17");
     let cond4 = tokenize("x/2+y >= 1");
+    // y <= 7?
+    // 1-x/2 <= y <= 7
+    // -6 <= x/2
 
     let cond0 = Condition::parse(&cond0).unwrap();
     let cond1 = Condition::parse(&cond1).unwrap();
@@ -35,10 +38,49 @@ fn example_test() {
     reqs.push(Requirement::from(&cond3));
     reqs.push(Requirement::from(&cond4));
 
-    let mut bounds_prover = BoundsProver::new(reqs);
+    let mut bounds_prover = BoundsProver::new(reqs.clone());
     // We can garentee that this will be worst case O(n^4)
     bounds_prover.set_max_depth(4);
     let prover = FullProver::from(bounds_prover);
+
+    /*
+    let tokens = tokenize("8 - y");
+    let expr = crate::ast::proof::Expr::parse(&tokens).unwrap();
+
+    let mini = super::optimiser::Minimizer::new(
+        reqs.iter()
+            .map(|req| {
+                req.simplify()
+                    .bounds()
+                    .iter()
+                    .map(|(ident, bound)| (*ident, bound.simplify()))
+                    .collect()
+            })
+            .collect(),
+        super::expr::Expr::from(&expr).simplify(),
+        6,
+    );
+    let mut bounds = mini.collect::<Vec<super::expr::Expr>>();
+    //let mut bounds = mini.int_bounds().collect::<Vec<super::int::Int>>();
+    bounds.dedup();
+    for bound in bounds.iter() {
+        print!("YIELDS {}", bound);
+        match bound.eval() {
+            Some(x) => println!(" = {}", x),
+            None => println!(""),
+        };
+    }
+    */
+    //panic!("Hi");
+
+    //println!("{:?}", prove(&prover, "2*x+y <= 18"));
+    //println!("{:?}", prove(&prover, "x+y <= 10"));
+    //println!("{:?}", prove(&prover, "x <= 10"));
+    //println!("{:?}", prove(&prover, "x <= 9"));
+    //println!("{:?}", prove(&prover, "1 <= y"));
+    //println!("{:?}", prove(&prover, "2*x+y <= 19"));
+    //println!("{:?}", prove(&prover, "x+y <= 9"));
+    //assert!(prove(&prover, "x+y <= 10") == ProofResult::True);
 
     // First off, let's start with the obvious proofs
     assert!(prove(&prover, "0 <= x") == ProofResult::True);
@@ -70,7 +112,9 @@ fn example_test() {
     assert!(prove(&prover, "x+2*y >= 2") == ProofResult::True);
     assert!(prove(&prover, "x+2*y >= 3") == ProofResult::Undetermined);
     assert!(prove(&prover, "x+2*y >= 31") == ProofResult::False);
+
     assert!(prove(&prover, "2*x+y <= 19") == ProofResult::Undetermined);
+
     // With some tighter bounds!
     assert!(prove(&prover, "x+2*y <= 18") == ProofResult::True);
     assert!(prove(&prover, "x+2*y <= 17") == ProofResult::Undetermined);
@@ -289,9 +333,7 @@ fn test_lots_of_variables() {
     bounds_prover.set_max_depth(5);
     let prover = FullProver::from(bounds_prover);
 
-    /*
-    let tokens = tokenize("190-10*y");
-    let tokens = tokenize("0-y");
+    let tokens = tokenize("y-2*n");
     let expr = crate::ast::proof::Expr::parse(&tokens).unwrap();
 
     /*
@@ -304,7 +346,15 @@ fn test_lots_of_variables() {
     */
 
     let mini = super::optimiser::Minimizer::new(
-        reqs.iter().map(|req| req.bounds()).flatten().collect(),
+        reqs.iter()
+            .map(|req| {
+                req.simplify()
+                    .bounds()
+                    .iter()
+                    .map(|(ident, bound)| (*ident, bound.simplify()))
+                    .collect()
+            })
+            .collect(),
         super::expr::Expr::from(&expr).simplify(),
         6,
     );
@@ -312,15 +362,22 @@ fn test_lots_of_variables() {
     //let mut bounds = mini.int_bounds().collect::<Vec<super::int::Int>>();
     bounds.dedup();
     for bound in bounds.iter() {
-        println!("{}", bound);
+        println!(
+            "YIELDS {} = {}",
+            bound,
+            match bound.eval() {
+                Some(x) => x,
+                None => super::int::EvalInt::from(super::int::Int::Infinity),
+            }
+        );
     }
-    panic!("Hi");
-    */
+    //panic!("Hi");
 
     assert!(prove(&prover, "0 <= n") == ProofResult::True);
     assert!(prove(&prover, "1 <= n") == ProofResult::True);
     assert!(prove(&prover, "4 <= n") == ProofResult::True);
     assert!(prove(&prover, "5 <= n") == ProofResult::Undetermined);
+    assert!(prove(&prover, "n <= 5") == ProofResult::Undetermined);
     assert!(prove(&prover, "n <= 6") == ProofResult::True);
     assert!(prove(&prover, "n <= 7") == ProofResult::True);
     assert!(prove(&prover, "0 <= m") == ProofResult::True);
@@ -335,7 +392,7 @@ fn test_lots_of_variables() {
     assert!(prove(&prover, "10*y <= 198") == ProofResult::True);
     // TODO The next statement is true but quite hard to prove.
     // Maybe we can prove it?
-    //assert!(prove(&prover, "10*y <= 197") == ProofResult::True);
+    // assert!(prove(&prover, "10*y <= 197") == ProofResult::True);
     assert!(prove(&prover, "y <= 20") == ProofResult::True);
     assert!(prove(&prover, "y <= 19") == ProofResult::True);
     assert!(prove(&prover, "0 <= z") == ProofResult::True);
@@ -358,6 +415,76 @@ fn test_lots_of_variables() {
 
     assert!(prove(&prover, "3*n <= y") == ProofResult::True);
     assert!(prove(&prover, "3*n <= y+x") == ProofResult::True);
+    println!("pls pls");
     assert!(prove(&prover, "2*n <= y") == ProofResult::True);
     assert!(prove(&prover, "4*n <= y") == ProofResult::Undetermined);
+}
+
+macro_rules! requirements {
+    (append($reqs:expr; $req:expr)) => {
+        let tokens = tokenize($req);
+        let cond = Condition::parse(&tokens).unwrap();
+        $reqs.push(Requirement::from(&cond));
+    };
+
+    (append($reqs:expr; $head:expr,$($tail:expr),*)) => {
+        requirements!(append($reqs; $head));
+        requirements!(append($reqs; $($tail),+));
+    };
+
+    (let $name:ident = [$($strings:expr),+]) => {
+        let mut $name = Vec::new();
+        requirements!(append($name; $($strings),*));
+        let $name = $name;
+    };
+}
+
+macro_rules! prove {
+    ($prover:ident: $stmt:expr => $expected:expr) => {
+        let tokens = tokenize($stmt);
+        let cond = Condition::parse(&tokens).unwrap();
+        let req = Requirement::from(&cond);
+        let result = $prover.prove(&req);
+        if result != $expected {
+            panic!("`{}` gave: {:?}, expected: {:?}", $stmt, result, $expected);
+        }
+    };
+}
+
+#[test]
+fn new_tests<'a>() {
+    requirements!(let reqs = [
+        "x <= 2",
+        "y >= 1",
+        "z <= y",
+        "l <= z",
+        "a <= l",
+        "b <= l",
+        "c + d <= l",
+        "f <= l/4",
+        "g <= l/4",
+        "y <= f + g + b/2",
+        "a >= 0",
+        "b >= 0",
+        "c >= 0",
+        "d >= 0",
+        "f >= 0",
+        "g >= 0",
+        "l >= 0"
+    ]);
+
+    let mut bounds_prover = BoundsProver::new(reqs);
+    bounds_prover.set_max_depth(8);
+    let prover = FullProver::from(bounds_prover);
+
+    prove!(prover: "x <= 5" => ProofResult::True);
+    prove!(prover: "b <= l" => ProofResult::True);
+    prove!(prover: "4*f <= l" => ProofResult::True);
+    prove!(prover: "4*g <= l" => ProofResult::True);
+    prove!(prover: "4*g + 4*f <= 2*l" => ProofResult::True);
+    prove!(prover: "2*g + 2*f <= l" => ProofResult::True);
+    prove!(prover: "g + f <= l/2" => ProofResult::True);
+    prove!(prover: "g + f <= l/4" => ProofResult::Undetermined);
+    prove!(prover: "g + f + b/2 <= l" => ProofResult::True);
+    prove!(prover: "g + f + b <= l" => ProofResult::Undetermined);
 }

@@ -14,7 +14,18 @@ pub struct Prover<'a> {
 impl<'a> SimpleProver<'a> for Prover<'a> {
     fn new(reqs: Vec<Requirement<'a>>) -> Prover<'a> {
         Prover {
-            bounds: reqs.iter().map(|req| req.simplify().bounds()).collect(),
+            bounds: reqs
+                .iter()
+                .map(|req| {
+                    req.simplify()
+                        .bounds()
+                        .iter()
+                        .map(|(ident, bound)| (*ident, bound.simplify()))
+                        .collect()
+                })
+                .collect(),
+            // FIXME TODO UNFLATTEN
+            //bounds: reqs.iter().map(|req| req.simplify().bounds()).flatten().map(|b| vec![b]).collect(),
             max_depth: 10,
         }
     }
