@@ -442,7 +442,15 @@ impl<'a> Condition<'a> {
 }
 
 impl<'a> Expr<'a> {
-    pub fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
+    pub fn parse(mut tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
+        // If the tokens have been parenthesized, we'll expand those
+        if tokens.len() == 1 {
+            match &tokens[0].kind {
+                TokenKind::Parens(ts) => tokens = &ts,
+                _ => (),
+            }
+        }
+
         Expr::parse_named(tokens)
             .or_else(|| Expr::parse_literal(tokens))
             .or_else(|| Expr::parse_compound(tokens))
