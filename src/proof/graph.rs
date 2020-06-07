@@ -1,7 +1,8 @@
 //! The graph-based prover
 
 use super::expr::Expr;
-use super::{ProofResult, Requirement, Term};
+use super::term::{Inequality, Term};
+use super::{ProofResult, Requirement};
 use crate::ast::Ident;
 use std::marker::PhantomData;
 
@@ -64,7 +65,7 @@ struct Edge {
 impl Prover {
     /// An identical function to `super::Prover::prove`, except this is a helper for the recursion,
     /// which we use to manage attempting to prove the contrapositive.
-    fn prove(&mut self, req: &Requirement, recurse: bool) -> ProofResult {
+    fn prove(&mut self, req: Inequality, recurse: bool) -> ProofResult {
         // Attempts to prove the requirement by finding the path the shortest length from req.lhs
         // to req.rhs
         //
@@ -111,7 +112,7 @@ impl Prover {
         // Otherwise, we'll check to see if we can prove that it's false by inverting the
         // requirement
 
-        let contra_req = Requirement {
+        let contra_req = Inequality {
             // swap the sides
             lhs: req.rhs.clone(),
             rhs: req.lhs.clone(),
@@ -119,10 +120,9 @@ impl Prover {
             //   x > y + C  =>  x ≥ y + C+1  =>  -x ≤ -y - C-1
             // given that we are operating only on integers
             constant: (-req.constant) - 1,
-            _marker: PhantomData,
         };
 
-        let contra_res = self.prove(&contra_req, false);
+        let contra_res = self.prove(contra_req, false);
         match contra_res {
             ProofResult::True => ProofResult::False,
             ProofResult::Undetermined => ProofResult::Undetermined,
@@ -135,7 +135,7 @@ impl Prover {
     /// A dedicated function for attempting to prove via the "split" method
     ///
     /// This is detailed above, in the doc comment for `Prover.try_splits`.
-    fn prove_splits(&mut self, req: Requirement, recurse: bool) -> ProofResult {
+    fn prove_splits(&mut self, req: Inequality, recurse: bool) -> ProofResult {
         // We require that the requirement has all terms on the right-hand side in order to properly
         // break it apart to find the upper bound - that way we can simply start from 0 and find
         // the upper bound on the negation, just as we would in `prove`.
@@ -242,11 +242,10 @@ impl Prover {
         }
 
         // We'll recurse by checking the contrapositive, just as we did in `prove`
-        let contra_req = Requirement {
+        let contra_req = Inequality {
             lhs: rhs,
             rhs: Vec::new(),
             constant: (-req.constant) - 1,
-            _marker: PhantomData,
         };
 
         let contra_res = self.prove_splits(contra_req, false);
@@ -257,7 +256,7 @@ impl Prover {
         }
     }
 
-    fn add_req(&mut self, req: Requirement) {
+    fn add_req(&mut self, req: Inequality) {
         let reqs = if EXHAUSTIVE_REQ_SIDES {
             // group all of the terms onto the left-hand side
             let mut lhs = req.lhs;
@@ -290,11 +289,10 @@ impl Prover {
                         }
                     }
 
-                    Requirement {
+                    Inequality {
                         lhs: new_lhs,
                         rhs: new_rhs,
                         constant,
-                        _marker: PhantomData,
                     }
                 })
                 .collect()
@@ -314,11 +312,10 @@ impl Prover {
             let lhs = req.rhs.iter().cloned().map(negate).collect();
             let rhs = req.lhs.iter().cloned().map(negate).collect();
 
-            let new_req = Requirement {
+            let new_req = Inequality {
                 lhs,
                 rhs,
                 constant: req.constant,
-                _marker: PhantomData,
             };
 
             vec![req, new_req]
@@ -457,14 +454,14 @@ impl<'a> super::Prover<'a> for Prover {
         };
 
         for req in reqs {
-            prover.add_req(req);
+            prover.add_req((&req).into());
         }
 
         prover
     }
 
     fn prove(&mut self, req: &Requirement) -> ProofResult {
-        Prover::prove(self, req, true)
+        Prover::prove(self, req.into(), true)
     }
 
     fn define(&'a self, x: Ident<'a>, expr: &'a Expr<'a>) -> Self {
