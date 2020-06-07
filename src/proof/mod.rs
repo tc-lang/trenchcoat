@@ -20,6 +20,9 @@ use self::error::Error;
 use self::expr::{Atom, Expr, ONE, ZERO};
 use crate::ast::{self, proof::Condition as AstCondition, Ident};
 
+use std::ops::Not;
+use std::fmt;
+
 /// Attempts to prove that the entire contents of the program is within the bounds specified by the
 /// proof rules.
 fn validate<'a>(top_level_items: &'a [ast::Item<'a>]) -> Vec<Error<'a>> {
@@ -120,7 +123,7 @@ impl<'a> From<&AstCondition<'a>> for Requirement<'a> {
 }
 
 /// A result from an attempt to prove something.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ProofResult {
     /// The statement was false.
     False,
@@ -128,6 +131,18 @@ pub enum ProofResult {
     Undetermined,
     /// The statement was true.
     True,
+}
+
+impl Not for ProofResult {
+    type Output = ProofResult;
+    fn not(self) -> ProofResult {
+        use ProofResult::{True, Undetermined, False};
+        match self {
+            True => False,
+            Undetermined => Undetermined,
+            False => True,
+        }
+    }
 }
 
 pub trait SimpleProver<'a> {
@@ -225,5 +240,23 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
 impl<'a, P: SimpleProver<'a>> ScopedSimpleProver<'a, P> {
     pub fn from(sp: P) -> Self {
         Self::Root(sp)
+    }
+}
+
+
+impl<'a> fmt::Display for Requirement<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "0 <= {}", self.ge0)
+    }
+}
+
+impl fmt::Display for ProofResult {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use ProofResult::{True, Undetermined, False};
+        write!(f, "{}", match self {
+            True => "True",
+            Undetermined => "Undetermined",
+            False => "False",
+        })
     }
 }
