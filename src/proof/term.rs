@@ -21,7 +21,7 @@ impl Term {
     /// (3rd element)
     ///
     /// Note that this expands products, so `x*(1 + y)` will become `x*y + x`
-    fn simplify_to_lists<'a>(expr: Expr<'a>) -> (Vec<Term>, i128, Option<Expr<'a>>) {
+    pub fn simplify_to_lists<'a>(expr: Expr<'a>) -> (Vec<Term>, i128, Option<Expr<'a>>) {
         // Our general strategy here is to call this recursively, distributing out multiplication
         // and using addition to join lists, as those are fundamentally the only two operations we
         // need to do
@@ -322,9 +322,9 @@ pub struct Inequality {
     pub constant: i128,
 }
 
-impl<'a> From<&Requirement<'a>> for Inequality {
-    fn from(req: &Requirement) -> Inequality {
-        let req = &req.0;
+impl Inequality {
+    pub fn from_req<'a>(req: Requirement<'a>) -> (Inequality, Option<Expr<'a>>) {
+        let req = req.0;
         // Re-order the sides so that we get our condition in terms of A <= B.
         // Shifting is not currently used, but will be (eventually) to account for
         // conditions using strict inequality (i.e. x < y instead of x <= y).
@@ -332,24 +332,72 @@ impl<'a> From<&Requirement<'a>> for Inequality {
         // The shift amount is the value added to the constant term in the inequality to adjust for
         // the conversion between `<` and `<=`.
         let (lhs, rhs, shift) = match req.relation {
-            RelationKind::Le => (&req.left, &req.right, 0),
-            RelationKind::Ge => (&req.right, &req.left, 0),
+            RelationKind::Le => (req.left, req.right, 0),
+            RelationKind::Ge => (req.right, req.left, 0),
         };
 
         // Redefine lhs and rhs to get them as a sorted list of terms and any additional constant
         // term (both `lhs` and `rhs` are triples).
-        let lhs = Term::simplify_to_lists(lhs.clone());
-        let rhs = Term::simplify_to_lists(rhs.clone());
+        let lhs = Term::simplify_to_lists(lhs);
+        let rhs = Term::simplify_to_lists(rhs);
 
-        // We'll explicitly discard the aggregate multiplier here because we don't need to account
-        // for the multiplications - as long as both sides have been multiplied by the same amount,
-        // we're in keepig with the statement of the requirement.
-        let (lhs, lhs_shift, rhs, rhs_shift, _aggregate) = Term::multiply_sides(lhs, rhs);
+        let (lhs, lhs_shift, rhs, rhs_shift, aggregate) = Term::multiply_sides(lhs, rhs);
 
-        Inequality {
+        let ineq = Inequality {
             lhs,
             rhs,
             constant: shift - lhs_shift + rhs_shift,
+        };
+
+        (ineq, aggregate)
+    }
+
+    /// Returns two things:
+    ///  1. The original requirement, now as an inequality (per `from_req`), and
+    ///  2. The stack of inequalities whose signs must be established to determine the direction of
+    ///     the initial inequaltiy.
+    ///
+    /// This is because generating an `Inequality` from a `Requirement` may sometimes involve
+    /// multiplying out denominators - this is to be expected. When those denominators are
+    /// negative, however, we must flip the sides of the inequality. Without additional context, we
+    /// have no way of determining what the sign of the denominators are in the general case, so we
+    /// return a stack of inequalities satisfying the following:
+    ///
+    ///   The true parity of the original inequality is given by the overall parity of the
+    ///   inequalities in the stack - i.e. if an odd number of inequalities in the stack are
+    ///   negative, so too will be the original one.
+    ///
+    ///   Note that sign changes propagate back through the stack, so that the sign of an
+    ///   inequality should be given by the same rule as above. This is typically calculated by
+    ///   going backwards through the inequality and tracking a single `negated` value.
+    ///
+    /// For more information, see the `establish_stack` method on `graph::Prover`, which uses the
+    /// stack given by this function.
+    pub fn make_stack(req: Requirement) -> (Inequality, Vec<Inequality>) {
+        let (ineq, mut agg) = Inequality::from_req(req);
+        let mut stack: Vec<Inequality> = vec![];
+
+        // Expand out all of the expressions into the stack
+        while let Some(ex) = agg {
+            let (terms, constant, aggregate) = Term::simplify_to_lists(ex);
+            agg = aggregate;
+            // We want to add the inequality that the terms are >= 0, so:
+            //   terms >= 0  ==>  0 <= terms
+            // so the terms go on the right-hand side, with nothing on the left.
+            stack.push(Inequality {
+                lhs: vec![],
+                rhs: terms,
+                constant,
+            });
         }
+
+        (ineq, stack)
+    }
+
+    /// Negates the inequality by swapping the left- and right-hand sides, leaving the constant
+    /// unchanged.
+    pub fn negate(mut self) -> Inequality {
+        std::mem::swap(&mut self.lhs, &mut self.rhs);
+        self
     }
 }

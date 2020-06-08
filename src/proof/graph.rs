@@ -4,7 +4,7 @@ use super::expr::Expr;
 use super::term::{Inequality, Term};
 use super::{ProofResult, Requirement};
 use crate::ast::Ident;
-use std::marker::PhantomData;
+use std::mem;
 
 #[derive(Clone, Debug)]
 pub struct Prover {
@@ -94,7 +94,6 @@ impl Prover {
         let distances = self.gen_distances(NodeId(start_node_idx));
 
         if distances[end_node_idx] <= req.constant {
-            self.add_req(req.clone());
             return ProofResult::True;
         }
 
@@ -233,10 +232,7 @@ impl Prover {
         if !opt_sum.is_none() || !recurse {
             return match opt_sum {
                 None => ProofResult::Undetermined,
-                Some(d) if d <= req.constant => {
-                    self.add_req(req);
-                    ProofResult::True
-                }
+                Some(d) if d <= req.constant => ProofResult::True,
                 Some(_) /* d > req.constant */ => ProofResult::Undetermined,
             };
         }
@@ -408,9 +404,9 @@ impl Prover {
                     num == denom || &self.nodes[start_node_idx].expr == &[]
                 };
 
-                for &(Edge { offset, num, denom }, NodeId(v)) in node.less_than.iter().filter(valid)
-                {
-                    let updated = distances[u] * (num as i128) / (denom as i128) + offset;
+                for &(edge, NodeId(v)) in node.less_than.iter().filter(valid) {
+                    let updated =
+                        distances[u] * (edge.num as i128) / (edge.denom as i128) + edge.offset;
                     if updated < distances[v] {
                         changed = true;
                         distances[v] = updated;
@@ -444,6 +440,59 @@ impl Prover {
         });
         self.nodes.len() - 1
     }
+
+    // A helper function for use in `<Prover as super::Prover>::new`
+    fn establish_stack(&mut self, stack: &mut Vec<Inequality>, negated: &mut bool) -> bool {
+        while let Some(stack_ineq) = stack.pop() {
+            let local_ineq = || match negated {
+                true => stack_ineq.clone().negate(),
+                false => stack_ineq.clone(),
+            };
+
+            // All successful match arms here will use other control flow - namely `continue`.
+            //
+            // The code following this match only executes in the case where we cannot
+            // determine whether the inequality holds.
+            match self.prove(local_ineq(), true) {
+                // True? Great! We'll keep going.
+                ProofResult::True => continue,
+                // False? That's fine, too! This means it's < 0, so we'll negate everything.
+                ProofResult::False => {
+                    *negated = !*negated;
+                    continue;
+                }
+
+                // Undetermined? It's tricky, but we still have one more shot! Instead of trying
+                // to solve for `terms >= 0`, we'll try `terms <= 0` - maybe that single value
+                // will make a difference.
+                ProofResult::Undetermined => {
+                    // Terms <= 0  =>  Terms < 1
+                    //             => ¬(Terms >= 1)
+                    let mut ineq = local_ineq();
+                    ineq.constant += 1;
+                    match self.prove(ineq, true) {
+                        // Equivalent to False from above
+                        ProofResult::True => {
+                            *negated = !*negated;
+                            continue;
+                        }
+                        // Equivalent to True from above
+                        ProofResult::False => continue,
+
+                        // Yield control to above, as it handles the *truly* undetermined case
+                        // - everything else that's successful just `continues`
+                        ProofResult::Undetermined => (),
+                    }
+                }
+            }
+
+            // If we can't prove it, add it back and indicate that we failed this time
+            stack.push(stack_ineq);
+            return false;
+        }
+
+        true
+    }
 }
 
 impl<'a> super::Prover<'a> for Prover {
@@ -453,15 +502,101 @@ impl<'a> super::Prover<'a> for Prover {
             try_splits: DEFAULT_TRY_SPLITS,
         };
 
-        for req in reqs {
-            prover.add_req((&req).into());
+        // All of the inequalities we would like to have added, but where we need to determine the
+        // sign of a certain expression *first*, before we do so.
+        //
+        // More information below: (see: "There's something rather annoying...")
+        let mut tabled: Vec<(Inequality, Vec<Inequality>, bool)> = vec![];
+        //                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        // The values in the tuple serve to capture the state of the inner loop below. The first
+        // element is the requirement we'd like to add; the second is `stack`, and the third is
+        // `negated`.
+
+        'add_reqs: for req in reqs {
+            // There's something rather annoying that we need to deal with here.
+            //
+            // When simplifying the original expression into an `Inequality`, we might have needed
+            // to multiply both sides by an expression. If this expression was negative, we need to
+            // REVERSE the inequality! So when `from_req` gives `Some(_)` for the expression both
+            // sides were multiplied by, we actually need to determine whether it is positive or
+            // not.
+            //
+            // Most simple cases (like a constant) will be trivial; these don't require any
+            // previous requirements, and also don't expand multiple times.
+            //
+            // There are worse cases, however. In attempting to establish whether `agg >= 0`, we
+            // may end up with *yet another* expression that is multiplied out, so we then need to
+            // repeat the process anew. This will (thankfully) be finite, but it means that there's
+            // extra handling required still. Every time we produce another expression, we add the
+            // previous one to a stack in order to run this in a loop.
+            //
+            // ---
+            //
+            // If we can't establish the sign of the expression with the current set of requirements
+            // already added to the prover, we'll delay adding it until later in the hopes that
+            // some more requirements will come along and help (we push it to `tabled` above).
+
+            let (ineq, mut stack) = Inequality::make_stack(req);
+            let mut negated = false;
+
+            // try to establish all of the inequalities in the stack
+            if !prover.establish_stack(&mut stack, &mut negated) {
+                // Failed to establish stack; we'll table it until later
+                tabled.push((ineq, stack, negated));
+                // continue on to attempting to add the next requirement
+                continue;
+            }
+
+            // If we made it here, we're all set to add the requirement to the prover!
+            match negated {
+                true => prover.add_req(ineq.negate()),
+                false => prover.add_req(ineq),
+            }
+        }
+
+        // We might have still failed to
+        while !tabled.is_empty() {
+            let mut changed = false;
+
+            for (ineq, mut stack, mut negated) in mem::replace(&mut tabled, vec![]) {
+                if !prover.establish_stack(&mut stack, &mut negated) {
+                    // Failed to establish stack; we'll table it until later
+                    tabled.push((ineq, stack, negated));
+                    // continue on to attempting to add the next requirement
+                    continue;
+                }
+
+                // If we made it here, we're all set to add the requirement to the prover!
+                match negated {
+                    true => prover.add_req(ineq.negate()),
+                    false => prover.add_req(ineq),
+                }
+
+                changed = true;
+            }
+
+            if !changed {
+                panic!("Failed establish the signs of initial requirements");
+            }
         }
 
         prover
     }
 
     fn prove(&mut self, req: &Requirement) -> ProofResult {
-        Prover::prove(self, req.into(), true)
+        let (ineq, mut stack) = Inequality::make_stack(req.clone());
+        let mut negated = false;
+
+        // try to establish all of the inequalities in the stack
+        if !self.establish_stack(&mut stack, &mut negated) {
+            return ProofResult::Undetermined;
+        }
+
+        // If we made it here, we're all set to add the requirement to the prover!
+        match negated {
+            true => self.prove(ineq.negate(), true),
+            false => self.prove(ineq, true),
+        }
     }
 
     fn define(&'a self, x: Ident<'a>, expr: &'a Expr<'a>) -> Self {
