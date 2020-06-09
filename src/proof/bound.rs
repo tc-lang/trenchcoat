@@ -1,4 +1,6 @@
-use super::expr::Expr;
+use super::expr::{Atom, Expr, ZERO};
+use super::optimiser2::{bound_sub, Maximizer, Minimizer};
+use crate::ast::Ident;
 use std::fmt;
 
 /// Represents a bound on something.
@@ -8,6 +10,12 @@ pub enum Bound<'a> {
     Le(Expr<'a>),
     /// The thing must be >= expr
     Ge(Expr<'a>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DescriptiveBound<'a> {
+    pub subject: Ident<'a>,
+    pub bound: Bound<'a>,
 }
 
 /// Represents a relation between 2 expressions.
@@ -22,7 +30,7 @@ pub struct Relation<'a> {
 }
 
 /// A kind of a Relation
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationKind {
     /// Less than or equal to (<=)
     Le,
@@ -43,6 +51,13 @@ impl<'a> Bound<'a> {
     /// Call Expr::simplify on the bound expression
     pub fn simplify(&self) -> Bound<'a> {
         self.map(Expr::simplify)
+    }
+
+    pub fn relation_kind(&self) -> RelationKind {
+        match self {
+            Bound::Le(_) => RelationKind::Le,
+            Bound::Ge(_) => RelationKind::Ge,
+        }
     }
 }
 
@@ -176,6 +191,100 @@ impl<'a> Relation<'a> {
             } => Bound::Ge(right),
         }
     }
+
+    pub fn bounds_on(&self, name: Ident<'a>) -> Option<Bound<'a>> {
+        let name_expr = Expr::Atom(Atom::Named(name));
+
+        let lhs;
+        let relation;
+        let rhs;
+
+        let left_contains = self.left.variables().contains(&name);
+        let right_contains = self.right.variables().contains(&name);
+
+        if left_contains && right_contains {
+            lhs = Expr::Sum(vec![
+                self.left.clone(),
+                Expr::Neg(Box::new(self.right.clone())),
+            ])
+            .simplify()
+            .single_x(&name_expr)?;
+            relation = self.relation;
+            rhs = ZERO;
+        } else if left_contains && !right_contains {
+            lhs = self.left.simplify().single_x(&name_expr)?;
+            relation = self.relation;
+            rhs = self.right.clone();
+        } else if !left_contains && right_contains {
+            lhs = self.right.simplify().single_x(&name_expr)?;
+            relation = self.relation.opposite();
+            rhs = self.left.clone();
+        } else {
+            return None;
+        }
+
+        Some(
+            Relation {
+                left: lhs,
+                relation,
+                right: rhs,
+            }
+            .bounds_on_unsafe(&name_expr),
+        )
+    }
+
+    pub fn bounds(&self) -> Vec<DescriptiveBound<'a>> {
+        let mut variables = self.left.variables();
+        variables.extend(self.right.variables());
+        variables.dedup();
+        variables
+            .iter()
+            .filter_map(|x| {
+                Some(DescriptiveBound {
+                    subject: *x,
+                    bound: self.bounds_on(*x)?,
+                })
+            })
+            .collect()
+    }
+}
+
+impl<'a> DescriptiveBound<'a> {
+    /// Returns true iff the order that self and other are substituted does not matter.
+    /// This is currently if they don't have the same subject or don't have the same relation kind.
+    pub fn permutes_with(&self, other: &DescriptiveBound<'a>) -> bool {
+        self.subject != other.subject || self.bound.relation_kind() != other.bound.relation_kind()
+    }
+
+    pub fn simplify(&self) -> DescriptiveBound<'a> {
+        DescriptiveBound {
+            subject: self.subject,
+            bound: self.bound.simplify(),
+        }
+    }
+
+    pub fn sub(&self, sub: &DescriptiveBound<'a>) -> Option<DescriptiveBound<'a>> {
+        let x = Expr::Atom(Atom::Named(sub.subject));
+        Some(DescriptiveBound {
+            subject: self.subject,
+            bound: match self.bound {
+                Bound::Le(_) => bound_sub(
+                    Maximizer::sub_bound,
+                    self.subject,
+                    &self.bound,
+                    &x,
+                    &sub.bound,
+                )?,
+                Bound::Ge(_) => bound_sub(
+                    Minimizer::sub_bound,
+                    self.subject,
+                    &self.bound,
+                    &x,
+                    &sub.bound,
+                )?,
+            },
+        })
+    }
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -208,5 +317,11 @@ impl<'a> fmt::Display for Bound<'a> {
             Bound::Ge(expr) => (">=", expr),
         };
         write!(f, "{} {}", sign, expr)
+    }
+}
+
+impl<'a> fmt::Display for DescriptiveBound<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{} {}", self.subject, self.bound)
     }
 }

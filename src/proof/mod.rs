@@ -5,12 +5,15 @@
 //! without error.
 
 mod bound;
+mod bound_group;
 mod bound_method;
+mod bound_method2;
 pub mod error;
 pub mod examples;
 mod expr;
 mod int;
 mod optimiser;
+mod optimiser2;
 
 #[cfg(test)]
 mod tests;
@@ -20,8 +23,8 @@ use self::error::Error;
 use self::expr::{Atom, Expr, ONE, ZERO};
 use crate::ast::{self, proof::Condition as AstCondition, Ident};
 
-use std::ops::Not;
 use std::fmt;
+use std::ops::Not;
 
 /// Attempts to prove that the entire contents of the program is within the bounds specified by the
 /// proof rules.
@@ -94,6 +97,14 @@ impl<'a> Requirement<'a> {
             .filter_map(|x| self.bounds_on(x).map(|bounds| (*x, bounds)))
             .collect()
     }
+
+    fn as_relation(&self) -> Relation<'a> {
+        Relation {
+            left: self.ge0.clone(),
+            relation: RelationKind::Ge,
+            right: ZERO,
+        }
+    }
 }
 
 impl<'a> From<&AstCondition<'a>> for Requirement<'a> {
@@ -136,7 +147,7 @@ pub enum ProofResult {
 impl Not for ProofResult {
     type Output = ProofResult;
     fn not(self) -> ProofResult {
-        use ProofResult::{True, Undetermined, False};
+        use ProofResult::{False, True, Undetermined};
         match self {
             True => False,
             Undetermined => Undetermined,
@@ -243,7 +254,6 @@ impl<'a, P: SimpleProver<'a>> ScopedSimpleProver<'a, P> {
     }
 }
 
-
 impl<'a> fmt::Display for Requirement<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         write!(f, "0 <= {}", self.ge0)
@@ -252,11 +262,15 @@ impl<'a> fmt::Display for Requirement<'a> {
 
 impl fmt::Display for ProofResult {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        use ProofResult::{True, Undetermined, False};
-        write!(f, "{}", match self {
-            True => "True",
-            Undetermined => "Undetermined",
-            False => "False",
-        })
+        use ProofResult::{False, True, Undetermined};
+        write!(
+            f,
+            "{}",
+            match self {
+                True => "True",
+                Undetermined => "Undetermined",
+                False => "False",
+            }
+        )
     }
 }
