@@ -60,12 +60,6 @@ pub struct Maximizer<'a> {
     child: Option<Box<Maximizer<'a>>>,
 }
 
-fn new_bool_vec(len: usize) -> Vec<bool> {
-    let mut out = Vec::with_capacity(len);
-    out.resize_with(len, || false);
-    out
-}
-
 impl<'a: 'b, 'b> Minimizer<'a> {
     /// Returns a minimizer for `solve`.
     /// This minimizer will, using the known bounds given by `given`, iterate through expressions
@@ -88,7 +82,7 @@ impl<'a: 'b, 'b> Minimizer<'a> {
         max_depth: usize,
     ) -> Minimizer<'a> {
         let vars = solve.variables();
-        let mut out = Minimizer {
+        Minimizer {
             solving: solve,
             vars,
             given,
@@ -97,14 +91,13 @@ impl<'a: 'b, 'b> Minimizer<'a> {
             group_idx: 0,
             max_depth,
             child: None,
-        };
-        //out.find_permutation_group();
-        out
+        }
     }
 
     pub fn new_root(solve: Expr<'a>, given: BoundGroup<'a>, max_depth: usize) -> Minimizer<'a> {
+        // `tried` is initialized with every element false.
         let max_req_id = given.max_requirement_id();
-        Self::new(solve, given, new_bool_vec(max_req_id), max_depth)
+        Self::new(solve, given, vec![false; max_req_id], max_depth)
     }
 
     /// Returns an iterator of evaluated bounds.
@@ -125,12 +118,12 @@ impl<'a: 'b, 'b> Minimizer<'a> {
             // Filter requirements we've already used
             .filter(|(_, req)| !self.tried[*req])
             // (BoundRef, req ID) -> (BoundRef, subbed and simplified Expr, req ID)
-            .map(|(bound, req)| {
-                (
+            .filter_map(|(bound, req)| {
+                Some((
                     bound,
-                    Self::sub_descriptive_bound(&self.solving, &*bound).simplify(),
+                    Self::sub_bound(&self.solving, &*bound)?.simplify(),
                     req,
-                )
+                ))
             })
             // Filter out subs that have no effect on the expression
             .filter(|(_, expr, _)| *expr != self.solving)
@@ -167,7 +160,7 @@ impl<'a: 'b, 'b> Maximizer<'a> {
         max_depth: usize,
     ) -> Maximizer<'a> {
         let vars = solve.variables();
-        let mut out = Maximizer {
+        Maximizer {
             solving: solve,
             vars,
             given,
@@ -176,14 +169,13 @@ impl<'a: 'b, 'b> Maximizer<'a> {
             group_idx: 0,
             max_depth,
             child: None,
-        };
-        //out.find_permutation_group();
-        out
+        }
     }
 
     pub fn new_root(solve: Expr<'a>, given: BoundGroup<'a>, max_depth: usize) -> Maximizer<'a> {
+        // `tried` is initialized with every element false
         let max_req_id = given.max_requirement_id();
-        Self::new(solve, given, new_bool_vec(max_req_id), max_depth)
+        Self::new(solve, given, vec![false; max_req_id], max_depth)
     }
 
     /// Returns an iterator of evaluated bounds.
@@ -204,15 +196,15 @@ impl<'a: 'b, 'b> Maximizer<'a> {
             // Filter requirements we've already used
             .filter(|(_, req)| !self.tried[*req])
             // (BoundRef, req ID) -> (BoundRef, subbed and simplified Expr, req ID)
-            .map(|(bound, req)| {
-                (
+            .filter_map(|(bound, req)| {
+                Some((
                     bound,
-                    Self::sub_descriptive_bound(&self.solving, &*bound).simplify(),
+                    Self::sub_bound(&self.solving, &*bound)?.simplify(),
                     req,
-                )
+                ))
             })
             // Filter out subs that have no effect on the expression
-            .filter(|(_, expr, _)| *expr != self.solving)
+            //.filter(|(_, expr, _)| *expr != self.solving)
             .map(|(bound, _, _)| bound.permutation_group())
             .next()
             .map(|perm_grp| {
@@ -299,78 +291,22 @@ macro_rules! optimizer_next_body {
         let mut new_tried = $self.tried.clone();
         new_tried[requirement_id] = true;
 
-        /*
-        let new_given = $self
-            .given
-            .iter()
-            .enumerate()
-            .map(|(i, req)| {
-                if $self.tried[i] {
-                    return req.clone();
-                }
-                let new_req = req.iter()
-                    .filter_map(|(ident, bound_lol)| {
-                        Some((*ident, match bound_lol {
-                            Bound::Le(expr) => {
-                                //bound_lol.clone()
-                                //Bound::Le(Maximizer::sub_bound(expr, &x, bound).simplify())
-                                bound_sub(Maximizer::sub_bound, *ident, bound_lol, &x, bound)?
-                                //bound_sub_all(Maximizer::sub_bound, *ident, bound_lol, &x, bound)
-                                //.iter()
-                                //.map(|bound| (*ident, bound.clone()))
-                                //.collect::<Vec<(Ident, Bound)>>()
-                            }
-                            Bound::Ge(expr) => {
-                                //bound_lol.clone()
-                                //Bound::Ge(Minimizer::sub_bound(expr, &x, bound).simplify())
-                                bound_sub(Minimizer::sub_bound, *ident, bound_lol, &x, bound)?
-                                //bound_sub_all(Minimizer::sub_bound, *ident, bound_lol, &x, bound)
-                                //.iter()
-                                //.map(|bound| (*ident, bound.clone()))
-                                //.collect()
-                            }
-                        }))
-                    })
-                    //.flatten()
-                    .collect::<Vec<_>>();
-                //new_req.dedup();
-                new_req
-            })
-            .collect::<Vec<Vec<(Ident, Bound)>>>();
-        */
-
         println!("Subbing {}", bound);
-        /*
-        println!("Given:");
-        for (old, new) in $self.given.iter().zip(new_given.iter()) {
-            println!("-------------------");
-            println!("{} -> {}", old.len(), new.len());
-            for old in old.iter() {
-                println!("{} {}", old.0, old.1);
-            }
-            println!("=====>");
-            for new in new.iter() {
-                println!("{} {}", new.0, new.1);
-            }
-        }
-        */
 
-        let new_expr = Self::sub_descriptive_bound(&$self.solving, &bound).simplify();
+        // Substitute the bound
+        let new_expr = match Self::sub_bound(&$self.solving, &bound) {
+            Some(expr) => expr.simplify(),
+            None => return $self.next(),
+        };
 
-        println!("Solving: {} <== {}", &$self.solving, new_expr,);
-
-        if new_expr.simplify_eq(&$self.solving) {
-            println!("Actually, let's not.");
-            return $self.next();
-        }
+        println!("Solving: {} <== {}", &$self.solving, new_expr);
 
         println!("Making a child!");
         // Create the new child
         $self.child = Some(Box::new(Self::new(
-            new_expr,            // .simplify is important here
-            //$self.given.clone(), //new_given,
+            new_expr,
             $self.given.sub_bound(&bound),
-            new_tried,           //$self.tried.clone(),
+            new_tried,
             $self.max_depth - 1,
         )));
 
@@ -379,36 +315,38 @@ macro_rules! optimizer_next_body {
 }
 
 pub fn bound_sub<'a>(
-    subber: impl Fn(&Expr<'a>, &Expr<'a>, &Bound<'a>) -> Expr<'a>,
-    x_ident: Ident<'a>,
-    bound: &Bound<'a>,
-    sub_x: &Expr<'a>,
-    sub_bound: &Bound<'a>,
-) -> Option<Bound<'a>> {
-    let x = Expr::Atom(Atom::Named(x_ident));
-    let (relation_kind, bound_expr) = match bound {
+    subber: impl Fn(&Expr<'a>, &DescriptiveBound<'a>) -> Option<Expr<'a>>,
+    bound: &DescriptiveBound<'a>,
+    sub_bound: &DescriptiveBound<'a>,
+) -> Option<DescriptiveBound<'a>> {
+    let x = Expr::Atom(Atom::Named(bound.subject));
+    let (relation_kind, bound_expr) = match &bound.bound {
         Bound::Le(expr) => (RelationKind::Le, expr),
         Bound::Ge(expr) => (RelationKind::Ge, expr),
     };
-    let new_bound_expr = subber(bound_expr, sub_x, sub_bound);
+    let new_bound_expr = match subber(bound_expr, sub_bound) {
+        Some(expr) => expr,
+        None => return Some(bound.clone()),
+    };
     let lhs = Expr::Sum(vec![x.clone(), Expr::Neg(Box::new(new_bound_expr))]).simplify();
     if lhs
         .variables()
         .iter()
-        .find(|var| **var == x_ident)
+        .find(|var| **var == bound.subject)
         .is_none()
     {
         return None;
     }
-    Some(
-        Relation {
+    Some(DescriptiveBound {
+        subject: bound.subject,
+        bound: Relation {
             left: lhs.single_x(&x)?,
             relation: relation_kind,
             right: expr::ZERO,
         }
         .bounds_on_unsafe(&x)?
         .simplify(),
-    )
+    })
 }
 
 fn bound_sub_all<'a>(
@@ -468,31 +406,43 @@ impl<'a: 'b, 'b> Iterator for Maximizer<'a> {
 
 fn sub_bound_into<'a>(
     expr: &Expr<'a>,
-    x: &Expr<'a>,
-    bound: &Bound<'a>,
-    self_sub: impl Fn(&Expr<'a>, &Expr<'a>, &Bound<'a>) -> Expr<'a>,
-    sub_opposite: impl Fn(&Expr<'a>, &Expr<'a>, &Bound<'a>) -> Expr<'a>,
-) -> Expr<'a> {
+    bound: &DescriptiveBound<'a>,
+    self_sub: impl Fn(&Expr<'a>, &DescriptiveBound<'a>) -> Option<Expr<'a>>,
+    sub_opposite: impl Fn(&Expr<'a>, &DescriptiveBound<'a>) -> Option<Expr<'a>>,
+) -> Option<Expr<'a>> {
     match expr {
         // An atom has a fixed value if it was not `x`
-        Expr::Atom(_) => expr.clone(),
+        Expr::Atom(_) => None,
 
         // An upper bound for -(...) is -(a lower bound for ...)
-        Expr::Neg(inner_expr) => Expr::Neg(Box::new(sub_opposite(
-            inner_expr, x, //&bound.map(Expr::switch_all_rounding_modes),
-            bound,
-        ))),
+        Expr::Neg(inner_expr) => Some(Expr::Neg(Box::new(sub_opposite(inner_expr, bound)?))),
         // An upper bound for 1/(...) is 1/(a lower bound for ...)
-        Expr::Recip(inner_expr, rounding) => Expr::Recip(
-            Box::new(sub_opposite(
-                inner_expr, x, //&bound.map(Expr::switch_all_rounding_modes),
-                bound,
-            )),
+        Expr::Recip(inner_expr, rounding) => Some(Expr::Recip(
+            Box::new(sub_opposite(inner_expr, bound)?),
             *rounding,
-        ),
+        )),
 
         // A bound on a sum is the sum of the bounds of its terms.
-        Expr::Sum(terms) => Expr::Sum(terms.iter().map(|term| self_sub(term, x, bound)).collect()),
+        Expr::Sum(terms) => {
+            // Try substituting into each term.
+            let subbed_terms = terms
+                .iter()
+                .map(|term| self_sub(term, bound))
+                .collect::<Vec<Option<Expr>>>();
+            // If no terms had substitutions then return None.
+            if subbed_terms.iter().all(Option::is_none) {
+                return None;
+            }
+            // Otherwise, use the substituted terms and clone the ones without substitutions to
+            // create the new terms.
+            Some(Expr::Sum(
+                subbed_terms
+                    .iter()
+                    .enumerate()
+                    .map(|(i, term)| term.as_ref().unwrap_or_else(|| &terms[i]).clone())
+                    .collect(),
+            ))
+        }
 
         Expr::Prod(terms) => {
             // We now want to minimize a product, for now, we will only simplify products in
@@ -522,7 +472,7 @@ fn sub_bound_into<'a>(
                             term.clone()
                         }
                     }
-
+                    // TODO Remove since we've got rationals
                     // We will also treat a recip of a literal as a literal since it's constant.
                     Expr::Recip(inner_expr, _) => match &**inner_expr {
                         Expr::Atom(Atom::Literal(x)) => {
@@ -537,10 +487,10 @@ fn sub_bound_into<'a>(
                             // We can't handle non-linear things yet :(
                             // See the comment above
                             if made_sub {
-                                return expr.clone();
+                                return None;
                             }
                             made_sub = true;
-                            self_sub(term, x, bound)
+                            self_sub(term, bound)?
                         }
                     },
 
@@ -548,85 +498,45 @@ fn sub_bound_into<'a>(
                         // We can't handle non-linear things yet :(
                         // See the comment above
                         if made_sub {
-                            return expr.clone();
+                            return None;
                         }
                         made_sub = true;
-                        self_sub(term, x, bound)
+                        self_sub(term, bound)?
                     }
                 });
             }
-            Expr::Prod(out)
+            Some(Expr::Prod(out))
         }
     }
 }
 
 impl<'a: 'b, 'b> Minimizer<'a> {
-    /// Not yet used
-    fn unbounded(expr: &Expr<'a>) -> Expr<'a> {
-        match expr {
-            Expr::Neg(inner_expr) => Expr::Neg(Box::new(Maximizer::unbounded(inner_expr))),
-            Expr::Recip(inner_expr, rounding) => {
-                Expr::Recip(Box::new(Maximizer::unbounded(inner_expr)), *rounding)
-            }
-            Expr::Sum(terms) => Expr::Sum(terms.iter().map(Self::unbounded).collect()),
-            Expr::Prod(_) => todo!(),
-            Expr::Atom(Atom::Literal(_)) => expr.clone(),
-            Expr::Atom(Atom::Named(_)) => Expr::Atom(Atom::Literal(-Rational::INFINITY)),
-        }
-    }
-
     /// Returns an upper bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
-    pub fn sub_bound(expr: &Expr<'a>, x: &Expr<'a>, bound: &Bound<'a>) -> Expr<'a> {
+    pub fn sub_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Option<Expr<'a>> {
         // If the expression is x, then an upper bound is given directly.
-        if expr.eq(x) {
-            return match bound {
-                //Bound::Ge(bound_expr) => bound_expr.clone(),
-                //Bound::Le(_) => expr.clone(),
-                Bound::Ge(bound_expr) => bound_expr.clone(),
-                Bound::Le(_) => expr.clone(),
+        if *expr == Expr::Atom(Atom::Named(bound.subject)) {
+            return match &bound.bound {
+                Bound::Ge(bound_expr) => Some(bound_expr.clone()),
+                Bound::Le(_) => None,
             };
         }
-        sub_bound_into(expr, x, bound, Minimizer::sub_bound, Maximizer::sub_bound)
-    }
-
-    pub fn sub_descriptive_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Expr<'a> {
-        let x = Expr::Atom(Atom::Named(bound.subject));
-        Self::sub_bound(expr, &x, &bound.bound)
+        sub_bound_into(expr, bound, Minimizer::sub_bound, Maximizer::sub_bound)
     }
 }
 
 impl<'a: 'b, 'b> Maximizer<'a> {
-    /// Not yet used
-    fn unbounded(expr: &Expr<'a>) -> Expr<'a> {
-        match expr {
-            Expr::Neg(inner_expr) => Expr::Neg(Box::new(Minimizer::unbounded(inner_expr))),
-            Expr::Recip(inner_expr, rounding) => {
-                Expr::Recip(Box::new(Minimizer::unbounded(inner_expr)), *rounding)
-            }
-            Expr::Sum(terms) => Expr::Sum(terms.iter().map(Self::unbounded).collect()),
-            Expr::Prod(_) => todo!(),
-            Expr::Atom(Atom::Literal(_)) => expr.clone(),
-            Expr::Atom(Atom::Named(_)) => Expr::Atom(Atom::Literal(Rational::INFINITY)),
-        }
-    }
-
     /// Returns a lower bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
-    pub fn sub_bound(expr: &Expr<'a>, x: &Expr<'a>, bound: &Bound<'a>) -> Expr<'a> {
-        if expr.eq(x) {
-            return match bound {
-                Bound::Le(bound_expr) => bound_expr.clone(),
-                Bound::Ge(_) => expr.clone(),
+    pub fn sub_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Option<Expr<'a>> {
+        if *expr == Expr::Atom(Atom::Named(bound.subject)) {
+            return match &bound.bound {
+                Bound::Le(bound_expr) => Some(bound_expr.clone()),
+                Bound::Ge(_) => None,
             };
         }
-        sub_bound_into(expr, x, bound, Maximizer::sub_bound, Minimizer::sub_bound)
-    }
-
-    fn sub_descriptive_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Expr<'a> {
-        let x = Expr::Atom(Atom::Named(bound.subject));
-        Self::sub_bound(expr, &x, &bound.bound)
+        sub_bound_into(expr, bound, Maximizer::sub_bound, Minimizer::sub_bound)
     }
 }

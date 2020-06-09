@@ -144,14 +144,14 @@ impl<'a> Relation<'a> {
                         #[cfg(debug_assertions)]
                         println!("Dropping {} since sign is unknown.", other_terms);
 
-                        return None
+                        return None;
                     }
                     // We can't divide by 0!
                     Some(0) => {
                         #[cfg(debug_assertions)]
                         println!("Dropping {} since it is 0.", other_terms);
 
-                        return None
+                        return None;
                     }
 
                     Some(_) => panic!("invalid sign"),
@@ -288,25 +288,9 @@ impl<'a> DescriptiveBound<'a> {
     }
 
     pub fn sub(&self, sub: &DescriptiveBound<'a>) -> Option<DescriptiveBound<'a>> {
-        let x = Expr::Atom(Atom::Named(sub.subject));
-        Some(DescriptiveBound {
-            subject: self.subject,
-            bound: match self.bound {
-                Bound::Le(_) => bound_sub(
-                    Maximizer::sub_bound,
-                    self.subject,
-                    &self.bound,
-                    &x,
-                    &sub.bound,
-                )?,
-                Bound::Ge(_) => bound_sub(
-                    Minimizer::sub_bound,
-                    self.subject,
-                    &self.bound,
-                    &x,
-                    &sub.bound,
-                )?,
-            },
+        Some(match self.bound {
+            Bound::Le(_) => bound_sub(Maximizer::sub_bound, self, &sub)?,
+            Bound::Ge(_) => bound_sub(Minimizer::sub_bound, self, &sub)?,
         })
     }
 }

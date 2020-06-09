@@ -3,12 +3,7 @@ use super::{ProofResult, Prover, Requirement, SimpleProver};
 use crate::ast::proof::Condition;
 use crate::tokens::tokenize;
 
-fn prove<'a>(prover: &impl Prover<'a>, stmt: &'a str) -> ProofResult {
-    let tokens = tokenize(stmt);
-    let cond = Condition::parse(&tokens).unwrap();
-    let req = Requirement::from(&cond);
-    prover.prove(&req)
-}
+const ONLY_TEST: Option<ProofResult> = None;
 
 macro_rules! requirements {
     (append($reqs:expr; $req:expr)) => {
@@ -34,21 +29,25 @@ macro_rules! prove {
         let tokens = tokenize($stmt);
         let cond = Condition::parse(&tokens).unwrap();
         let req = Requirement::from(&cond);
-        let result = $prover.prove(&req);
-        if result != $expected {
-            panic!("{} gave: {}, expected: {}", $stmt, result, $expected);
+        if ONLY_TEST.map(|r| r == $expected).unwrap_or(true) {
+            let result = $prover.prove(&req);
+            if result != $expected {
+                panic!("{} gave: {}, expected: {}", $stmt, result, $expected);
+            }
         }
         // Also try to prove the contra-positive.
         // If the result is Undetermined, both these proof attempts will be worse case.
         // If the result is True/False, the other will be the opposite so at least 1 worst case
         // optimiser run will occur. This therefore slows tests down by quite a bit.
-        let contra_req = req.contra_positive();
-        let contra_result = $prover.prove(&contra_req);
-        if contra_result != !$expected {
-            panic!(
-                "!({}) = {} gave: {}, expected: {} = !{}",
-                $stmt, contra_req, contra_result, !$expected, $expected
-            );
+        if ONLY_TEST.map(|r| r == !$expected).unwrap_or(true) {
+            let contra_req = req.contra_positive();
+            let contra_result = $prover.prove(&contra_req);
+            if contra_result != !$expected {
+                panic!(
+                    "!({}) = {} gave: {}, expected: {} = !{}",
+                    $stmt, contra_req, contra_result, !$expected, $expected
+                );
+            }
         }
     };
 }
@@ -303,10 +302,13 @@ fn test_lots_of_variables() {
 
         "x <= m",
         "m <= x+y+z+n",
+
+        // TODO Do we need this?
+        "y >= 0",
     ]);
 
     let mut bounds_prover = BoundsProver::new(reqs.clone());
-    bounds_prover.set_max_depth(5);
+    bounds_prover.set_max_depth(8);
     let prover = FullProver::from(bounds_prover);
 
     let tokens = tokenize("y-2*n");
@@ -375,7 +377,7 @@ fn test_lots_of_variables() {
     // 3*(m-x-y-z) <= 3*n <= y
     // 3*(m-x-z) <= 4*y
     prove!(prover: "3*m-3*x-3*z <= 4*y" => ProofResult::True);
-    // FIXME prove!(prover: "3*m-3*x-3*z <= 5*y" => ProofResult::True);
+    prove!(prover: "3*m-3*x-3*z <= 5*y" => ProofResult::True);
     // x <= m
     prove!(prover: "3*x-3*x-3*z <= 4*y" => ProofResult::True);
     prove!(prover: "3*z >= 0-4*y" => ProofResult::True);
@@ -391,7 +393,7 @@ fn test_lots_of_variables() {
 
     prove!(prover: "3*n <= y" => ProofResult::True);
     prove!(prover: "3*n <= y+x" => ProofResult::True);
-    // FIXME prove!(prover: "2*n <= y" => ProofResult::True);
+    prove!(prover: "2*n <= y" => ProofResult::True);
     prove!(prover: "4*n <= y" => ProofResult::Undetermined);
 }
 
@@ -420,7 +422,7 @@ fn new_tests<'a>() {
     // Hence l = z = y = f + g + b/2
 
     let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(7);
+    bounds_prover.set_max_depth(8);
     let prover = FullProver::from(bounds_prover);
 
     prove!(prover: "x <= 5" => ProofResult::True);
@@ -463,10 +465,9 @@ fn new_tests<'a>() {
     prove!(prover: "6 >= 4*x - 2*x/2" => ProofResult::True);
 
     prove!(prover: "x <= y+3" => ProofResult::True);
-    // So this doesn't seem like it's true. But since, as above, 0 <= l = y
-    // y+2 >= 2
     prove!(prover: "x <= y+2" => ProofResult::True);
-    // FIXME prove!(prover: "x <= y+1" => ProofResult::Undetermined);
+    prove!(prover: "x <= y+1" => ProofResult::True);
+    prove!(prover: "x <= y" => ProofResult::Undetermined);
     prove!(prover: "x <= y+4" => ProofResult::True);
     prove!(prover: "x-1 <= y+2" => ProofResult::True);
 
@@ -528,4 +529,47 @@ fn real_world_example() {
     prove!(prover: "i2-1 <= len-1" => ProofResult::True);
 
     // YAY!
+}
+
+#[test]
+fn really_long_chain() {
+    requirements!(let reqs = [
+        "a <= b",
+        "b <= c",
+        "c <= d",
+        "d <= e",
+        "e <= f",
+        "f <= g",
+        "g <= h",
+        "h <= i",
+        "i <= j",
+        "j <= k",
+        "k <= l",
+        "l <= m",
+        "m <= n",
+        "n <= o",
+        "o <= p",
+        "p <= q",
+        "q <= r",
+        "r <= s",
+        "s <= t",
+        "t <= u",
+        "u <= v",
+        "v <= w",
+        "w <= x",
+        "x <= y",
+        "y <= z",
+    ]);
+
+    let mut bounds_prover = BoundsProver::new(reqs);
+    bounds_prover.set_max_depth(30);
+    let prover = FullProver::from(bounds_prover);
+
+    prove!(prover: "a <= z" => ProofResult::True);
+    prove!(prover: "a+1 <= z" => ProofResult::Undetermined);
+    prove!(prover: "a+1 <= z+1" => ProofResult::True);
+    prove!(prover: "a <= 2*z" => ProofResult::Undetermined);
+    prove!(prover: "a*2 <= 2*z" => ProofResult::True);
+    prove!(prover: "a >= z" => ProofResult::Undetermined);
+    prove!(prover: "0-a >= 0-z" => ProofResult::True);
 }
