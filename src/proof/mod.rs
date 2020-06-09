@@ -77,14 +77,12 @@ impl<'a> Requirement<'a> {
     /// If no bounds are given or if they cannot be computed, None is returned.
     pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
         let name_expr = Expr::Atom(Atom::Named(*name));
-        Some(
-            Relation {
-                left: self.ge0.single_x(&name_expr)?,
-                relation: RelationKind::Ge,
-                right: ZERO,
-            }
-            .bounds_on_unsafe(&name_expr),
-        )
+        Relation {
+            left: self.ge0.single_x(&name_expr)?,
+            relation: RelationKind::Ge,
+            right: ZERO,
+        }
+        .bounds_on_unsafe(&name_expr)
     }
 
     /// Returns bounds specified by self.

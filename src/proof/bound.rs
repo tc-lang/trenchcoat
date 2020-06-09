@@ -83,12 +83,12 @@ impl<'a> Relation<'a> {
     /// - `subject` only occurs exactly once in self.left.
     ///    This can be achieved by using `self.left = self.left.single_x(subject)?`
     /// - `subject` does not occur in self.right
-    pub fn rearrange_unsafe(&self, subject: &Expr<'a>) -> Relation<'a> {
+    pub fn rearrange_unsafe(&self, subject: &Expr<'a>) -> Option<Relation<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
 
         // We are done if self.left = subject
         if self.left.simplify_eq(subject) {
-            return self.clone();
+            return Some(self.clone());
         }
 
         match &self.left {
@@ -132,12 +132,36 @@ impl<'a> Relation<'a> {
                 let mut other_terms = Vec::with_capacity(terms.len() - 1);
                 other_terms.extend_from_slice(&terms[..x_idx]);
                 other_terms.extend_from_slice(&terms[x_idx + 1..]);
+                let other_terms = Sum(other_terms);
+                // We're going to divide by other_terms so we must check it's sign.
+                // If it's negative, we should flip the relation.
+                let new_relation = match other_terms.sign() {
+                    Some(1) => self.relation,
+                    Some(-1) => self.relation.opposite(),
+
+                    // We can't determine the sign so we can't safely divide by it.
+                    None => {
+                        #[cfg(debug_assertions)]
+                        println!("Dropping {} since sign is unknown.", other_terms);
+
+                        return None
+                    }
+                    // We can't divide by 0!
+                    Some(0) => {
+                        #[cfg(debug_assertions)]
+                        println!("Dropping {} since it is 0.", other_terms);
+
+                        return None
+                    }
+
+                    Some(_) => panic!("invalid sign"),
+                };
 
                 let new_right = Prod(vec![
                     self.right.clone(),
-                    Recip(Box::new(Sum(other_terms)), {
+                    Recip(Box::new(other_terms), {
                         // TODO Decide and document rounding directions
-                        match self.relation {
+                        match new_relation {
                             RelationKind::Le => true,
                             RelationKind::Ge => false,
                         }
@@ -146,7 +170,7 @@ impl<'a> Relation<'a> {
 
                 Relation {
                     left: new_left,
-                    relation: self.relation,
+                    relation: new_relation,
                     right: new_right,
                 }
                 .rearrange_unsafe(subject)
@@ -164,6 +188,8 @@ impl<'a> Relation<'a> {
             Recip(term, rounding) => Relation {
                 left: *term.clone(),
                 relation: self.relation.opposite(),
+                // When you implement this todo, make sure you check the sign!
+                // See Prod case for how it should be done.
                 right: Recip(Box::new(self.right.clone()), todo!()),
             }
             .rearrange_unsafe(subject),
@@ -176,9 +202,9 @@ impl<'a> Relation<'a> {
 
     /// Returns the bounds on `target` given by self.
     /// This method makes the same assumptions as `rearrange_unsafe`
-    pub fn bounds_on_unsafe(&self, target: &Expr<'a>) -> Bound<'a> {
+    pub fn bounds_on_unsafe(&self, target: &Expr<'a>) -> Option<Bound<'a>> {
         use RelationKind::{Ge, Le};
-        match self.rearrange_unsafe(target) {
+        Some(match self.rearrange_unsafe(target)? {
             Relation {
                 left: _,
                 relation: Le,
@@ -189,7 +215,7 @@ impl<'a> Relation<'a> {
                 relation: Ge,
                 right,
             } => Bound::Ge(right),
-        }
+        })
     }
 
     pub fn bounds_on(&self, name: Ident<'a>) -> Option<Bound<'a>> {
@@ -223,14 +249,12 @@ impl<'a> Relation<'a> {
             return None;
         }
 
-        Some(
-            Relation {
-                left: lhs,
-                relation,
-                right: rhs,
-            }
-            .bounds_on_unsafe(&name_expr),
-        )
+        Relation {
+            left: lhs,
+            relation,
+            right: rhs,
+        }
+        .bounds_on_unsafe(&name_expr)
     }
 
     pub fn bounds(&self) -> Vec<DescriptiveBound<'a>> {

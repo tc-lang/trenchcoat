@@ -999,6 +999,24 @@ impl<'b, 'a: 'b> Expr<'a> {
         self.eval2(Int::div_ceil, Int::div_floor)
     }
     */
+
+    /// Returns an i8 with the same sign as the expression or None if this can't be determined.
+    pub fn sign(&self) -> Option<i8> {
+        match self {
+            Expr::Neg(inner) => Some(-inner.sign()?),
+            Expr::Recip(inner, _) => Some(inner.sign()?),
+            Expr::Prod(terms) => terms.iter().map(Expr::sign).fold(Some(1), |sign, term_sign| Some(sign?*term_sign?)),
+            Expr::Sum(terms) => terms.iter().map(Expr::sign).fold(Some(0), |sign, term_sign| match (sign?, term_sign?) {
+                (0, term_sign) => Some(term_sign),
+                (1, 1) => Some(1),
+                (-1, -1) => Some(-1),
+                _ => None,
+            }),
+            Expr::Atom(Atom::Literal(x)) => Some(x.sign_u8()),
+            // TODO Add hooks for determining the sign of variables
+            Expr::Atom(Atom::Named(_)) => None,
+        }
+    }
 }
 
 impl<'a> From<&ast::proof::Expr<'a>> for Expr<'a> {

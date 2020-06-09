@@ -406,7 +406,7 @@ pub fn bound_sub<'a>(
             relation: relation_kind,
             right: expr::ZERO,
         }
-        .bounds_on_unsafe(&x)
+        .bounds_on_unsafe(&x)?
         .simplify(),
     )
 }
@@ -436,7 +436,7 @@ fn bound_sub_all<'a>(
                     relation: relation_kind,
                     right: expr::ZERO,
                 }
-                .bounds_on_unsafe(&var)
+                .bounds_on_unsafe(&var)?
                 .simplify(),
             ))
         })
