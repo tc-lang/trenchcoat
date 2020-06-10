@@ -149,12 +149,12 @@ impl Rational {
     }
 
     pub fn eval_floor(self) -> EvalInt {
-        println!(
+        /*println!(
             "eval_floor {}/{} = {}",
             self.numerator,
             self.denominator,
             EvalInt::from(self.numerator).div_floor(self.denominator.into())
-        );
+        );*/
         EvalInt::from(self.numerator).div_floor(self.denominator.into())
     }
 

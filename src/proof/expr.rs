@@ -785,16 +785,6 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// See also: `Self::eval2`
     //pub fn eval(&self, div: impl Fn(Int, Int) -> Int + Copy) -> Option<Int> {
     pub fn eval(&self) -> Option<EvalInt> {
-        //self.eval2(div, div)
-        println!(
-            "EVAL {} = {}",
-            self,
-            //self.group_recips(),
-            match self.group_recips().eval_rat() {
-                Some(x) => format!("{} = {}", x, x.eval_floor()),
-                None => "None".into(),
-            }
-        );
         self.eval_rat().map(Rational::eval_floor)
     }
 

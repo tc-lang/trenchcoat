@@ -15,7 +15,7 @@ pub struct Prover<'a> {
 impl<'a> SimpleProver<'a> for Prover<'a> {
     fn new(reqs: Vec<Requirement<'a>>) -> Prover<'a> {
         let reqs = reqs.iter().map(Requirement::simplify).collect::<Vec<_>>();
-        println!("{:?}", BoundGroup::from_requirements(reqs.clone()));
+        //println!("{:?}", BoundGroup::from_requirements(reqs.clone()));
         //panic!("Yes!");
         Prover {
             bound_group: BoundGroup::from_requirements(reqs),

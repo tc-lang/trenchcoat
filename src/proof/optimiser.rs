@@ -230,7 +230,7 @@ macro_rules! optimizer_next_body {
 
         // If we've reached the maximum depth, we should not continue.
         if $self.max_depth == 0 {
-            println!("Bye");
+            //println!("Bye");
             return None;
         }
 
@@ -238,14 +238,14 @@ macro_rules! optimizer_next_body {
             $self.find_permutation_group();
             if $self.permutation_group.is_none() {
                 $self.max_depth = 0;
-                println!(
+                /*println!(
                     "YIELDING {} = {}",
                     $self.solving.clone(),
                     match $self.solving.eval() {
                         Some(x) => x,
                         None => Int::Infinity.into(),
                     }
-                );
+                );*/
                 return Some($self.solving.clone());
             }
         }
@@ -254,27 +254,27 @@ macro_rules! optimizer_next_body {
         // Now we want to make another substitution.
         // We will find a variable with a bound that we can use.
         let (bound, requirement_id) = loop {
-            println!("i: {}", $self.group_idx);
+            //println!("i: {}", $self.group_idx);
             // If there are no more substitutions to make, we can finish.
             // To do this, we'll mark this as the final child (see the early return case above) and
             // return the current expression since it is a bound of itself.
             if $self.group_idx >= permutation_group.len() {
                 $self.max_depth = 0;
-                println!(
+                /*println!(
                     "YIELDING {} = {}",
                     $self.solving.clone(),
                     match $self.solving.eval() {
                         Some(x) => x,
                         None => Int::Infinity.into(),
                     }
-                );
+                );*/
                 return Some($self.solving.clone());
             }
 
             let (ref bound, requirement_id) = permutation_group[$self.group_idx];
 
             if $self.tried[requirement_id] {
-                println!("Already tried...");
+                //println!("Already tried...");
                 $self.group_idx += 1;
                 continue;
             }
@@ -285,13 +285,13 @@ macro_rules! optimizer_next_body {
             if $self.vars.contains(&bound.subject) {
                 break (bound, requirement_id);
             }
-            println!("{} doesn't include {}", $self.solving, bound.subject);
+            //println!("{} doesn't include {}", $self.solving, bound.subject);
         };
 
         let mut new_tried = $self.tried.clone();
         new_tried[requirement_id] = true;
 
-        println!("Subbing {}", bound);
+        //println!("Subbing {}", bound);
 
         // Substitute the bound
         let new_expr = match Self::sub_bound(&$self.solving, &bound) {
@@ -299,9 +299,9 @@ macro_rules! optimizer_next_body {
             None => return $self.next(),
         };
 
-        println!("Solving: {} <== {}", &$self.solving, new_expr);
+        //println!("Solving: {} <== {}", &$self.solving, new_expr);
 
-        println!("Making a child!");
+        //println!("Making a child!");
         // Create the new child
         $self.child = Some(Box::new(Self::new(
             new_expr,
@@ -357,22 +357,22 @@ pub fn bound_sub<'a>(
 impl<'a: 'b, 'b> Iterator for Minimizer<'a> {
     type Item = Expr<'a>;
     fn next(&mut self) -> Option<Expr<'a>> {
-        println!(
+        /*println!(
             "\nMinimizer next on ({}) {}",
             self.group_idx,
             self.solving.clone()
-        );
+        );*/
         optimizer_next_body!(self)
     }
 }
 impl<'a: 'b, 'b> Iterator for Maximizer<'a> {
     type Item = Expr<'a>;
     fn next(&mut self) -> Option<Expr<'a>> {
-        println!(
+        /*println!(
             "\nMaximizer next on ({}) {}",
             self.group_idx,
             self.solving.clone()
-        );
+        );*/
         optimizer_next_body!(self)
     }
 }
