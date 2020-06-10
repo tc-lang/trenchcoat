@@ -1,9 +1,7 @@
-use super::bound::Bound;
 use super::bound_group::BoundGroup;
 use super::int::Int;
 use super::optimiser::{Maximizer, Minimizer};
 use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
-use crate::ast::Ident;
 
 pub type FullProver<'a> = ScopedSimpleProver<'a, Prover<'a>>;
 
@@ -14,9 +12,7 @@ pub struct Prover<'a> {
 
 impl<'a> SimpleProver<'a> for Prover<'a> {
     fn new(reqs: Vec<Requirement<'a>>) -> Prover<'a> {
-        let reqs = reqs.iter().map(Requirement::simplify).collect::<Vec<_>>();
-        //println!("{:?}", BoundGroup::from_requirements(reqs.clone()));
-        //panic!("Yes!");
+        let reqs = reqs.iter().map(Requirement::simplify).collect();
         Prover {
             bound_group: BoundGroup::from_requirements(reqs),
             max_depth: 10,

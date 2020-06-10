@@ -227,7 +227,7 @@ impl Eq for Rational {}
 
 impl Ord for Rational {
     fn cmp(&self, other: &Rational) -> Ordering {
-        match (*self - *other).sign_u8() {
+        match (*self - *other).sign_i8() {
             -1 => Ordering::Less,
             0 => Ordering::Equal,
             1 => Ordering::Greater,
@@ -403,7 +403,7 @@ impl Int {
     pub fn div_ceil(self, rhs: Int) -> Int {
         let result = self / rhs;
         if rhs != Int::ZERO && self % rhs != Int::ZERO {
-            let final_sign = self.sign_u8() * rhs.sign_u8();
+            let final_sign = self.sign_i8() * rhs.sign_i8();
             match final_sign {
                 // rounding towards 0 is down so we need to add 1
                 1 => return result + Int::ONE,
@@ -422,7 +422,7 @@ impl Int {
     pub fn div_floor(self, rhs: Int) -> Int {
         let result = self / rhs;
         if rhs != Int::ZERO && self % rhs != Int::ZERO {
-            let final_sign = self.sign_u8() * rhs.sign_u8();
+            let final_sign = self.sign_i8() * rhs.sign_i8();
             match final_sign {
                 // rounding towards 0 was down!
                 1 => (),
@@ -445,7 +445,7 @@ impl Int {
         }
     }
 
-    pub fn sign_u8(&self) -> i8 {
+    pub fn sign_i8(&self) -> i8 {
         match self.cmp(&Int::ZERO) {
             Ordering::Less => -1,
             Ordering::Equal => 0,
@@ -746,8 +746,8 @@ impl Rational {
         self.numerator.signnum() * self.denominator.signnum()
     }
 
-    pub fn sign_u8(&self) -> i8 {
-        self.numerator.sign_u8() * self.denominator.sign_u8()
+    pub fn sign_i8(&self) -> i8 {
+        self.numerator.sign_i8() * self.denominator.sign_i8()
     }
 }
 

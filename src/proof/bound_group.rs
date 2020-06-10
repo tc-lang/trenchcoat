@@ -1,7 +1,6 @@
 use super::bound::DescriptiveBound;
 use super::Requirement;
 use std::collections::BTreeSet;
-use std::convert::identity;
 use std::iter::Iterator;
 use std::ops::Deref;
 
@@ -30,6 +29,8 @@ pub struct Iter<'a: 'b, 'b> {
 }
 
 impl<'a: 'b, 'b> BoundGroup<'a> {
+    /// Create a new BoundGroup with no capacity.
+    /// This does no heap allocation.
     pub fn new() -> BoundGroup<'a> {
         BoundGroup {
             bounds: Vec::new(),
@@ -38,6 +39,10 @@ impl<'a: 'b, 'b> BoundGroup<'a> {
         }
     }
 
+    /// Creates a new BoundGroup with capacity for:
+    /// - `bounds` number of bounds,
+    /// - `requirements` number of requirements,
+    /// - `permutation_groups` number of permutation groups.
     pub fn with_capacity(
         bounds: usize,
         requirements: usize,
@@ -50,6 +55,7 @@ impl<'a: 'b, 'b> BoundGroup<'a> {
         }
     }
 
+    /// Creates a BoundGroup containing the bounds from the passed Requirements.
     pub fn from_requirements(reqs: Vec<Requirement<'a>>) -> BoundGroup<'a> {
         let mut out = BoundGroup::with_capacity(reqs.len() * 2, reqs.len(), reqs.len() / 4);
         out.add_requirements(reqs);
@@ -57,7 +63,7 @@ impl<'a: 'b, 'b> BoundGroup<'a> {
     }
 
     /// Adds bound to this BoundGroup. This adds it to the bounds slice and permutation_groups but
-    /// does not add it to it's correct requirements group.
+    /// does not add it to any requirements group.
     pub fn add(&mut self, bound: DescriptiveBound<'a>) -> usize {
         // This is the index of the bound we are inserting.
         let this_idx = self.bounds.len();
@@ -90,7 +96,7 @@ impl<'a: 'b, 'b> BoundGroup<'a> {
     /// Adds the requirements bounds to self.
     /// This creates a new requirements group in self.requirements containing all the bounds from
     /// this requirement.
-    /// The requirements are also added to the correct permutation_groups group.
+    /// The requirements are also added to the correct permutation group.
     pub fn add_requirement(&mut self, req: &Requirement<'a>) -> usize {
         let req_idx = self.requirements.len();
         let bounds = req.as_relation().bounds();
@@ -105,9 +111,9 @@ impl<'a: 'b, 'b> BoundGroup<'a> {
     /// Adds all the requirements to self.
     /// (This calls self.add_requirement on each requirement).
     pub fn add_requirements(&mut self, reqs: Vec<Requirement<'a>>) {
-        reqs.iter().for_each(|req| {
+        for req in reqs.iter() {
             self.add_requirement(req);
-        });
+        }
     }
 
     /// Returns an iterator over all the bounds within self
@@ -124,13 +130,19 @@ impl<'a: 'b, 'b> BoundGroup<'a> {
         self.requirements.len()
     }
 
+    /// Subsitute `bound` in to all the bounds within self and return the result.
     /// This is garenteed not to change bound or requirement IDs.
     pub fn sub_bound(&self, bound: &DescriptiveBound<'a>) -> BoundGroup<'a> {
+        // Sub bound in to all the existing bounds
         let new_bounds = self
             .bounds
             .iter()
             .map(|old_bound| old_bound.as_ref()?.sub(bound))
             .collect();
+
+        // Create the new bound group.
+        // Since the indexes of bounds has not changed, the permutation and requirement groups will
+        // still contain the correct indexes.
         BoundGroup {
             bounds: new_bounds,
             requirements: self.requirements.clone(),
@@ -140,7 +152,7 @@ impl<'a: 'b, 'b> BoundGroup<'a> {
 }
 
 impl<'a: 'b, 'b> BoundRef<'a, 'b> {
-    /// Returns the requirement
+    /// Returns the requirement containing self or None if it is not part of a requirement group.
     pub fn requirement(&self) -> Option<RequirementRef<'a, 'b>> {
         Some(RequirementRef {
             id: self
@@ -153,7 +165,8 @@ impl<'a: 'b, 'b> BoundRef<'a, 'b> {
     }
 
     /// Returns an ID for this bound. This ID is garenteed to be unique among all other bounds in
-    /// this BoundGroup and will have a maximum value of the total number of bounds.
+    /// this BoundGroup and will have a maximum value of the total number of bounds ever added to
+    /// the BoundGroup.
     pub fn id(&self) -> usize {
         self.id
     }
@@ -197,7 +210,7 @@ impl<'a: 'b, 'b> Deref for BoundRef<'a, 'b> {
 }
 
 impl<'a: 'b, 'b> RequirementRef<'a, 'b> {
-    /// Returns the bounds that belong to this requirement
+    /// Returns the bounds that belong to this requirement.
     pub fn bounds(&self) -> Vec<BoundRef<'a, 'b>> {
         self.group.requirements[self.id]
             .iter()
@@ -216,8 +229,8 @@ impl<'a: 'b, 'b> RequirementRef<'a, 'b> {
     }
 
     /// Returns an ID for this requirement. This ID is garenteed to be unique among all other
-    /// requirements in this BoundGroup and will have a maximum value of the total number of
-    /// requirements.
+    /// requirements in this BoundGroup and will have a maximum value as returned by
+    /// `BoundGroup.max_requirement_id`.
     pub fn id(&self) -> usize {
         self.id
     }

@@ -8,7 +8,6 @@ mod bound;
 mod bound_group;
 mod bound_method;
 pub mod error;
-pub mod examples;
 mod expr;
 mod int;
 mod optimiser;
