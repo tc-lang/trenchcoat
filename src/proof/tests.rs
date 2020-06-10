@@ -14,36 +14,49 @@ macro_rules! requirements {
         )*
     };
 
-    (let $name:ident = [$($strings:expr),+$(,)?]) => {
+    (let $name:ident = [$($strings:expr),+$(,)?], macro_rules! $prove:ident, $prover:ident) => {
         let mut $name = Vec::new();
         requirements!(append($name; $($strings),*));
         let $name = $name;
-    };
-}
 
-macro_rules! prove {
-    ($prover:ident: $stmt:expr => $expected:expr) => {
-        let tokens = tokenize($stmt);
-        let cond = Condition::parse(&tokens).unwrap();
-        let req = Requirement::from(&cond);
-        if ONLY_TEST.map(|r| r == $expected).unwrap_or(true) {
-            let result = $prover.prove(&req);
-            if result != $expected {
-                panic!("{} gave: {}, expected: {}", $stmt, result, $expected);
-            }
+        // A 4-tuple of of: (is_contra, stmt, result, expected)
+        let mut errors = <Vec<(bool, &'static str, ProofResult, ProofResult)>>::new();
+
+        macro_rules! $prove {
+            ($stmt:expr => $expected:expr) => {
+                let tokens = tokenize($stmt);
+                let cond = Condition::parse(&tokens).unwrap();
+                let req = Requirement::from(&cond);
+                if ONLY_TEST.map(|r| r == $expected).unwrap_or(true) {
+                    let result = $prover.prove(&req);
+                    if result != $expected {
+                        errors.push((false, $stmt, result, $expected));
+                    }
+                }
+                // Also try to prove the contra-positive.
+                // If the result is Undetermined, both these proof attempts will be worse case.
+                // If the result is True/False, the other will be the opposite so at least 1 worst case
+                // optimiser run will occur. This therefore slows tests down by quite a bit.
+                if ONLY_TEST.map(|r| r == !$expected).unwrap_or(true) {
+                    let contra_req = req.contra_positive();
+                    let contra_result = $prover.prove(&contra_req);
+                    if contra_result != !$expected {
+                        errors.push((true, $stmt, contra_result, !$expected));
+                    }
+                }
+            };
         }
-        // Also try to prove the contra-positive.
-        // If the result is Undetermined, both these proof attempts will be worse case.
-        // If the result is True/False, the other will be the opposite so at least 1 worst case
-        // optimiser run will occur. This therefore slows tests down by quite a bit.
-        if ONLY_TEST.map(|r| r == !$expected).unwrap_or(true) {
-            let contra_req = req.contra_positive();
-            let contra_result = $prover.prove(&contra_req);
-            if contra_result != !$expected {
-                panic!(
-                    "!({}) = {} gave: {}, expected: {} = !{}",
-                    $stmt, contra_req, contra_result, !$expected, $expected
-                );
+
+        macro_rules! cleanup {
+            () => {
+                if !errors.is_empty() {
+                    panic!("{}", errors.into_iter().fold(String::new(), |s, (is_contra, stmt, result, expected)| {
+                        s + &(match is_contra {
+                            false => format!("{} gave: {}, expected: {}", stmt, result, expected),
+                            true => format!("!({}) gave: {}, expected: {}", stmt, result, expected),
+                        })
+                    }));
+                }
             }
         }
     };
@@ -54,18 +67,20 @@ fn example_test() {
     // Also, to get an idea for the running time of the algorithm, this would be the time for a
     // function with 5 requirements and 21 unique statements to prove.
 
+    let prover;
+
     requirements!(let reqs = [
         "x >= 0",
         "0 <= y",
         "x+y <= 10",
         "2*y <= 17",
         "x/2+y >= 1",
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs.clone());
     // We can garentee that this will be worst case O(n^4)
     bounds_prover.set_max_depth(3);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
     /*
     let tokens = tokenize("8 - y");
@@ -107,81 +122,93 @@ fn example_test() {
     //assert!(prove(&prover, "x+y <= 10") == ProofResult::True);
 
     // First off, let's start with the obvious proofs
-    prove!(prover: "0 <= x" => ProofResult::True);
-    prove!(prover: "0 <= y" => ProofResult::True);
-    prove!(prover: "x+y <= 10" => ProofResult::True);
+    prove!("0 <= x" => ProofResult::True);
+    prove!("0 <= y" => ProofResult::True);
+    prove!("x+y <= 10" => ProofResult::True);
     // We can also say that
-    prove!(prover: "0-3 <= x" => ProofResult::True);
+    prove!("0-3 <= x" => ProofResult::True);
     // But
-    prove!(prover: "3 <= x" => ProofResult::Undetermined);
+    prove!("3 <= x" => ProofResult::Undetermined);
     // and
-    prove!(prover: "11 <= x" => ProofResult::False);
+    prove!("11 <= x" => ProofResult::False);
     // Or that
-    prove!(prover: "x <= 10" => ProofResult::True);
-    prove!(prover: "y <= 10" => ProofResult::True);
+    prove!("x <= 10" => ProofResult::True);
+    prove!("y <= 10" => ProofResult::True);
     // In fact, 2*y <= 17 ==> y <= 8
-    prove!(prover: "y <= 8" => ProofResult::True);
+    prove!("y <= 8" => ProofResult::True);
     // If we go too tight though, y *could* be in that range, but it won't always be:
-    prove!(prover: "y <= 7" => ProofResult::Undetermined);
-    prove!(prover: "y <= 5" => ProofResult::Undetermined);
+    prove!("y <= 7" => ProofResult::Undetermined);
+    prove!("y <= 5" => ProofResult::Undetermined);
     // Or, if we go crazy, the result is always false:
-    prove!(prover: "y <= 0-1" => ProofResult::False);
+    prove!("y <= 0-1" => ProofResult::False);
     // We could also make some other combinations:
-    prove!(prover: "2*x+y <= 20" => ProofResult::True);
-    prove!(prover: "x+2*y <= 20" => ProofResult::True);
-    prove!(prover: "x+2*y >= 0" => ProofResult::True);
+    prove!("2*x+y <= 20" => ProofResult::True);
+    prove!("x+2*y <= 20" => ProofResult::True);
+    prove!("x+2*y >= 0" => ProofResult::True);
     // And duplicating the above, using parentheticals
-    prove!(prover: "2*(x+y)-y <= 20" => ProofResult::True);
-    prove!(prover: "2*(x+y)-x <= 20" => ProofResult::True);
-    prove!(prover: "2*(x+y)-x >= 0" => ProofResult::True);
+    prove!("2*(x+y)-y <= 20" => ProofResult::True);
+    prove!("2*(x+y)-x <= 20" => ProofResult::True);
+    prove!("2*(x+y)-x >= 0" => ProofResult::True);
     // Also, x/2 + y >= 1
     //   ==> x + 2*y >= 2
-    prove!(prover: "x+2*y >= 1" => ProofResult::True);
-    prove!(prover: "x+2*y >= 2" => ProofResult::True);
-    prove!(prover: "x+2*y >= 3" => ProofResult::Undetermined);
-    prove!(prover: "x+2*y >= 31" => ProofResult::False);
+    prove!("x+2*y >= 1" => ProofResult::True);
+    prove!("x+2*y >= 2" => ProofResult::True);
+    prove!("x+2*y >= 3" => ProofResult::Undetermined);
+    prove!("x+2*y >= 31" => ProofResult::False);
 
-    prove!(prover: "2*x+y <= 19" => ProofResult::Undetermined);
+    prove!("2*x+y <= 19" => ProofResult::Undetermined);
 
     // With some tighter bounds!
-    prove!(prover: "x+2*y <= 18" => ProofResult::True);
-    prove!(prover: "x+2*y <= 17" => ProofResult::Undetermined);
+    prove!("x+2*y <= 18" => ProofResult::True);
+    prove!("x+2*y <= 17" => ProofResult::Undetermined);
+
+    cleanup!()
 }
 
 #[test]
 fn test_3_vars_different_coeffs() {
+    let prover;
+
     requirements!(let reqs = [
         "x <= y+3",
         "x <= 2*y",
         "y <= z+2",
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     // We can garentee that this will be worst case O(n^3)
     bounds_prover.set_max_depth(3);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
-    prove!(prover: "x <= z+5" => ProofResult::True);
+    prove!("x <= z+5" => ProofResult::True);
+
+    cleanup!()
 }
 
 #[test]
 fn test_3_variables_different_coeffs_2() {
+    let prover;
+
     requirements!(let reqs = [
         "x <= y+3",
         "x <= 2*y",
         "y <= z/2+2",
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     // We can garentee that this will be worst case O(n^3)
     bounds_prover.set_max_depth(3);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
-    prove!(prover: "x <= z+4" => ProofResult::True);
+    prove!("x <= z+4" => ProofResult::True);
+
+    cleanup!()
 }
 
 #[test]
 fn test_3_variables() {
+    let prover;
+
     requirements!(let reqs = [
         "0-10 <= x",
         "x <= 10",
@@ -189,47 +216,51 @@ fn test_3_variables() {
         "y <= 7-z",
         "0-1 <= z",
         "z <= 3",
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(4);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
-    prove!(prover: "x <= 11" => ProofResult::True);
-    prove!(prover: "x <= 10" => ProofResult::True);
-    prove!(prover: "x <= 9" => ProofResult::Undetermined);
-    prove!(prover: "0-11 <= x" => ProofResult::True);
-    prove!(prover: "0-10 <= x" => ProofResult::True);
-    prove!(prover: "0-9 <= x" => ProofResult::Undetermined);
-    prove!(prover: "11 <= x" => ProofResult::False);
-    prove!(prover: "12 <= x" => ProofResult::False);
-    prove!(prover: "x <= 0-10" => ProofResult::Undetermined);
-    prove!(prover: "x <= 0-11" => ProofResult::False);
-    prove!(prover: "x <= 0-12" => ProofResult::False);
+    prove!("x <= 11" => ProofResult::True);
+    prove!("x <= 10" => ProofResult::True);
+    prove!("x <= 9" => ProofResult::Undetermined);
+    prove!("0-11 <= x" => ProofResult::True);
+    prove!("0-10 <= x" => ProofResult::True);
+    prove!("0-9 <= x" => ProofResult::Undetermined);
+    prove!("11 <= x" => ProofResult::False);
+    prove!("12 <= x" => ProofResult::False);
+    prove!("x <= 0-10" => ProofResult::Undetermined);
+    prove!("x <= 0-11" => ProofResult::False);
+    prove!("x <= 0-12" => ProofResult::False);
 
-    prove!(prover: "y+z <= 7" => ProofResult::True);
-    prove!(prover: "y+z <= 8" => ProofResult::True);
-    prove!(prover: "y+z <= 6" => ProofResult::Undetermined);
-    prove!(prover: "x+y+z <= 17" => ProofResult::True);
-    prove!(prover: "x+y+z <= 18" => ProofResult::True);
-    prove!(prover: "x+y+z <= 16" => ProofResult::Undetermined);
-    prove!(prover: "x+y+z <= 15" => ProofResult::Undetermined);
-    prove!(prover: "x+y+y+z <= x+14-z" => ProofResult::True);
-    prove!(prover: "x+y+y+z <= 10+14-z" => ProofResult::True);
-    prove!(prover: "x+y+y+z <= 24-z" => ProofResult::True);
-    prove!(prover: "x+y+y+z <= 25-z" => ProofResult::True);
-    prove!(prover: "x+y+2*y+z-y <= 24-z" => ProofResult::True);
-    prove!(prover: "x+y+y+z <= 23-z" => ProofResult::Undetermined);
-    prove!(prover: "x+y+y+z <= 23" => ProofResult::Undetermined);
-    prove!(prover: "x+y+y+z <= 24" => ProofResult::Undetermined);
-    prove!(prover: "x+z+y+y+z <= 23" => ProofResult::Undetermined);
-    prove!(prover: "x+z+y+y+z <= 24" => ProofResult::True);
+    prove!("y+z <= 7" => ProofResult::True);
+    prove!("y+z <= 8" => ProofResult::True);
+    prove!("y+z <= 6" => ProofResult::Undetermined);
+    prove!("x+y+z <= 17" => ProofResult::True);
+    prove!("x+y+z <= 18" => ProofResult::True);
+    prove!("x+y+z <= 16" => ProofResult::Undetermined);
+    prove!("x+y+z <= 15" => ProofResult::Undetermined);
+    prove!("x+y+y+z <= x+14-z" => ProofResult::True);
+    prove!("x+y+y+z <= 10+14-z" => ProofResult::True);
+    prove!("x+y+y+z <= 24-z" => ProofResult::True);
+    prove!("x+y+y+z <= 25-z" => ProofResult::True);
+    prove!("x+y+2*y+z-y <= 24-z" => ProofResult::True);
+    prove!("x+y+y+z <= 23-z" => ProofResult::Undetermined);
+    prove!("x+y+y+z <= 23" => ProofResult::Undetermined);
+    prove!("x+y+y+z <= 24" => ProofResult::Undetermined);
+    prove!("x+z+y+y+z <= 23" => ProofResult::Undetermined);
+    prove!("x+z+y+y+z <= 24" => ProofResult::True);
     // Note that this is the only proof that requires O(n^4)
-    prove!(prover: "x+y+y+z <= 25" => ProofResult::True);
+    prove!("x+y+y+z <= 25" => ProofResult::True);
+
+    cleanup!()
 }
 
 #[test]
 fn test_3_variables_2() {
+    let prover;
+
     requirements!(let reqs = [
         "0-10 <= x",
         "x <= 10",
@@ -238,50 +269,54 @@ fn test_3_variables_2() {
         "0-1 <= z",
         "z <= 3",
         "z <= x",
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(4);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
-    prove!(prover: "x <= 11" => ProofResult::True);
-    prove!(prover: "x <= 10" => ProofResult::True);
-    prove!(prover: "x <= 9" => ProofResult::Undetermined);
-    prove!(prover: "0-11 <= x" => ProofResult::True);
-    prove!(prover: "0-10 <= x" => ProofResult::True);
-    prove!(prover: "0-9 <= x" => ProofResult::True);
-    prove!(prover: "0-1 <= x" => ProofResult::True);
-    prove!(prover: "0 <= x" => ProofResult::Undetermined);
-    prove!(prover: "11 <= x" => ProofResult::False);
-    prove!(prover: "12 <= x" => ProofResult::False);
-    prove!(prover: "x <= 0-10" => ProofResult::False);
-    prove!(prover: "x <= 0-11" => ProofResult::False);
-    prove!(prover: "x <= 0-12" => ProofResult::False);
-    prove!(prover: "x <= 0-2" => ProofResult::False);
-    prove!(prover: "x <= 0-1" => ProofResult::Undetermined);
+    prove!("x <= 11" => ProofResult::True);
+    prove!("x <= 10" => ProofResult::True);
+    prove!("x <= 9" => ProofResult::Undetermined);
+    prove!("0-11 <= x" => ProofResult::True);
+    prove!("0-10 <= x" => ProofResult::True);
+    prove!("0-9 <= x" => ProofResult::True);
+    prove!("0-1 <= x" => ProofResult::True);
+    prove!("0 <= x" => ProofResult::Undetermined);
+    prove!("11 <= x" => ProofResult::False);
+    prove!("12 <= x" => ProofResult::False);
+    prove!("x <= 0-10" => ProofResult::False);
+    prove!("x <= 0-11" => ProofResult::False);
+    prove!("x <= 0-12" => ProofResult::False);
+    prove!("x <= 0-2" => ProofResult::False);
+    prove!("x <= 0-1" => ProofResult::Undetermined);
 
-    prove!(prover: "y+z <= 7" => ProofResult::True);
-    prove!(prover: "y+z <= 8" => ProofResult::True);
-    prove!(prover: "y+z <= 6" => ProofResult::Undetermined);
-    prove!(prover: "x+y+z <= 17" => ProofResult::True);
-    prove!(prover: "x+y+z <= 18" => ProofResult::True);
-    prove!(prover: "x+y+z <= 16" => ProofResult::Undetermined);
-    prove!(prover: "x+y+z <= 15" => ProofResult::Undetermined);
-    prove!(prover: "x+y+y+z <= x+14-z" => ProofResult::True);
-    prove!(prover: "x+y+y+z <= 10+14-z" => ProofResult::True);
-    prove!(prover: "x+y+y+z <= 24-z" => ProofResult::True);
-    prove!(prover: "x+y+y+z <= 25-z" => ProofResult::True);
-    prove!(prover: "x+y+2*y+z-y <= 24-z" => ProofResult::True);
-    prove!(prover: "x+y+y+z <= 23-z" => ProofResult::Undetermined);
-    prove!(prover: "x+y+y+z <= 23" => ProofResult::Undetermined);
-    prove!(prover: "x+y+y+z <= 24" => ProofResult::Undetermined);
-    prove!(prover: "x+z+y+y+z <= 23" => ProofResult::Undetermined);
-    prove!(prover: "x+z+y+y+z <= 24" => ProofResult::True);
-    prove!(prover: "x+y+y+z <= 25" => ProofResult::True);
+    prove!("y+z <= 7" => ProofResult::True);
+    prove!("y+z <= 8" => ProofResult::True);
+    prove!("y+z <= 6" => ProofResult::Undetermined);
+    prove!("x+y+z <= 17" => ProofResult::True);
+    prove!("x+y+z <= 18" => ProofResult::True);
+    prove!("x+y+z <= 16" => ProofResult::Undetermined);
+    prove!("x+y+z <= 15" => ProofResult::Undetermined);
+    prove!("x+y+y+z <= x+14-z" => ProofResult::True);
+    prove!("x+y+y+z <= 10+14-z" => ProofResult::True);
+    prove!("x+y+y+z <= 24-z" => ProofResult::True);
+    prove!("x+y+y+z <= 25-z" => ProofResult::True);
+    prove!("x+y+2*y+z-y <= 24-z" => ProofResult::True);
+    prove!("x+y+y+z <= 23-z" => ProofResult::Undetermined);
+    prove!("x+y+y+z <= 23" => ProofResult::Undetermined);
+    prove!("x+y+y+z <= 24" => ProofResult::Undetermined);
+    prove!("x+z+y+y+z <= 23" => ProofResult::Undetermined);
+    prove!("x+z+y+y+z <= 24" => ProofResult::True);
+    prove!("x+y+y+z <= 25" => ProofResult::True);
+
+    cleanup!()
 }
 
 #[test]
 fn test_lots_of_variables() {
+    let prover;
+
     requirements!(let reqs = [
         "2 <= x",
         "2*x <= n",
@@ -302,11 +337,11 @@ fn test_lots_of_variables() {
 
         // TODO Do we need this?
         "y >= 0",
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs.clone());
     bounds_prover.set_max_depth(5);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
     let tokens = tokenize("y-2*n");
     let expr = crate::ast::proof::Expr::parse(&tokens).unwrap();
@@ -350,54 +385,58 @@ fn test_lots_of_variables() {
     */
     //panic!("Hi");
 
-    prove!(prover: "0 <= n" => ProofResult::True);
-    prove!(prover: "1 <= n" => ProofResult::True);
-    prove!(prover: "4 <= n" => ProofResult::True);
-    prove!(prover: "5 <= n" => ProofResult::Undetermined);
-    prove!(prover: "n <= 5" => ProofResult::Undetermined);
-    prove!(prover: "n <= 6" => ProofResult::True);
-    prove!(prover: "n <= 7" => ProofResult::True);
-    prove!(prover: "0 <= m" => ProofResult::True);
-    prove!(prover: "0 <= x" => ProofResult::True);
-    prove!(prover: "0 <= y" => ProofResult::True);
-    prove!(prover: "z <= 200" => ProofResult::True);
-    prove!(prover: "10*y+x <= z" => ProofResult::True);
-    prove!(prover: "0 <= x" => ProofResult::True);
-    prove!(prover: "10*y <= z" => ProofResult::True);
-    prove!(prover: "10*y <= 200" => ProofResult::True);
-    prove!(prover: "10*y <= 199" => ProofResult::True);
-    prove!(prover: "10*y <= 198" => ProofResult::True);
+    prove!("0 <= n" => ProofResult::True);
+    prove!("1 <= n" => ProofResult::True);
+    prove!("4 <= n" => ProofResult::True);
+    prove!("5 <= n" => ProofResult::Undetermined);
+    prove!("n <= 5" => ProofResult::Undetermined);
+    prove!("n <= 6" => ProofResult::True);
+    prove!("n <= 7" => ProofResult::True);
+    prove!("0 <= m" => ProofResult::True);
+    prove!("0 <= x" => ProofResult::True);
+    prove!("0 <= y" => ProofResult::True);
+    prove!("z <= 200" => ProofResult::True);
+    prove!("10*y+x <= z" => ProofResult::True);
+    prove!("0 <= x" => ProofResult::True);
+    prove!("10*y <= z" => ProofResult::True);
+    prove!("10*y <= 200" => ProofResult::True);
+    prove!("10*y <= 199" => ProofResult::True);
+    prove!("10*y <= 198" => ProofResult::True);
     // TODO The next statement is true but quite hard to prove.
     // Maybe we can prove it?
     // assert!(prove(&prover, "10*y <= 197") == ProofResult::True);
-    prove!(prover: "y <= 20" => ProofResult::True);
-    prove!(prover: "y <= 19" => ProofResult::True);
-    prove!(prover: "0 <= z" => ProofResult::True);
+    prove!("y <= 20" => ProofResult::True);
+    prove!("y <= 19" => ProofResult::True);
+    prove!("0 <= z" => ProofResult::True);
     // 3*(m-x-y-z) <= 3*n <= y
     // 3*(m-x-z) <= 4*y
-    prove!(prover: "3*m-3*x-3*z <= 4*y" => ProofResult::True);
-    prove!(prover: "3*m-3*x-3*z <= 5*y" => ProofResult::True);
+    prove!("3*m-3*x-3*z <= 4*y" => ProofResult::True);
+    prove!("3*m-3*x-3*z <= 5*y" => ProofResult::True);
     // x <= m
-    prove!(prover: "3*x-3*x-3*z <= 4*y" => ProofResult::True);
-    prove!(prover: "3*z >= 0-4*y" => ProofResult::True);
-    prove!(prover: "0-4*y/3 <= z" => ProofResult::True);
+    prove!("3*x-3*x-3*z <= 4*y" => ProofResult::True);
+    prove!("3*z >= 0-4*y" => ProofResult::True);
+    prove!("0-4*y/3 <= z" => ProofResult::True);
     // But this is obvious anyway!
-    prove!(prover: "0-y <= z" => ProofResult::True);
+    prove!("0-y <= z" => ProofResult::True);
 
-    prove!(prover: "y <= z" => ProofResult::True);
-    prove!(prover: "10*y >= z" => ProofResult::False);
+    prove!("y <= z" => ProofResult::True);
+    prove!("10*y >= z" => ProofResult::False);
     // 3n <= y
-    prove!(prover: "y >= z+1" => ProofResult::False);
-    prove!(prover: "x <= z" => ProofResult::True);
+    prove!("y >= z+1" => ProofResult::False);
+    prove!("x <= z" => ProofResult::True);
 
-    prove!(prover: "3*n <= y" => ProofResult::True);
-    prove!(prover: "3*n <= y+x" => ProofResult::True);
-    prove!(prover: "2*n <= y" => ProofResult::True);
-    prove!(prover: "4*n <= y" => ProofResult::Undetermined);
+    prove!("3*n <= y" => ProofResult::True);
+    prove!("3*n <= y+x" => ProofResult::True);
+    prove!("2*n <= y" => ProofResult::True);
+    prove!("4*n <= y" => ProofResult::Undetermined);
+
+    cleanup!()
 }
 
 #[test]
 fn new_tests<'a>() {
+    let prover;
+
     requirements!(let reqs = [
         "x <= 2",
         "y >= 1",
@@ -416,67 +455,71 @@ fn new_tests<'a>() {
         "f >= 0",
         "g >= 0",
         "l >= 0",
-    ]);
-    // Note that l <= z <= y <= f + g + b/2 <= l/4 + l/4 + l/2 = l
-    // Hence l = z = y = f + g + b/2
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(7);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
+    // Note that l <= z <= y <= f + g + b/2 <= l/4 + l/4 + l/2 = l
+    // Hence l = z = y = f + g + b/2
 
-    prove!(prover: "x <= 5" => ProofResult::True);
-    prove!(prover: "b <= l" => ProofResult::True);
-    prove!(prover: "4*f <= l" => ProofResult::True);
-    prove!(prover: "4*g <= l" => ProofResult::True);
-    prove!(prover: "4*g + 4*f <= 2*l" => ProofResult::True);
-    prove!(prover: "2*g + 2*f <= l" => ProofResult::True);
-    prove!(prover: "g + f <= l/2" => ProofResult::True);
-    prove!(prover: "l <= y" => ProofResult::True);
-    prove!(prover: "y <= l" => ProofResult::True);
-    // FIXME FIXME prove!(prover: "g + f <= l/4" => ProofResult::Undetermined);
-    prove!(prover: "g + f + b/2 <= l" => ProofResult::True);
-    prove!(prover: "g + f + b/2 >= l" => ProofResult::True);
-    // FIXME prove!(prover: "g + f + b <= l" => ProofResult::False);
-    // FIXME prove!(prover: "g + f + 2*b <= l" => ProofResult::False);
-    prove!(prover: "l <= z" => ProofResult::True);
-    prove!(prover: "z <= l" => ProofResult::True);
-    prove!(prover: "z <= y" => ProofResult::True);
-    // FIXME prove!(prover: "y <= z" => ProofResult::True);
-    prove!(prover: "b <= f + b/2 + g" => ProofResult::True);
-    prove!(prover: "b/2 <= f + g" => ProofResult::True);
-    prove!(prover: "b <= 2*f + 2*g" => ProofResult::True);
-    prove!(prover: "l <= 2*f + 2*g" => ProofResult::True);
-    prove!(prover: "c+d <= 2*f + 2*g" => ProofResult::True);
-    prove!(prover: "c+d-1 <= 2*f + 2*g" => ProofResult::True);
-    prove!(prover: "c+d-2 <= 2*f + 2*g" => ProofResult::True);
-    prove!(prover: "c+d+1 <= 2*f + 2*g" => ProofResult::Undetermined);
-    prove!(prover: "c+d+2 <= 2*f + 2*g" => ProofResult::Undetermined);
-    // TODO Properly check this prove!(prover: "l >= 2*f + 2*g" => ProofResult::True);
-    prove!(prover: "l <= 2*f + 2*g" => ProofResult::True);
+    prove!("x <= 5" => ProofResult::True);
+    prove!("b <= l" => ProofResult::True);
+    prove!("4*f <= l" => ProofResult::True);
+    prove!("4*g <= l" => ProofResult::True);
+    prove!("4*g + 4*f <= 2*l" => ProofResult::True);
+    prove!("2*g + 2*f <= l" => ProofResult::True);
+    prove!("g + f <= l/2" => ProofResult::True);
+    prove!("l <= y" => ProofResult::True);
+    prove!("y <= l" => ProofResult::True);
+    // FIXME FIXME prove!("g + f <= l/4" => ProofResult::Undetermined);
+    prove!("g + f + b/2 <= l" => ProofResult::True);
+    prove!("g + f + b/2 >= l" => ProofResult::True);
+    // FIXME prove!("g + f + b <= l" => ProofResult::False);
+    // FIXME prove!("g + f + 2*b <= l" => ProofResult::False);
+    prove!("l <= z" => ProofResult::True);
+    prove!("z <= l" => ProofResult::True);
+    prove!("z <= y" => ProofResult::True);
+    // FIXME prove!("y <= z" => ProofResult::True);
+    prove!("b <= f + b/2 + g" => ProofResult::True);
+    prove!("b/2 <= f + g" => ProofResult::True);
+    prove!("b <= 2*f + 2*g" => ProofResult::True);
+    prove!("l <= 2*f + 2*g" => ProofResult::True);
+    prove!("c+d <= 2*f + 2*g" => ProofResult::True);
+    prove!("c+d-1 <= 2*f + 2*g" => ProofResult::True);
+    prove!("c+d-2 <= 2*f + 2*g" => ProofResult::True);
+    prove!("c+d+1 <= 2*f + 2*g" => ProofResult::Undetermined);
+    prove!("c+d+2 <= 2*f + 2*g" => ProofResult::Undetermined);
+    // TODO Properly check this prove!("l >= 2*f + 2*g" => ProofResult::True);
+    prove!("l <= 2*f + 2*g" => ProofResult::True);
 
-    prove!(prover: "5 >= 3*x" => ProofResult::Undetermined);
-    prove!(prover: "6 >= 3*x" => ProofResult::True);
-    prove!(prover: "7 >= 3*x" => ProofResult::True);
+    prove!("5 >= 3*x" => ProofResult::Undetermined);
+    prove!("6 >= 3*x" => ProofResult::True);
+    prove!("7 >= 3*x" => ProofResult::True);
 
-    prove!(prover: "6 >= 2*x" => ProofResult::True);
-    prove!(prover: "6 >= 4*x" => ProofResult::Undetermined);
-    prove!(prover: "6 >= 4*x - x/2" => ProofResult::Undetermined);
-    prove!(prover: "6 >= 4*x - 2*x/2" => ProofResult::True);
+    prove!("6 >= 2*x" => ProofResult::True);
+    prove!("6 >= 4*x" => ProofResult::Undetermined);
+    prove!("6 >= 4*x - x/2" => ProofResult::Undetermined);
+    prove!("6 >= 4*x - 2*x/2" => ProofResult::True);
 
-    prove!(prover: "x <= y+3" => ProofResult::True);
-    prove!(prover: "x <= y+2" => ProofResult::True);
-    prove!(prover: "x <= y+1" => ProofResult::True);
-    prove!(prover: "x <= y" => ProofResult::Undetermined);
-    prove!(prover: "x <= y+4" => ProofResult::True);
-    prove!(prover: "x-1 <= y+2" => ProofResult::True);
+    prove!("x <= y+3" => ProofResult::True);
+    prove!("x <= y+2" => ProofResult::True);
+    prove!("x <= y+1" => ProofResult::True);
+    prove!("x <= y" => ProofResult::Undetermined);
+    prove!("x <= y+4" => ProofResult::True);
+    prove!("x-1 <= y+2" => ProofResult::True);
 
-    prove!(prover: "x <= 2*f+2*g+b" => ProofResult::True);
-    prove!(prover: "x+1 <= 2*f+2*g+b" => ProofResult::Undetermined);
-    prove!(prover: "x-2 <= 2*f+2*g+b" => ProofResult::True);
+    prove!("x <= 2*f+2*g+b" => ProofResult::True);
+    prove!("x+1 <= 2*f+2*g+b" => ProofResult::Undetermined);
+    prove!("x-2 <= 2*f+2*g+b" => ProofResult::True);
+
+    cleanup!()
 }
 
 #[test]
 fn real_world_example() {
+    let prover;
+
     requirements!(let reqs = [
         // So we're taking an array with a non-negative length
         "0 <= len",
@@ -500,38 +543,42 @@ fn real_world_example() {
         // This will be used later.
         "start <= i2-1",
         "i2-1 <= end",
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(3);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
     // So, we want to index with i and j!
-    prove!(prover: "i >= 0" => ProofResult::True);
-    prove!(prover: "i <= len-1" => ProofResult::True);
-    prove!(prover: "j >= 0" => ProofResult::True);
-    prove!(prover: "j <= len-1" => ProofResult::True);
+    prove!("i >= 0" => ProofResult::True);
+    prove!("i <= len-1" => ProofResult::True);
+    prove!("j >= 0" => ProofResult::True);
+    prove!("j <= len-1" => ProofResult::True);
 
     // Some different bounds tests
-    prove!(prover: "1 <= i" => ProofResult::Undetermined);
-    prove!(prover: "0-1 <= i" => ProofResult::True);
-    prove!(prover: "i <= len" => ProofResult::True);
-    prove!(prover: "i <= len-2" => ProofResult::Undetermined);
+    prove!("1 <= i" => ProofResult::Undetermined);
+    prove!("0-1 <= i" => ProofResult::True);
+    prove!("i <= len" => ProofResult::True);
+    prove!("i <= len-2" => ProofResult::Undetermined);
 
     // But now, we actually want to index i-1, this should clearly fail.
-    prove!(prover: "i-1 >= 0" => ProofResult::Undetermined);
+    prove!("i-1 >= 0" => ProofResult::Undetermined);
     // (This is still fine though)
-    prove!(prover: "i-1 <= len-1" => ProofResult::True);
+    prove!("i-1 <= len-1" => ProofResult::True);
     // To solve this, we could change the requirements on i.
     // i2 has the correct requirements:
-    prove!(prover: "i2-1 >= 0" => ProofResult::True);
-    prove!(prover: "i2-1 <= len-1" => ProofResult::True);
+    prove!("i2-1 >= 0" => ProofResult::True);
+    prove!("i2-1 <= len-1" => ProofResult::True);
 
     // YAY!
+
+    cleanup!()
 }
 
 #[test]
 fn really_long_chain() {
+    let prover;
+
     requirements!(let reqs = [
         "a <= b",
         "b <= c",
@@ -558,30 +605,34 @@ fn really_long_chain() {
         "w <= x",
         "x <= y",
         "y <= z",
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(26);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
-    prove!(prover: "a <= z" => ProofResult::True);
-    prove!(prover: "a+1 <= z" => ProofResult::Undetermined);
-    prove!(prover: "a+1 >= z" => ProofResult::Undetermined);
-    prove!(prover: "a+1 <= z+1" => ProofResult::True);
-    prove!(prover: "a+1 >= z+1" => ProofResult::Undetermined);
-    prove!(prover: "a <= 2*z" => ProofResult::Undetermined);
-    prove!(prover: "a*2 <= 2*z" => ProofResult::True);
-    prove!(prover: "a*2 >= 2*z" => ProofResult::Undetermined);
-    prove!(prover: "a >= z" => ProofResult::Undetermined);
-    prove!(prover: "0-a >= 0-z" => ProofResult::True);
-    prove!(prover: "0-a <= 0-z" => ProofResult::Undetermined);
+    prove!("a <= z" => ProofResult::True);
+    prove!("a+1 <= z" => ProofResult::Undetermined);
+    prove!("a+1 >= z" => ProofResult::Undetermined);
+    prove!("a+1 <= z+1" => ProofResult::True);
+    prove!("a+1 >= z+1" => ProofResult::Undetermined);
+    prove!("a <= 2*z" => ProofResult::Undetermined);
+    prove!("a*2 <= 2*z" => ProofResult::True);
+    prove!("a*2 >= 2*z" => ProofResult::Undetermined);
+    prove!("a >= z" => ProofResult::Undetermined);
+    prove!("0-a >= 0-z" => ProofResult::True);
+    prove!("0-a <= 0-z" => ProofResult::Undetermined);
 
-    prove!(prover: "d <= f" => ProofResult::True);
-    prove!(prover: "d >= f" => ProofResult::Undetermined);
+    prove!("d <= f" => ProofResult::True);
+    prove!("d >= f" => ProofResult::Undetermined);
+
+    cleanup!()
 }
 
 #[test]
 fn really_long_cycle() {
+    let prover;
+
     requirements!(let reqs = [
         "a <= b",
         "b <= c",
@@ -609,31 +660,35 @@ fn really_long_cycle() {
         "x <= y",
         "y <= z",
         "z <= a",
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(30);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
-    prove!(prover: "a <= z" => ProofResult::True);
-    prove!(prover: "z <= a" => ProofResult::True);
-    prove!(prover: "a+1 <= z" => ProofResult::False);
-    prove!(prover: "a+1 >= z" => ProofResult::True);
-    prove!(prover: "a+1 <= z+1" => ProofResult::True);
-    prove!(prover: "a+1 >= z+1" => ProofResult::True);
-    prove!(prover: "a <= 2*z" => ProofResult::Undetermined);
-    prove!(prover: "a*2 <= 2*z" => ProofResult::True);
-    prove!(prover: "a*2 >= 2*z" => ProofResult::True);
-    prove!(prover: "a >= z" => ProofResult::True);
-    prove!(prover: "0-a >= 0-z" => ProofResult::True);
-    prove!(prover: "0-a <= 0-z" => ProofResult::True);
+    prove!("a <= z" => ProofResult::True);
+    prove!("z <= a" => ProofResult::True);
+    prove!("a+1 <= z" => ProofResult::False);
+    prove!("a+1 >= z" => ProofResult::True);
+    prove!("a+1 <= z+1" => ProofResult::True);
+    prove!("a+1 >= z+1" => ProofResult::True);
+    prove!("a <= 2*z" => ProofResult::Undetermined);
+    prove!("a*2 <= 2*z" => ProofResult::True);
+    prove!("a*2 >= 2*z" => ProofResult::True);
+    prove!("a >= z" => ProofResult::True);
+    prove!("0-a >= 0-z" => ProofResult::True);
+    prove!("0-a <= 0-z" => ProofResult::True);
 
-    prove!(prover: "d <= f" => ProofResult::True);
-    prove!(prover: "d >= f" => ProofResult::True);
+    prove!("d <= f" => ProofResult::True);
+    prove!("d >= f" => ProofResult::True);
+
+    cleanup!()
 }
 
 #[test]
 fn linked_cycles() {
+    let prover;
+
     requirements!(let reqs = [
         "a <= b",
         "b <= c",
@@ -663,45 +718,48 @@ fn linked_cycles() {
         "y <= z",
         "z <= p",
         // a = b = ... = k <= l <= m <= n <= o <= p = q = ... = z
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(26);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
-    prove!(prover: "a <= z" => ProofResult::True);
-    prove!(prover: "z <= a" => ProofResult::Undetermined);
+    prove!("a <= z" => ProofResult::True);
+    prove!("z <= a" => ProofResult::Undetermined);
 
-    prove!(prover: "a <= k" => ProofResult::True);
-    prove!(prover: "k <= a" => ProofResult::True);
-    prove!(prover: "b <= k" => ProofResult::True);
-    prove!(prover: "k <= b" => ProofResult::True);
-    prove!(prover: "a <= j" => ProofResult::True);
-    prove!(prover: "j <= a" => ProofResult::True);
-    prove!(prover: "b <= j" => ProofResult::True);
-    prove!(prover: "j <= b" => ProofResult::True);
+    prove!("a <= k" => ProofResult::True);
+    prove!("k <= a" => ProofResult::True);
+    prove!("b <= k" => ProofResult::True);
+    prove!("k <= b" => ProofResult::True);
+    prove!("a <= j" => ProofResult::True);
+    prove!("j <= a" => ProofResult::True);
+    prove!("b <= j" => ProofResult::True);
+    prove!("j <= b" => ProofResult::True);
 
-    prove!(prover: "a <= l" => ProofResult::True);
-    prove!(prover: "l <= a" => ProofResult::Undetermined);
+    prove!("a <= l" => ProofResult::True);
+    prove!("l <= a" => ProofResult::Undetermined);
 
-    prove!(prover: "p <= z" => ProofResult::True);
-    prove!(prover: "z <= p" => ProofResult::True);
-    prove!(prover: "q <= z" => ProofResult::True);
-    prove!(prover: "z <= q" => ProofResult::True);
-    prove!(prover: "p <= x" => ProofResult::True);
-    prove!(prover: "x <= p" => ProofResult::True);
-    prove!(prover: "q <= y" => ProofResult::True);
-    prove!(prover: "y <= q" => ProofResult::True);
+    prove!("p <= z" => ProofResult::True);
+    prove!("z <= p" => ProofResult::True);
+    prove!("q <= z" => ProofResult::True);
+    prove!("z <= q" => ProofResult::True);
+    prove!("p <= x" => ProofResult::True);
+    prove!("x <= p" => ProofResult::True);
+    prove!("q <= y" => ProofResult::True);
+    prove!("y <= q" => ProofResult::True);
 
-    prove!(prover: "o <= z" => ProofResult::True);
-    prove!(prover: "z <= o" => ProofResult::Undetermined);
-    prove!(prover: "b <= z" => ProofResult::True);
-    prove!(prover: "z <= b" => ProofResult::Undetermined);
+    prove!("o <= z" => ProofResult::True);
+    prove!("z <= o" => ProofResult::Undetermined);
+    prove!("b <= z" => ProofResult::True);
+    prove!("z <= b" => ProofResult::Undetermined);
+
+    cleanup!()
 }
-
 
 #[test]
 fn linked_cycles_2() {
+    let prover;
+
     requirements!(let reqs = [
         "a <= b",
         "b <= c",
@@ -734,51 +792,54 @@ fn linked_cycles_2() {
         
         "m <= a",
         // a = b = .. = m <= n <= o <= p = q = .. z
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(26);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
-    prove!(prover: "a <= z" => ProofResult::True);
-    prove!(prover: "z <= a" => ProofResult::Undetermined);
+    prove!("a <= z" => ProofResult::True);
+    prove!("z <= a" => ProofResult::Undetermined);
 
-    prove!(prover: "a <= k" => ProofResult::True);
-    prove!(prover: "k <= a" => ProofResult::True);
-    prove!(prover: "b <= k" => ProofResult::True);
-    prove!(prover: "k <= b" => ProofResult::True);
-    prove!(prover: "a <= j" => ProofResult::True);
-    prove!(prover: "j <= a" => ProofResult::True);
-    prove!(prover: "b <= j" => ProofResult::True);
-    prove!(prover: "j <= b" => ProofResult::True);
+    prove!("a <= k" => ProofResult::True);
+    prove!("k <= a" => ProofResult::True);
+    prove!("b <= k" => ProofResult::True);
+    prove!("k <= b" => ProofResult::True);
+    prove!("a <= j" => ProofResult::True);
+    prove!("j <= a" => ProofResult::True);
+    prove!("b <= j" => ProofResult::True);
+    prove!("j <= b" => ProofResult::True);
 
-    prove!(prover: "a <= l" => ProofResult::True);
-    prove!(prover: "l <= a" => ProofResult::True);
-    prove!(prover: "a <= m" => ProofResult::True);
-    prove!(prover: "m <= a" => ProofResult::True);
-    prove!(prover: "a <= n" => ProofResult::True);
-    prove!(prover: "n <= a" => ProofResult::Undetermined);
+    prove!("a <= l" => ProofResult::True);
+    prove!("l <= a" => ProofResult::True);
+    prove!("a <= m" => ProofResult::True);
+    prove!("m <= a" => ProofResult::True);
+    prove!("a <= n" => ProofResult::True);
+    prove!("n <= a" => ProofResult::Undetermined);
 
-    prove!(prover: "p <= z" => ProofResult::True);
-    prove!(prover: "z <= p" => ProofResult::True);
-    prove!(prover: "q <= z" => ProofResult::True);
-    prove!(prover: "z <= q" => ProofResult::True);
-    prove!(prover: "p <= x" => ProofResult::True);
-    prove!(prover: "x <= p" => ProofResult::True);
-    prove!(prover: "q <= y" => ProofResult::True);
-    prove!(prover: "y <= q" => ProofResult::True);
+    prove!("p <= z" => ProofResult::True);
+    prove!("z <= p" => ProofResult::True);
+    prove!("q <= z" => ProofResult::True);
+    prove!("z <= q" => ProofResult::True);
+    prove!("p <= x" => ProofResult::True);
+    prove!("x <= p" => ProofResult::True);
+    prove!("q <= y" => ProofResult::True);
+    prove!("y <= q" => ProofResult::True);
 
-    prove!(prover: "o <= z" => ProofResult::True);
-    prove!(prover: "z <= o" => ProofResult::Undetermined);
-    prove!(prover: "m <= z" => ProofResult::True);
-    prove!(prover: "z <= m" => ProofResult::Undetermined);
-    prove!(prover: "b <= z" => ProofResult::True);
-    prove!(prover: "z <= b" => ProofResult::Undetermined);
+    prove!("o <= z" => ProofResult::True);
+    prove!("z <= o" => ProofResult::Undetermined);
+    prove!("m <= z" => ProofResult::True);
+    prove!("z <= m" => ProofResult::Undetermined);
+    prove!("b <= z" => ProofResult::True);
+    prove!("z <= b" => ProofResult::Undetermined);
+
+    cleanup!()
 }
-
 
 #[test]
 fn linked_cycles_3() {
+    let prover;
+
     requirements!(let reqs = [
         "a <= b",
         "b <= c",
@@ -811,25 +872,27 @@ fn linked_cycles_3() {
         
         "p <= a",
         // a = b = .. z
-    ]);
+    ], macro_rules! prove, prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(26);
-    let prover = FullProver::from(bounds_prover);
+    prover = FullProver::from(bounds_prover);
 
-    prove!(prover: "a <= z" => ProofResult::True);
-    prove!(prover: "z <= a" => ProofResult::True);
-    prove!(prover: "a+1 <= z" => ProofResult::False);
-    prove!(prover: "a+1 >= z" => ProofResult::True);
-    prove!(prover: "a+1 <= z+1" => ProofResult::True);
-    prove!(prover: "a+1 >= z+1" => ProofResult::True);
-    prove!(prover: "a <= 2*z" => ProofResult::Undetermined);
-    prove!(prover: "a*2 <= 2*z" => ProofResult::True);
-    prove!(prover: "a*2 >= 2*z" => ProofResult::True);
-    prove!(prover: "a >= z" => ProofResult::True);
-    prove!(prover: "0-a >= 0-z" => ProofResult::True);
-    prove!(prover: "0-a <= 0-z" => ProofResult::True);
+    prove!("a <= z" => ProofResult::True);
+    prove!("z <= a" => ProofResult::True);
+    prove!("a+1 <= z" => ProofResult::False);
+    prove!("a+1 >= z" => ProofResult::True);
+    prove!("a+1 <= z+1" => ProofResult::True);
+    prove!("a+1 >= z+1" => ProofResult::True);
+    prove!("a <= 2*z" => ProofResult::Undetermined);
+    prove!("a*2 <= 2*z" => ProofResult::True);
+    prove!("a*2 >= 2*z" => ProofResult::True);
+    prove!("a >= z" => ProofResult::True);
+    prove!("0-a >= 0-z" => ProofResult::True);
+    prove!("0-a <= 0-z" => ProofResult::True);
 
-    prove!(prover: "d <= f" => ProofResult::True);
-    prove!(prover: "d >= f" => ProofResult::True);
+    prove!("d <= f" => ProofResult::True);
+    prove!("d >= f" => ProofResult::True);
+
+    cleanup!()
 }
