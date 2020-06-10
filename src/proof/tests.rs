@@ -14,7 +14,7 @@ macro_rules! requirements {
         )*
     };
 
-    (let $name:ident = [$($strings:expr),+$(,)?], macro_rules! $prove:ident, $prover:ident) => {
+    (let $name:ident = [$($strings:expr),+$(,)?], $prover:ident) => {
         let mut $name = Vec::new();
         requirements!(append($name; $($strings),*));
         let $name = $name;
@@ -22,7 +22,7 @@ macro_rules! requirements {
         // A 4-tuple of of: (is_contra, stmt, result, expected)
         let mut errors = <Vec<(bool, &'static str, ProofResult, ProofResult)>>::new();
 
-        macro_rules! $prove {
+        macro_rules! prove {
             ($stmt:expr => $expected:expr) => {
                 let tokens = tokenize($stmt);
                 let cond = Condition::parse(&tokens).unwrap();
@@ -75,7 +75,7 @@ fn example_test() {
         "x+y <= 10",
         "2*y <= 17",
         "x/2+y >= 1",
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs.clone());
     // We can garentee that this will be worst case O(n^4)
@@ -173,7 +173,7 @@ fn test_3_vars_different_coeffs() {
         "x <= y+3",
         "x <= 2*y",
         "y <= z+2",
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     // We can garentee that this will be worst case O(n^3)
@@ -193,7 +193,7 @@ fn test_3_variables_different_coeffs_2() {
         "x <= y+3",
         "x <= 2*y",
         "y <= z/2+2",
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     // We can garentee that this will be worst case O(n^3)
@@ -216,7 +216,7 @@ fn test_3_variables() {
         "y <= 7-z",
         "0-1 <= z",
         "z <= 3",
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(4);
@@ -269,7 +269,7 @@ fn test_3_variables_2() {
         "0-1 <= z",
         "z <= 3",
         "z <= x",
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(4);
@@ -337,7 +337,7 @@ fn test_lots_of_variables() {
 
         // TODO Do we need this?
         "y >= 0",
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs.clone());
     bounds_prover.set_max_depth(5);
@@ -455,7 +455,7 @@ fn new_tests<'a>() {
         "f >= 0",
         "g >= 0",
         "l >= 0",
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(7);
@@ -543,7 +543,7 @@ fn real_world_example() {
         // This will be used later.
         "start <= i2-1",
         "i2-1 <= end",
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(3);
@@ -605,7 +605,7 @@ fn really_long_chain() {
         "w <= x",
         "x <= y",
         "y <= z",
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(26);
@@ -660,7 +660,7 @@ fn really_long_cycle() {
         "x <= y",
         "y <= z",
         "z <= a",
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(30);
@@ -718,7 +718,7 @@ fn linked_cycles() {
         "y <= z",
         "z <= p",
         // a = b = ... = k <= l <= m <= n <= o <= p = q = ... = z
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(26);
@@ -792,7 +792,7 @@ fn linked_cycles_2() {
 
         "m <= a",
         // a = b = .. = m <= n <= o <= p = q = .. z
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(26);
@@ -872,7 +872,7 @@ fn linked_cycles_3() {
 
         "p <= a",
         // a = b = .. z
-    ], macro_rules! prove, prover);
+    ], prover);
 
     let mut bounds_prover = BoundsProver::new(reqs);
     bounds_prover.set_max_depth(26);
