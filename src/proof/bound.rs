@@ -1,5 +1,5 @@
 use super::expr::{Atom, Expr, ZERO};
-use super::optimiser::{bound_sub, Maximizer, Minimizer};
+use super::optimiser::bound_sub;
 use crate::ast::Ident;
 use std::fmt;
 
@@ -185,7 +185,7 @@ impl<'a> Relation<'a> {
             .rearrange_unsafe(subject),
 
             // Recip both sides to unwrap this Recip
-            Recip(term, rounding) => Relation {
+            Recip(term, _rounding) => Relation {
                 left: *term.clone(),
                 relation: self.relation.opposite(),
                 // When you implement this todo, make sure you check the sign!
@@ -218,9 +218,12 @@ impl<'a> Relation<'a> {
         })
     }
 
+    /// Returns the bound on `name` given by self if it exists and can be computed.
     pub fn bounds_on(&self, name: Ident<'a>) -> Option<Bound<'a>> {
         let name_expr = Expr::Atom(Atom::Named(name));
 
+        // These will form the Relation that we will solve.
+        // This must end up satisfying the preconditions on bounds_on_unsafe.
         let lhs;
         let relation;
         let rhs;
@@ -257,6 +260,7 @@ impl<'a> Relation<'a> {
         .bounds_on_unsafe(&name_expr)
     }
 
+    /// Returns a list of all the bounds that can be computed from self.
     pub fn bounds(&self) -> Vec<DescriptiveBound<'a>> {
         let mut variables = self.left.variables();
         variables.extend(self.right.variables());
@@ -280,6 +284,7 @@ impl<'a> DescriptiveBound<'a> {
         self.subject != other.subject || self.bound.relation_kind() != other.bound.relation_kind()
     }
 
+    /// Simplifies the bound expression and returns the result.
     pub fn simplify(&self) -> DescriptiveBound<'a> {
         DescriptiveBound {
             subject: self.subject,
@@ -287,11 +292,9 @@ impl<'a> DescriptiveBound<'a> {
         }
     }
 
+    /// Try substituting sub in to self and return the result.
     pub fn sub(&self, sub: &DescriptiveBound<'a>) -> Option<DescriptiveBound<'a>> {
-        Some(match self.bound {
-            Bound::Le(_) => bound_sub(self, &sub)?,
-            Bound::Ge(_) => bound_sub(self, &sub)?,
-        })
+        bound_sub(self, &sub)
     }
 }
 

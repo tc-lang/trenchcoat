@@ -699,7 +699,6 @@ fn linked_cycles() {
     prove!(prover: "z <= b" => ProofResult::Undetermined);
 }
 
-
 #[test]
 fn linked_cycles_2() {
     requirements!(let reqs = [
@@ -731,7 +730,7 @@ fn linked_cycles_2() {
         "y <= z",
         "z <= p",
         // a = b = ... = k <= l <= m <= n <= o <= p = q = ... = z
-        
+
         "m <= a",
         // a = b = .. = m <= n <= o <= p = q = .. z
     ]);
@@ -776,7 +775,6 @@ fn linked_cycles_2() {
     prove!(prover: "z <= b" => ProofResult::Undetermined);
 }
 
-
 #[test]
 fn linked_cycles_3() {
     requirements!(let reqs = [
@@ -808,7 +806,7 @@ fn linked_cycles_3() {
         "y <= z",
         "z <= p",
         // a = b = ... = k <= l <= m <= n <= o <= p = q = ... = z
-        
+
         "p <= a",
         // a = b = .. z
     ]);
