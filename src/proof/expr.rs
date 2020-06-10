@@ -1,4 +1,4 @@
-use super::int::Int;
+use super::int::{EvalInt, Int, Rational};
 use crate::ast::{self, Ident};
 use std::fmt;
 
@@ -18,7 +18,7 @@ pub enum Expr<'a> {
     Neg(Box<Expr<'a>>),
 
     /// 1/e
-    Recip(Box<Expr<'a>>),
+    Recip(Box<Expr<'a>>, bool),
 
     /// e[0] + e[1] + ...
     Sum(Vec<Expr<'a>>),
@@ -35,13 +35,13 @@ pub enum Atom<'a> {
     // Places where this order is assumed should be marked with `ATOM ORDER ASSUMED` similar to
     // Expr.
     Named(Ident<'a>),
-    Literal(Int),
+    Literal(Rational),
 }
 
 /// An expression with the literal value 0
-pub const ZERO: Expr = Expr::Atom(Atom::Literal(Int::ZERO));
+pub const ZERO: Expr = Expr::Atom(Atom::Literal(Rational::ZERO));
 /// An expression with the literal value 1
-pub const ONE: Expr = Expr::Atom(Atom::Literal(Int::ONE));
+pub const ONE: Expr = Expr::Atom(Atom::Literal(Rational::ONE));
 
 impl<'b, 'a: 'b> Expr<'a> {
     /// Returns true if the expressions are equal or if their simplified values are equal.
@@ -52,6 +52,32 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// are always simplified.
     pub fn simplify_eq(&self, other: &Expr<'a>) -> bool {
         self.eq(other) || self.simplify() == other.simplify()
+    }
+
+    pub fn switch_rounding_mode(&self) -> Expr<'a> {
+        match self {
+            Expr::Recip(inner_expr, rounding_mode) => {
+                Expr::Recip(inner_expr.clone(), !rounding_mode)
+            }
+            _ => self.clone(),
+        }
+    }
+
+    pub fn switch_all_rounding_modes(&self) -> Expr<'a> {
+        match self {
+            Expr::Recip(inner_expr, rounding_mode) => Expr::Recip(
+                Box::new(inner_expr.switch_all_rounding_modes()),
+                !*rounding_mode,
+            ),
+            Expr::Sum(terms) => {
+                Expr::Sum(terms.iter().map(Expr::switch_all_rounding_modes).collect())
+            }
+            Expr::Prod(terms) => {
+                Expr::Prod(terms.iter().map(Expr::switch_all_rounding_modes).collect())
+            }
+            Expr::Neg(inner) => Expr::Neg(Box::new(inner.switch_all_rounding_modes())),
+            Expr::Atom(_) => self.clone(),
+        }
     }
 
     /// Returns a simplified version of self.
@@ -72,6 +98,9 @@ impl<'b, 'a: 'b> Expr<'a> {
         let simplified = self.simplify_run();
         if *self != simplified {
             let simplified2 = simplified.simplify();
+            if simplified2 == ZERO {
+                //println!("{} -> 0", self);
+            }
             if simplified != simplified2 {
                 // If simplifying again gives us a different result, we should log the error since
                 // we don't want this to happen.
@@ -95,7 +124,7 @@ impl<'b, 'a: 'b> Expr<'a> {
 
             // Convert negative literals in to Neg(<positive literal>)
             Expr::Atom(Atom::Literal(x)) => {
-                if *x < Int::ZERO {
+                if *x < Rational::ZERO {
                     Neg(Box::new(Expr::Atom(Atom::Literal(-*x))))
                 } else {
                     self.clone()
@@ -103,9 +132,6 @@ impl<'b, 'a: 'b> Expr<'a> {
             }
 
             Neg(expr) => match expr.simplify() {
-                // -0 = 0
-                ZERO => ZERO,
-
                 // -(-x) = x
                 Neg(inner_expr) => *inner_expr,
 
@@ -119,7 +145,14 @@ impl<'b, 'a: 'b> Expr<'a> {
                 // Neg(...), for example Neg(Neg(x)) = x.
                 // Just calling simplify will also try to simplify the other, already simplified
                 // terms though. This is inefficient but ok for now.
-                new_expr => Neg(Box::new(new_expr)),
+                new_expr => {
+                    // -0 = 0
+                    if new_expr == ZERO {
+                        ZERO
+                    } else {
+                        Neg(Box::new(new_expr))
+                    }
+                }
             },
 
             Sum(terms) => {
@@ -204,6 +237,14 @@ impl<'b, 'a: 'b> Expr<'a> {
                             .map(|term| {
                                 // Clone the terms to multiply with
                                 let mut these_terms = new_terms.clone();
+                                // TODO
+                                /*if let Expr::Neg(_) = term {
+                                    these_terms = these_terms
+                                        .iter()
+                                        // TODO Swith just 1 or all?
+                                        .map(Self::switch_rounding_mode)
+                                        .collect();
+                                }*/
                                 // Multiply with the current term in the sum
                                 these_terms.push(term.clone());
                                 // Produce the expression
@@ -253,12 +294,12 @@ impl<'b, 'a: 'b> Expr<'a> {
                 }
             }
 
-            Recip(expr) => match expr.simplify() {
+            Recip(expr, rounding) => match expr.simplify() {
                 // 1/(1/x) = x
-                Recip(inner_expr) => *inner_expr,
+                Recip(inner_expr, _) => *inner_expr,
 
                 // 1/(-x) = -(1/x)
-                Neg(inner_expr) => Neg(Box::new(Recip(inner_expr).simplify())),
+                Neg(inner_expr) => Neg(Box::new(Recip(inner_expr, *rounding).simplify())),
                 // TODO Similar to the TODO in some, calling simplify on the new expression could
                 // be optimised. The same applies to the case below too.
 
@@ -266,11 +307,13 @@ impl<'b, 'a: 'b> Expr<'a> {
                 Prod(terms) => Prod(
                     terms
                         .iter()
-                        .map(|term| Recip(Box::new(term.clone())).simplify())
+                        .map(|term| Recip(Box::new(term.clone()), *rounding).simplify())
                         .collect(),
                 ),
 
-                new_expr => Recip(Box::new(new_expr)),
+                Expr::Atom(Atom::Literal(x)) => Expr::Atom(Atom::Literal(Rational::ONE / x)),
+
+                new_expr => Recip(Box::new(new_expr), *rounding),
             },
         }
     }
@@ -357,7 +400,7 @@ impl<'b, 'a: 'b> Expr<'a> {
     ///
     /// This assumes that the terms in any products in self are sorted and that there are no nested
     /// products - these assumptions can be made in the context of a simplifier.
-    fn get_number_and_term(&self) -> (Int, Expr<'a>) {
+    fn get_number_and_term(&self) -> (Rational, Expr<'a>) {
         use Expr::{Neg, Prod};
         match self {
             // Allow for negative coefficients
@@ -379,10 +422,10 @@ impl<'b, 'a: 'b> Expr<'a> {
                     _ => None,
                 })
                 // By default, it's just 1 * self
-                .unwrap_or_else(|| (Int::ONE, self.clone())),
+                .unwrap_or_else(|| (Rational::ONE, self.clone())),
 
             //Again, the default case.
-            _ => (Int::ONE, self.clone()),
+            _ => (Rational::ONE, self.clone()),
         }
     }
 
@@ -418,7 +461,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                         let y = *y;
 
                         let res = y - x;
-                        if res < Int::ZERO {
+                        if res < Rational::ZERO {
                             // Keep literals positive
                             Some(Neg(Box::new(Expr::Atom(Atom::Literal(-res)))))
                         } else {
@@ -463,7 +506,8 @@ impl<'b, 'a: 'b> Expr<'a> {
     fn mul_simplify(&self, other: &Expr<'a>) -> Option<Expr<'a>> {
         use Expr::Recip;
         match self {
-            Recip(expr) => match &**expr {
+            Recip(expr, rounding) => match &**expr {
+                /*
                 Expr::Atom(Atom::Literal(x)) => match other {
                     // (1/x) * y = y/x for literals if there's no rounding
                     Expr::Atom(Atom::Literal(y)) => {
@@ -479,21 +523,36 @@ impl<'b, 'a: 'b> Expr<'a> {
                         if res * x == y {
                             Some(Expr::Atom(Atom::Literal(res)))
                         } else {
-                            None
+                            let res = x / y;
+                            if res * y == x {
+                                Some(Expr::Recip(
+                                    Box::new(Expr::Atom(Atom::Literal(res))),
+                                    *rounding,
+                                ))
+                            } else {
+                                None
+                            }
                         }
                     }
 
-                    Recip(other_expr) => match &**other_expr {
+                    Recip(other_expr, inner_rounding) => match &**other_expr {
                         // (1/x) * (1/y) = 1/(x*y) for literals
                         Expr::Atom(Atom::Literal(y)) => {
-                            Some(Recip(Box::new(Expr::Atom(Atom::Literal((*x) * (*y))))))
+                            if *rounding == *inner_rounding {
+                                Some(Recip(
+                                    Box::new(Expr::Atom(Atom::Literal((*x) * (*y)))),
+                                    *rounding,
+                                ))
+                            } else {
+                                None
+                            }
                         }
                         _ => None,
                     },
 
                     _ => None,
                 },
-
+                */
                 // (1/x) * x = 1
                 // TODO Consider 0s.
                 // I think we shouldn't allow a possibly 0 value in a denominator but we must make
@@ -525,7 +584,7 @@ impl<'b, 'a: 'b> Expr<'a> {
         }
         match self {
             Sum(terms) | Prod(terms) => terms.iter().find(|term| term.contains(expr)).is_some(),
-            Neg(term) | Recip(term) => term.contains(expr),
+            Neg(term) | Recip(term, _) => term.contains(expr),
             Expr::Atom(_) => false, // This will have been checked at the comparison at the start.
         }
     }
@@ -597,9 +656,10 @@ impl<'b, 'a: 'b> Expr<'a> {
             Neg(term) => Some(Neg(Box::new(term.factor(expr)?))),
 
             // We can take the Recip factor out of a Recip
-            Recip(term) => Some(Recip(Box::new(
-                term.factor(&Recip(Box::new(expr.clone())))?,
-            ))),
+            Recip(term, rounding) => Some(Recip(
+                Box::new(term.factor(&Recip(Box::new(expr.clone()), *rounding))?),
+                *rounding,
+            )),
 
             // An Atom can't be factored. Note that if expr is this Atom then it would have been
             // handled earlier.
@@ -656,7 +716,7 @@ impl<'b, 'a: 'b> Expr<'a> {
             }
 
             Neg(term) => Some(Neg(Box::new(term.single_x(expr)?))),
-            Recip(term) => Some(Recip(Box::new(term.single_x(expr)?))),
+            Recip(term, rounding) => Some(Recip(Box::new(term.single_x(expr)?), *rounding)),
 
             Expr::Atom(_) => None,
         }
@@ -666,7 +726,7 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// This list will returns duplicated atoms
     pub fn atoms(&'b self) -> Vec<&'b Atom<'a>> {
         match self {
-            Expr::Neg(inner_expr) | Expr::Recip(inner_expr) => inner_expr.atoms(),
+            Expr::Neg(inner_expr) | Expr::Recip(inner_expr, _) => inner_expr.atoms(),
             Expr::Sum(terms) | Expr::Prod(terms) => {
                 terms.iter().map(Self::atoms).flatten().collect()
             }
@@ -709,7 +769,9 @@ impl<'b, 'a: 'b> Expr<'a> {
             }
 
             Expr::Neg(term) => Expr::Neg(Box::new(term.substitute(x, with))),
-            Expr::Recip(term) => Expr::Recip(Box::new(term.substitute(x, with))),
+            Expr::Recip(term, rounding) => {
+                Expr::Recip(Box::new(term.substitute(x, with)), *rounding)
+            }
         }
     }
 
@@ -721,10 +783,12 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// `div` is a function used for division. This can be used to determine the rounding
     /// direction.
     /// See also: `Self::eval2`
-    pub fn eval(&self, div: impl Fn(Int, Int) -> Int + Copy) -> Option<Int> {
-        self.eval2(div, div)
+    //pub fn eval(&self, div: impl Fn(Int, Int) -> Int + Copy) -> Option<Int> {
+    pub fn eval(&self) -> Option<EvalInt> {
+        self.eval_rat().map(Rational::eval_floor)
     }
 
+    /*
     /// Tries to evaluate self, rounding down for division.
     /// This calls `self.eval(Int::div_floor)`.
     pub fn eval_floor(&self) -> Option<Int> {
@@ -736,6 +800,55 @@ impl<'b, 'a: 'b> Expr<'a> {
     pub fn eval_ceil(&self) -> Option<Int> {
         self.eval(Int::div_ceil)
     }
+    */
+
+    /*
+    /// This is an extension of `eval`. See there for the main documentation.
+    ///
+    /// `div1` and `div2` are used for division.
+    /// `div1` is the primary choice but this is flipped for every Neg or Recip expression that the
+    /// division occurs witihin.
+    ///
+    /// The purpose if this is to find a minimum or maximum values that will satisfy something by
+    /// alternating between `Int::div_floor` and `Int::div_ceil`.
+    ///
+    /// See `eval_min` and `eval_max` which you are more likely to use.
+    fn eval2(
+        &self,
+        //div1: impl Fn(Int, Int) -> Int + Copy,
+        //div2: impl Fn(Int, Int) -> Int + Copy,
+    ) -> Option<EvalInt> {
+        match self {
+            Expr::Neg(inner_expr) => Some(-inner_expr.eval2()?),
+            Expr::Recip(inner_expr, false) => Some(EvalInt::ONE.div_floor(inner_expr.eval()?)),
+            Expr::Recip(inner_expr, true) => Some(EvalInt::ONE.div_ceil(inner_expr.eval()?)),
+
+            Expr::Sum(terms) => terms
+                .iter()
+                .map(|term| term.eval())
+                .fold(Some(EvalInt::ZERO), |sum, term| Some(sum? + term?)),
+            Expr::Prod(terms) => match terms.len() {
+                0 => Some(EvalInt::ONE),
+                1 => terms[0].eval(),
+                2 => match (&terms[0], &terms[1]) {
+                    (Expr::Recip(denominator, rounding), numerator) => Some(
+                        //div1(*x, y)
+                        if *rounding {
+                            numerator.eval()?.div_ceil(denominator.eval()?)
+                        } else {
+                            numerator.eval()?.div_floor(denominator.eval()?)
+                        },
+                    ),
+                    _ => None, //panic!(format!("eval expression is not simplified (case 2) {}", self)),
+                },
+                _ => None, //panic!("eval expression is not simplified (case 1)"),
+            },
+
+            Expr::Atom(Atom::Literal(x)) => Some((*x).into()),
+            Expr::Atom(Atom::Named(_)) => None,
+        }
+    }
+    */
 
     /// This is an extension of `eval`. See there for the main documentation.
     ///
@@ -747,35 +860,123 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// alternating between `Int::div_floor` and `Int::div_ceil`.
     ///
     /// See `eval_min` and `eval_max` which you are more likely to use.
-    pub fn eval2(
+    fn eval_rat(
         &self,
-        div1: impl Fn(Int, Int) -> Int + Copy,
-        div2: impl Fn(Int, Int) -> Int + Copy,
-    ) -> Option<Int> {
+        //div1: impl Fn(Int, Int) -> Int + Copy,
+        //div2: impl Fn(Int, Int) -> Int + Copy,
+    ) -> Option<Rational> {
         match self {
-            Expr::Neg(inner_expr) => Some(-inner_expr.eval2(div2, div1)?),
-            Expr::Recip(inner_expr) => Some(Int::ONE / inner_expr.eval2(div2, div1)?),
+            Expr::Neg(inner_expr) => Some(-inner_expr.eval_rat()?),
+            Expr::Recip(inner_expr, _) => Some(Rational::ONE / (inner_expr.eval_rat()?)),
 
             Expr::Sum(terms) => terms
                 .iter()
-                .map(|term| term.eval2(div1, div2))
-                .fold(Some(Int::ZERO), |sum, term| Some(sum? + term?)),
-            Expr::Prod(terms) => match terms.len() {
-                2 => match (&terms[0], &terms[1]) {
-                    (Expr::Recip(recip), Expr::Atom(Atom::Literal(x))) => match **recip {
-                        Expr::Atom(Atom::Literal(y)) => Some(div1(*x, y)),
-                        _ => None, //panic!("eval expression is not simplified (case 3)"),
-                    },
-                    _ => None, //panic!(format!("eval expression is not simplified (case 2) {}", self)),
-                },
-                _ => None, //panic!("eval expression is not simplified (case 1)"),
-            },
+                .map(|term| term.eval_rat())
+                .fold(Some(Rational::ZERO), |sum, term| Some(sum? + term?)),
+            Expr::Prod(terms) => terms
+                .iter()
+                .map(|term| term.eval_rat())
+                .fold(Some(Rational::ONE), |sum, term| Some(sum? * term?)),
 
-            Expr::Atom(Atom::Literal(x)) => Some(*x),
+            Expr::Atom(Atom::Literal(x)) => Some((*x).into()),
             Expr::Atom(Atom::Named(_)) => None,
         }
     }
 
+    fn group_recips(&self) -> Expr<'a> {
+        fn get_recip_inner_expr<'a>(expr: &Expr<'a>) -> Option<(Expr<'a>, bool, Expr<'a>)> {
+            match expr {
+                Expr::Recip(inner, rounding) => Some((*inner.clone(), *rounding, ONE)),
+                Expr::Prod(terms) => terms
+                    .iter()
+                    .enumerate()
+                    .find_map(|(idx, term)| match term {
+                        Expr::Recip(inner, rounding) => Some((*inner.clone(), *rounding, idx)),
+                        _ => None,
+                    })
+                    .map(|(denom, rounding, idx)| {
+                        (denom, rounding, {
+                            let mut new_terms = terms.clone();
+                            new_terms.remove(idx);
+                            Expr::Prod(new_terms)
+                        })
+                    }),
+                Expr::Neg(inner) => get_recip_inner_expr(inner)
+                    .map(|(denom, rounding, expr)| (denom, rounding, Expr::Neg(Box::new(expr)))),
+                // The expression is simplified so we don't need to bother checking sums since this
+                // will only be called with a sums terms.
+                Expr::Sum(_) | Expr::Atom(_) => None,
+            }
+        }
+
+        let sum_terms = match self {
+            Expr::Neg(inner) => return Expr::Neg(Box::new(inner.group_recips())),
+            Expr::Recip(inner, rounding) => {
+                return Expr::Recip(Box::new(inner.group_recips()), *rounding)
+            }
+            Expr::Prod(terms) => return Expr::Prod(terms.iter().map(Expr::group_recips).collect()),
+            Expr::Atom(_) => return self.clone(),
+            Expr::Sum(terms) => terms,
+        };
+        struct Meta<'a> {
+            expr: Expr<'a>,
+            denom: Option<(Expr<'a>, bool)>,
+        }
+        let mut sum_terms = sum_terms
+            .iter()
+            .map(|term| {
+                let (denom, rounding, left) = match get_recip_inner_expr(term) {
+                    Some(stuff) => stuff,
+                    None => {
+                        return Meta {
+                            expr: term.clone(),
+                            denom: None,
+                        }
+                    }
+                };
+                Meta {
+                    expr: left,
+                    denom: Some((denom, rounding)),
+                }
+            })
+            .collect::<Vec<Meta>>();
+        sum_terms.sort_unstable_by_key(|Meta { denom, .. }| denom.clone());
+        let mut current_denom = match sum_terms.first() {
+            Some(Meta { denom, .. }) => denom.clone(),
+            None => return self.clone(),
+        };
+        let mut out = Vec::new();
+        let mut current = Vec::new();
+        for Meta { expr: term, denom } in sum_terms {
+            if denom == current_denom {
+                current.push(term);
+            } else {
+                match current_denom {
+                    None => out.push(Expr::Sum(current)),
+                    Some(denom) => out.push(Expr::Prod(vec![
+                        Expr::Recip(Box::new(denom.0), denom.1),
+                        Expr::Sum(current),
+                    ])),
+                }
+                current = vec![term];
+                current_denom = denom;
+            }
+        }
+        match current_denom {
+            None => out.push(Expr::Sum(current)),
+            Some(denom) => out.push(Expr::Prod(vec![
+                Expr::Recip(Box::new(denom.0), denom.1),
+                Expr::Sum(current),
+            ])),
+        }
+        match out.len() {
+            0 => ZERO,
+            1 => out[0].clone(),
+            _ => Expr::Sum(out),
+        }
+    }
+
+    /*
     /// Round in division to minimize the result.
     /// Calls `self.eval2(Int::div_floor, Int::div_ceil)`
     pub fn eval_min(&self) -> Option<Int> {
@@ -787,6 +988,25 @@ impl<'b, 'a: 'b> Expr<'a> {
     pub fn eval_max(&self) -> Option<Int> {
         self.eval2(Int::div_ceil, Int::div_floor)
     }
+    */
+
+    /// Returns an i8 with the same sign as the expression or None if this can't be determined.
+    pub fn sign(&self) -> Option<i8> {
+        match self {
+            Expr::Neg(inner) => Some(-inner.sign()?),
+            Expr::Recip(inner, _) => Some(inner.sign()?),
+            Expr::Prod(terms) => terms.iter().map(Expr::sign).fold(Some(1), |sign, term_sign| Some(sign?*term_sign?)),
+            Expr::Sum(terms) => terms.iter().map(Expr::sign).fold(Some(0), |sign, term_sign| match (sign?, term_sign?) {
+                (0, term_sign) => Some(term_sign),
+                (1, 1) => Some(1),
+                (-1, -1) => Some(-1),
+                _ => None,
+            }),
+            Expr::Atom(Atom::Literal(x)) => Some(x.sign_u8()),
+            // TODO Add hooks for determining the sign of variables
+            Expr::Atom(Atom::Named(_)) => None,
+        }
+    }
 }
 
 impl<'a> From<&ast::proof::Expr<'a>> for Expr<'a> {
@@ -795,7 +1015,7 @@ impl<'a> From<&ast::proof::Expr<'a>> for Expr<'a> {
         use ast::proof::ExprKind::{Compound, Literal, Malformed, Named};
         match &ast_expr.kind {
             Named(ident) => Expr::Atom(Atom::Named(*ident)),
-            Literal(x) => Expr::Atom(Atom::Literal(Int::from(*x as i128))),
+            Literal(x) => Expr::Atom(Atom::Literal(Rational::from(Int::from(*x as i128)))),
 
             Compound {
                 lhs,
@@ -824,7 +1044,7 @@ impl<'a> From<&ast::proof::Expr<'a>> for Expr<'a> {
                 rhs,
             } => Expr::Prod(vec![
                 Expr::from(&**lhs),
-                Expr::Recip(Box::new(Expr::from(&**rhs))),
+                Expr::Recip(Box::new(Expr::from(&**rhs)), false),
             ]),
 
             Malformed => panic!("malformed expression"),
@@ -838,7 +1058,8 @@ impl<'a> fmt::Display for Expr<'a> {
         match self {
             Atom(atom) => write!(f, "{}", atom),
             Neg(expr) => write!(f, "-({})", *expr),
-            Recip(expr) => write!(f, "1/({})", *expr),
+            Recip(expr, false) => write!(f, "1//({})", *expr),
+            Recip(expr, true) => write!(f, "1/^({})", *expr),
             Sum(terms) => write!(
                 f,
                 "{}",

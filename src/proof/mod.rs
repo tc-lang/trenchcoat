@@ -5,6 +5,7 @@
 //! without error.
 
 mod bound;
+mod bound_group;
 mod bound_method;
 pub mod error;
 pub mod examples;
@@ -19,6 +20,9 @@ use self::bound::{Bound, Relation, RelationKind};
 use self::error::Error;
 use self::expr::{Atom, Expr, ONE, ZERO};
 use crate::ast::{self, proof::Condition as AstCondition, Ident};
+
+use std::fmt;
+use std::ops::Not;
 
 /// Attempts to prove that the entire contents of the program is within the bounds specified by the
 /// proof rules.
@@ -71,14 +75,12 @@ impl<'a> Requirement<'a> {
     /// If no bounds are given or if they cannot be computed, None is returned.
     pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
         let name_expr = Expr::Atom(Atom::Named(*name));
-        Some(
-            Relation {
-                left: self.ge0.single_x(&name_expr)?,
-                relation: RelationKind::Ge,
-                right: ZERO,
-            }
-            .bounds_on_unsafe(&name_expr),
-        )
+        Relation {
+            left: self.ge0.single_x(&name_expr)?,
+            relation: RelationKind::Ge,
+            right: ZERO,
+        }
+        .bounds_on_unsafe(&name_expr)
     }
 
     /// Returns bounds specified by self.
@@ -90,6 +92,14 @@ impl<'a> Requirement<'a> {
             .iter()
             .filter_map(|x| self.bounds_on(x).map(|bounds| (*x, bounds)))
             .collect()
+    }
+
+    fn as_relation(&self) -> Relation<'a> {
+        Relation {
+            left: self.ge0.clone(),
+            relation: RelationKind::Ge,
+            right: ZERO,
+        }
     }
 }
 
@@ -120,7 +130,7 @@ impl<'a> From<&AstCondition<'a>> for Requirement<'a> {
 }
 
 /// A result from an attempt to prove something.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ProofResult {
     /// The statement was false.
     False,
@@ -128,6 +138,18 @@ pub enum ProofResult {
     Undetermined,
     /// The statement was true.
     True,
+}
+
+impl Not for ProofResult {
+    type Output = ProofResult;
+    fn not(self) -> ProofResult {
+        use ProofResult::{False, True, Undetermined};
+        match self {
+            True => False,
+            Undetermined => Undetermined,
+            False => True,
+        }
+    }
 }
 
 pub trait SimpleProver<'a> {
@@ -225,5 +247,26 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
 impl<'a, P: SimpleProver<'a>> ScopedSimpleProver<'a, P> {
     pub fn from(sp: P) -> Self {
         Self::Root(sp)
+    }
+}
+
+impl<'a> fmt::Display for Requirement<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "0 <= {}", self.ge0)
+    }
+}
+
+impl fmt::Display for ProofResult {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use ProofResult::{False, True, Undetermined};
+        write!(
+            f,
+            "{}",
+            match self {
+                True => "True",
+                Undetermined => "Undetermined",
+                False => "False",
+            }
+        )
     }
 }

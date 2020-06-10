@@ -1,13 +1,21 @@
-use super::expr::Expr;
+use super::expr::{Atom, Expr, ZERO};
+use super::optimiser::{bound_sub, Maximizer, Minimizer};
+use crate::ast::Ident;
 use std::fmt;
 
 /// Represents a bound on something.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Bound<'a> {
     /// The thing must be <= expr
     Le(Expr<'a>),
     /// The thing must be >= expr
     Ge(Expr<'a>),
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DescriptiveBound<'a> {
+    pub subject: Ident<'a>,
+    pub bound: Bound<'a>,
 }
 
 /// Represents a relation between 2 expressions.
@@ -22,7 +30,7 @@ pub struct Relation<'a> {
 }
 
 /// A kind of a Relation
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RelationKind {
     /// Less than or equal to (<=)
     Le,
@@ -43,6 +51,13 @@ impl<'a> Bound<'a> {
     /// Call Expr::simplify on the bound expression
     pub fn simplify(&self) -> Bound<'a> {
         self.map(Expr::simplify)
+    }
+
+    pub fn relation_kind(&self) -> RelationKind {
+        match self {
+            Bound::Le(_) => RelationKind::Le,
+            Bound::Ge(_) => RelationKind::Ge,
+        }
     }
 }
 
@@ -68,12 +83,12 @@ impl<'a> Relation<'a> {
     /// - `subject` only occurs exactly once in self.left.
     ///    This can be achieved by using `self.left = self.left.single_x(subject)?`
     /// - `subject` does not occur in self.right
-    pub fn rearrange_unsafe(&self, subject: &Expr<'a>) -> Relation<'a> {
+    pub fn rearrange_unsafe(&self, subject: &Expr<'a>) -> Option<Relation<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
 
         // We are done if self.left = subject
         if self.left.simplify_eq(subject) {
-            return self.clone();
+            return Some(self.clone());
         }
 
         match &self.left {
@@ -117,12 +132,45 @@ impl<'a> Relation<'a> {
                 let mut other_terms = Vec::with_capacity(terms.len() - 1);
                 other_terms.extend_from_slice(&terms[..x_idx]);
                 other_terms.extend_from_slice(&terms[x_idx + 1..]);
+                let other_terms = Sum(other_terms);
+                // We're going to divide by other_terms so we must check it's sign.
+                // If it's negative, we should flip the relation.
+                let new_relation = match other_terms.sign() {
+                    Some(1) => self.relation,
+                    Some(-1) => self.relation.opposite(),
 
-                let new_right = Prod(vec![self.right.clone(), Recip(Box::new(Sum(other_terms)))]);
+                    // We can't determine the sign so we can't safely divide by it.
+                    None => {
+                        #[cfg(debug_assertions)]
+                        println!("Dropping {} since sign is unknown.", other_terms);
+
+                        return None;
+                    }
+                    // We can't divide by 0!
+                    Some(0) => {
+                        #[cfg(debug_assertions)]
+                        println!("Dropping {} since it is 0.", other_terms);
+
+                        return None;
+                    }
+
+                    Some(_) => panic!("invalid sign"),
+                };
+
+                let new_right = Prod(vec![
+                    self.right.clone(),
+                    Recip(Box::new(other_terms), {
+                        // TODO Decide and document rounding directions
+                        match new_relation {
+                            RelationKind::Le => true,
+                            RelationKind::Ge => false,
+                        }
+                    }),
+                ]);
 
                 Relation {
                     left: new_left,
-                    relation: self.relation,
+                    relation: new_relation,
                     right: new_right,
                 }
                 .rearrange_unsafe(subject)
@@ -137,10 +185,12 @@ impl<'a> Relation<'a> {
             .rearrange_unsafe(subject),
 
             // Recip both sides to unwrap this Recip
-            Recip(term) => Relation {
+            Recip(term, rounding) => Relation {
                 left: *term.clone(),
                 relation: self.relation.opposite(),
-                right: Recip(Box::new(self.right.clone())),
+                // When you implement this todo, make sure you check the sign!
+                // See Prod case for how it should be done.
+                right: Recip(Box::new(self.right.clone()), todo!()),
             }
             .rearrange_unsafe(subject),
 
@@ -152,9 +202,9 @@ impl<'a> Relation<'a> {
 
     /// Returns the bounds on `target` given by self.
     /// This method makes the same assumptions as `rearrange_unsafe`
-    pub fn bounds_on_unsafe(&self, target: &Expr<'a>) -> Bound<'a> {
+    pub fn bounds_on_unsafe(&self, target: &Expr<'a>) -> Option<Bound<'a>> {
         use RelationKind::{Ge, Le};
-        match self.rearrange_unsafe(target) {
+        Some(match self.rearrange_unsafe(target)? {
             Relation {
                 left: _,
                 relation: Le,
@@ -165,7 +215,83 @@ impl<'a> Relation<'a> {
                 relation: Ge,
                 right,
             } => Bound::Ge(right),
+        })
+    }
+
+    pub fn bounds_on(&self, name: Ident<'a>) -> Option<Bound<'a>> {
+        let name_expr = Expr::Atom(Atom::Named(name));
+
+        let lhs;
+        let relation;
+        let rhs;
+
+        let left_contains = self.left.variables().contains(&name);
+        let right_contains = self.right.variables().contains(&name);
+
+        if left_contains && right_contains {
+            lhs = Expr::Sum(vec![
+                self.left.clone(),
+                Expr::Neg(Box::new(self.right.clone())),
+            ])
+            .simplify()
+            .single_x(&name_expr)?;
+            relation = self.relation;
+            rhs = ZERO;
+        } else if left_contains && !right_contains {
+            lhs = self.left.simplify().single_x(&name_expr)?;
+            relation = self.relation;
+            rhs = self.right.clone();
+        } else if !left_contains && right_contains {
+            lhs = self.right.simplify().single_x(&name_expr)?;
+            relation = self.relation.opposite();
+            rhs = self.left.clone();
+        } else {
+            return None;
         }
+
+        Relation {
+            left: lhs,
+            relation,
+            right: rhs,
+        }
+        .bounds_on_unsafe(&name_expr)
+    }
+
+    pub fn bounds(&self) -> Vec<DescriptiveBound<'a>> {
+        let mut variables = self.left.variables();
+        variables.extend(self.right.variables());
+        variables.dedup();
+        variables
+            .iter()
+            .filter_map(|x| {
+                Some(DescriptiveBound {
+                    subject: *x,
+                    bound: self.bounds_on(*x)?,
+                })
+            })
+            .collect()
+    }
+}
+
+impl<'a> DescriptiveBound<'a> {
+    /// Returns true iff the order that self and other are substituted does not matter.
+    /// This is currently if they don't have the same subject or don't have the same relation kind.
+    pub fn permutes_with(&self, other: &DescriptiveBound<'a>) -> bool {
+        self.subject != other.subject || self.bound.relation_kind() != other.bound.relation_kind()
+    }
+
+    pub fn simplify(&self) -> DescriptiveBound<'a> {
+        DescriptiveBound {
+            subject: self.subject,
+            bound: self.bound.simplify(),
+        }
+    }
+
+    pub fn sub(&self, sub: &DescriptiveBound<'a>) -> Option<DescriptiveBound<'a>> {
+        Some(match self.bound {
+            Bound::Le(_) => bound_sub(self, &sub)?,
+            Bound::Ge(_) => bound_sub(self, &sub)?,
+        })
     }
 }
 
@@ -199,5 +325,11 @@ impl<'a> fmt::Display for Bound<'a> {
             Bound::Ge(expr) => (">=", expr),
         };
         write!(f, "{} {}", sign, expr)
+    }
+}
+
+impl<'a> fmt::Display for DescriptiveBound<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{} {}", self.subject, self.bound)
     }
 }

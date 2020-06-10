@@ -1,7 +1,8 @@
 use super::ast::Ident;
-use super::bound::Bound;
-use super::expr::{Atom, Expr};
-use super::int::Int;
+use super::bound::{Bound, DescriptiveBound, Relation, RelationKind};
+use super::bound_group::{BoundGroup, BoundRef, RequirementRef};
+use super::expr::{self, Atom, Expr};
+use super::int::{Int, Rational};
 use std::iter::Iterator;
 
 // TODO These types can probably be created with a macro to remove duplication.
@@ -22,18 +23,22 @@ pub struct Minimizer<'a> {
     /// This must be simplified.
     solving: Expr<'a>,
     /// The variables in `solving` (as returned by `solving.variables()`)
+    /// Stored for fast lookup.
     vars: Vec<Ident<'a>>,
-    /// A list of the bounds given by the requirements/lemmas that we can assume to be true.
-    /// This is the vector of the requirements mapped to their bounds as returned by
-    /// `requirements.bounds()`
-    given: Vec<Vec<(Ident<'a>, Bound<'a>)>>,
-    /// The index of the next requirement to try and substitute.
-    given_idx: usize,
-    /// The index of the next bound in the requirement to try and substitute.
-    /// This makes the next substitution `self.given[self.given_idx][self.bound_idx]`
-    bound_idx: usize,
-    /// The maximum number of childeren, equivilent to the number of substitutions that will be
-    /// made.
+
+    /// The BoundGroup of the requirements that are assumed to be true.
+    given: BoundGroup<'a>,
+    /// A map of requirement id (from given) to whether or not a substitution had already been made
+    /// from the requirement.
+    tried: Vec<bool>,
+
+    /// The permutation group that this node is permuting.
+    /// None if this is a final node.
+    permutation_group: Option<Vec<(DescriptiveBound<'a>, usize)>>,
+    /// The index of the next bound in permutation_group to try and substitute.
+    group_idx: usize,
+
+    /// The maximum number of childeren.
     max_depth: usize,
     /// An optional current child. This will be a minimizer created from making a substitution.
     child: Option<Box<Minimizer<'a>>>,
@@ -45,18 +50,17 @@ pub struct Minimizer<'a> {
 /// Note that lower bounds should be down up when evaluated.
 /// This is the behaviur of the int_bounds() method.
 pub struct Maximizer<'a> {
-    /// For field documentation, see Minimizer.
-    /// Note that expressions and bounds must be simplified.
     solving: Expr<'a>,
     vars: Vec<Ident<'a>>,
-    given: Vec<Vec<(Ident<'a>, Bound<'a>)>>,
-    given_idx: usize,
-    bound_idx: usize,
+    given: BoundGroup<'a>,
+    tried: Vec<bool>,
+    permutation_group: Option<Vec<(DescriptiveBound<'a>, usize)>>,
+    group_idx: usize,
     max_depth: usize,
     child: Option<Box<Maximizer<'a>>>,
 }
 
-impl<'a> Minimizer<'a> {
+impl<'a: 'b, 'b> Minimizer<'a> {
     /// Returns a minimizer for `solve`.
     /// This minimizer will, using the known bounds given by `given`, iterate through expressions
     /// such that `solve` >= `expr` for any valid values of named atoms.
@@ -72,8 +76,9 @@ impl<'a> Minimizer<'a> {
     /// substitutions can be made at each stage. Also, the iterator will likely not be fully
     /// consumed.
     pub fn new(
-        given: Vec<Vec<(Ident<'a>, Bound<'a>)>>,
         solve: Expr<'a>,
+        given: BoundGroup<'a>,
+        tried: Vec<bool>,
         max_depth: usize,
     ) -> Minimizer<'a> {
         let vars = solve.variables();
@@ -81,11 +86,18 @@ impl<'a> Minimizer<'a> {
             solving: solve,
             vars,
             given,
-            given_idx: 0,
-            bound_idx: 0,
+            tried,
+            permutation_group: None,
+            group_idx: 0,
             max_depth,
             child: None,
         }
+    }
+
+    pub fn new_root(solve: Expr<'a>, given: BoundGroup<'a>, max_depth: usize) -> Minimizer<'a> {
+        // `tried` is initialized with every element false.
+        let max_req_id = given.max_requirement_id();
+        Self::new(solve, given, vec![false; max_req_id], max_depth)
     }
 
     /// Returns an iterator of evaluated bounds.
@@ -93,11 +105,40 @@ impl<'a> Minimizer<'a> {
     pub fn int_bounds(
         self,
     ) -> std::iter::FilterMap<Self, fn(Expr<'a>) -> std::option::Option<Int>> {
-        self.filter_map(|expr| expr.eval_max())
+        self.filter_map(|expr| Some(expr.eval()?.as_lower_bound()))
+    }
+
+    fn find_permutation_group(&mut self) {
+        // Find the permutation group of the first bound that we've not yet subbed.
+        self.permutation_group = self
+            .given
+            .iter()
+            // BoundRef -> (BoundRef, requirement ID)
+            .map(|bound| (bound, bound.requirement().unwrap().id()))
+            // Filter requirements we've already used
+            .filter(|(_, req)| !self.tried[*req])
+            // (BoundRef, req ID) -> (BoundRef, subbed and simplified Expr, req ID)
+            .filter_map(|(bound, req)| {
+                Some((
+                    bound,
+                    Self::sub_bound(&self.solving, &*bound)?.simplify(),
+                    req,
+                ))
+            })
+            // Filter out subs that have no effect on the expression
+            .filter(|(_, expr, _)| *expr != self.solving)
+            .map(|(bound, _, _)| bound.permutation_group())
+            .next()
+            .map(|perm_grp| {
+                perm_grp
+                    .iter()
+                    .map(|bound| ((**bound).clone(), bound.requirement().unwrap().id()))
+                    .collect()
+            });
     }
 }
 
-impl<'a> Maximizer<'a> {
+impl<'a: 'b, 'b> Maximizer<'a> {
     /// Returns a maximizer for `solve`.
     /// This maximizer will, using the known bounds given by `given`, iterate through expressions
     /// such that `solve` <= `expr` for any valid values of named atoms.
@@ -113,8 +154,9 @@ impl<'a> Maximizer<'a> {
     /// substitutions can be made at each stage. Also, the iterator will likely not be fully
     /// consumed.
     pub fn new(
-        given: Vec<Vec<(Ident<'a>, Bound<'a>)>>,
         solve: Expr<'a>,
+        given: BoundGroup<'a>,
+        tried: Vec<bool>,
         max_depth: usize,
     ) -> Maximizer<'a> {
         let vars = solve.variables();
@@ -122,11 +164,18 @@ impl<'a> Maximizer<'a> {
             solving: solve,
             vars,
             given,
-            given_idx: 0,
-            bound_idx: 0,
+            tried,
+            permutation_group: None,
+            group_idx: 0,
             max_depth,
             child: None,
         }
+    }
+
+    pub fn new_root(solve: Expr<'a>, given: BoundGroup<'a>, max_depth: usize) -> Maximizer<'a> {
+        // `tried` is initialized with every element false
+        let max_req_id = given.max_requirement_id();
+        Self::new(solve, given, vec![false; max_req_id], max_depth)
     }
 
     /// Returns an iterator of evaluated bounds.
@@ -134,12 +183,41 @@ impl<'a> Maximizer<'a> {
     pub fn int_bounds(
         self,
     ) -> std::iter::FilterMap<Self, fn(Expr<'a>) -> std::option::Option<Int>> {
-        self.filter_map(|expr| expr.eval_min())
+        self.filter_map(|expr| Some(expr.eval()?.as_upper_bound()))
+    }
+
+    fn find_permutation_group(&mut self) {
+        // Find the permutation group of the first bound that we've not yet subbed.
+        self.permutation_group = self
+            .given
+            .iter()
+            // BoundRef -> (BoundRef, requirement ID)
+            .map(|bound| (bound, bound.requirement().unwrap().id()))
+            // Filter requirements we've already used
+            .filter(|(_, req)| !self.tried[*req])
+            // (BoundRef, req ID) -> (BoundRef, subbed and simplified Expr, req ID)
+            .filter_map(|(bound, req)| {
+                Some((
+                    bound,
+                    Self::sub_bound(&self.solving, &*bound)?.simplify(),
+                    req,
+                ))
+            })
+            // Filter out subs that have no effect on the expression
+            //.filter(|(_, expr, _)| *expr != self.solving)
+            .map(|(bound, _, _)| bound.permutation_group())
+            .next()
+            .map(|perm_grp| {
+                perm_grp
+                    .iter()
+                    .map(|bound| ((**bound).clone(), bound.requirement().unwrap().id()))
+                    .collect()
+            });
     }
 }
 
 /// Used to construct the body of the Iterator next method for Minimizer and Maximizer.
-    /// The bounds we can assume to be true. Probably given by the function requirements/lemmas.
+/// The bounds we can assume to be true. Probably given by the function requirements/lemmas.
 macro_rules! optimizer_next_body {
     ($self:expr) => {{
         // First, if we have a child, we want to iterate all the way through it.
@@ -152,47 +230,83 @@ macro_rules! optimizer_next_body {
 
         // If we've reached the maximum depth, we should not continue.
         if $self.max_depth == 0 {
+            //println!("Bye");
             return None;
         }
 
+        if $self.permutation_group.is_none() {
+            $self.find_permutation_group();
+            if $self.permutation_group.is_none() {
+                $self.max_depth = 0;
+                /*println!(
+                    "YIELDING {} = {}",
+                    $self.solving.clone(),
+                    match $self.solving.eval() {
+                        Some(x) => x,
+                        None => Int::Infinity.into(),
+                    }
+                );*/
+                return Some($self.solving.clone());
+            }
+        }
+        let permutation_group = $self.permutation_group.as_ref()?;
+
         // Now we want to make another substitution.
         // We will find a variable with a bound that we can use.
-        let (x, bound) = loop {
+        let (bound, requirement_id) = loop {
+            //println!("i: {}", $self.group_idx);
             // If there are no more substitutions to make, we can finish.
             // To do this, we'll mark this as the final child (see the early return case above) and
             // return the current expression since it is a bound of itself.
-            if $self.given_idx >= $self.given.len() {
+            if $self.group_idx >= permutation_group.len() {
                 $self.max_depth = 0;
+                /*println!(
+                    "YIELDING {} = {}",
+                    $self.solving.clone(),
+                    match $self.solving.eval() {
+                        Some(x) => x,
+                        None => Int::Infinity.into(),
+                    }
+                );*/
                 return Some($self.solving.clone());
             }
 
-            let this_requirement = &$self.given[$self.given_idx];
+            let (ref bound, requirement_id) = permutation_group[$self.group_idx];
 
-            if $self.bound_idx >= this_requirement.len() {
-                $self.bound_idx = 0;
-                $self.given_idx += 1;
+            if $self.tried[requirement_id] {
+                //println!("Already tried...");
+                $self.group_idx += 1;
                 continue;
             }
 
-            // Get the identity and the bound
-            let (x_ident, bound) = &this_requirement[$self.bound_idx];
-
-            $self.bound_idx += 1;
+            $self.group_idx += 1;
 
             // We only need to make a substitution if the expression contains the variable.
-            if $self.vars.contains(x_ident) {
-                break (Expr::Atom(Atom::Named(*x_ident)), bound);
+            if $self.vars.contains(&bound.subject) {
+                break (bound, requirement_id);
             }
+            //println!("{} doesn't include {}", $self.solving, bound.subject);
         };
 
-        // The child should not make the same substitution again.
-        let mut new_given = $self.given.clone();
-        new_given.remove($self.given_idx);
+        let mut new_tried = $self.tried.clone();
+        new_tried[requirement_id] = true;
 
+        //println!("Subbing {}", bound);
+
+        // Substitute the bound
+        let new_expr = match Self::sub_bound(&$self.solving, &bound) {
+            Some(expr) => expr.simplify(),
+            None => return $self.next(),
+        };
+
+        //println!("Solving: {} <== {}", &$self.solving, new_expr);
+
+        //println!("Making a child!");
         // Create the new child
         $self.child = Some(Box::new(Self::new(
-            new_given,
-            Self::sub_bound(&$self.solving, &x, bound).simplify(), // .simplify is important here
+            new_expr,
+            $self.given.sub_bound(&bound),
+            new_tried,
             $self.max_depth - 1,
         )));
 
@@ -200,37 +314,109 @@ macro_rules! optimizer_next_body {
     }};
 }
 
-impl<'a> Iterator for Minimizer<'a> {
+/// Substitutes sub_bound in to bound and returns the result.
+/// This uses {Minimizer, Maximizer}::sub_bound
+pub fn bound_sub<'a>(
+    bound: &DescriptiveBound<'a>,
+    sub_bound: &DescriptiveBound<'a>,
+) -> Option<DescriptiveBound<'a>> {
+    let (relation_kind, new_bound_expr) = match &bound.bound {
+        Bound::Le(expr) => (RelationKind::Le, Maximizer::sub_bound(expr, sub_bound)),
+        Bound::Ge(expr) => (RelationKind::Ge, Minimizer::sub_bound(expr, sub_bound)),
+    };
+    // Unwrap new_bound_expr
+    // If no substitution was made, just clone the existing bound.
+    let new_bound_expr = match new_bound_expr {
+        Some(expr) => expr,
+        None => return Some(bound.clone()),
+    };
+
+    let x = Expr::Atom(Atom::Named(bound.subject));
+    let lhs = Expr::Sum(vec![x.clone(), Expr::Neg(Box::new(new_bound_expr))]).simplify();
+    if lhs
+        .variables()
+        .iter()
+        .find(|var| **var == bound.subject)
+        .is_none()
+    {
+        return None;
+    }
+
+    Some(DescriptiveBound {
+        subject: bound.subject,
+        bound: Relation {
+            left: lhs.single_x(&x)?,
+            relation: relation_kind,
+            right: expr::ZERO,
+        }
+        .bounds_on_unsafe(&x)?
+        .simplify(),
+    })
+}
+
+impl<'a: 'b, 'b> Iterator for Minimizer<'a> {
     type Item = Expr<'a>;
     fn next(&mut self) -> Option<Expr<'a>> {
+        /*println!(
+            "\nMinimizer next on ({}) {}",
+            self.group_idx,
+            self.solving.clone()
+        );*/
         optimizer_next_body!(self)
     }
 }
-impl<'a> Iterator for Maximizer<'a> {
+impl<'a: 'b, 'b> Iterator for Maximizer<'a> {
     type Item = Expr<'a>;
     fn next(&mut self) -> Option<Expr<'a>> {
+        /*println!(
+            "\nMaximizer next on ({}) {}",
+            self.group_idx,
+            self.solving.clone()
+        );*/
         optimizer_next_body!(self)
     }
 }
 
+/// Used internally by {Minimizer, Maximizer}::sub_bound
 fn sub_bound_into<'a>(
     expr: &Expr<'a>,
-    x: &Expr<'a>,
-    bound: &Bound<'a>,
-    self_sub: impl Fn(&Expr<'a>, &Expr<'a>, &Bound<'a>) -> Expr<'a>,
-    sub_opposite: impl Fn(&Expr<'a>, &Expr<'a>, &Bound<'a>) -> Expr<'a>,
-) -> Expr<'a> {
+    bound: &DescriptiveBound<'a>,
+    self_sub: impl Fn(&Expr<'a>, &DescriptiveBound<'a>) -> Option<Expr<'a>>,
+    sub_opposite: impl Fn(&Expr<'a>, &DescriptiveBound<'a>) -> Option<Expr<'a>>,
+) -> Option<Expr<'a>> {
     match expr {
         // An atom has a fixed value if it was not `x`
-        Expr::Atom(_) => expr.clone(),
+        Expr::Atom(_) => None,
 
         // An upper bound for -(...) is -(a lower bound for ...)
-        Expr::Neg(inner_expr) => Expr::Neg(Box::new(sub_opposite(inner_expr, x, bound))),
+        Expr::Neg(inner_expr) => Some(Expr::Neg(Box::new(sub_opposite(inner_expr, bound)?))),
         // An upper bound for 1/(...) is 1/(a lower bound for ...)
-        Expr::Recip(inner_expr) => Expr::Recip(Box::new(sub_opposite(inner_expr, x, bound))),
+        Expr::Recip(inner_expr, rounding) => Some(Expr::Recip(
+            Box::new(sub_opposite(inner_expr, bound)?),
+            *rounding,
+        )),
 
         // A bound on a sum is the sum of the bounds of its terms.
-        Expr::Sum(terms) => Expr::Sum(terms.iter().map(|term| self_sub(term, x, bound)).collect()),
+        Expr::Sum(terms) => {
+            // Try substituting into each term.
+            let subbed_terms = terms
+                .iter()
+                .map(|term| self_sub(term, bound))
+                .collect::<Vec<Option<Expr>>>();
+            // If no terms had substitutions then return None.
+            if subbed_terms.iter().all(Option::is_none) {
+                return None;
+            }
+            // Otherwise, use the substituted terms and clone the ones without substitutions to
+            // create the new terms.
+            Some(Expr::Sum(
+                subbed_terms
+                    .iter()
+                    .enumerate()
+                    .map(|(i, term)| term.as_ref().unwrap_or_else(|| &terms[i]).clone())
+                    .collect(),
+            ))
+        }
 
         Expr::Prod(terms) => {
             // We now want to minimize a product, for now, we will only simplify products in
@@ -254,17 +440,17 @@ fn sub_bound_into<'a>(
                     // Note that we require only positive literals (which we should have if the
                     // expression is simplified).
                     Expr::Atom(Atom::Literal(x)) => {
-                        if *x < Int::ZERO {
+                        if *x < Rational::ZERO {
                             panic!("literal < 0")
                         } else {
                             term.clone()
                         }
                     }
-
+                    // TODO Remove since we've got rationals
                     // We will also treat a recip of a literal as a literal since it's constant.
-                    Expr::Recip(inner_expr) => match &**inner_expr {
+                    Expr::Recip(inner_expr, _) => match &**inner_expr {
                         Expr::Atom(Atom::Literal(x)) => {
-                            if *x < Int::ZERO {
+                            if *x < Rational::ZERO {
                                 panic!("literal < 0")
                             } else {
                                 term.clone()
@@ -275,10 +461,10 @@ fn sub_bound_into<'a>(
                             // We can't handle non-linear things yet :(
                             // See the comment above
                             if made_sub {
-                                return expr.clone();
+                                return None;
                             }
                             made_sub = true;
-                            self_sub(term, x, bound)
+                            self_sub(term, bound)?
                         }
                     },
 
@@ -286,69 +472,45 @@ fn sub_bound_into<'a>(
                         // We can't handle non-linear things yet :(
                         // See the comment above
                         if made_sub {
-                            return expr.clone();
+                            return None;
                         }
                         made_sub = true;
-                        self_sub(term, x, bound)
+                        self_sub(term, bound)?
                     }
                 });
             }
-            Expr::Prod(out)
+            Some(Expr::Prod(out))
         }
     }
 }
 
-impl<'a> Minimizer<'a> {
-    /// Not yet used
-    fn unbounded(expr: &Expr<'a>) -> Expr<'a> {
-        match expr {
-            Expr::Neg(inner_expr) => Expr::Neg(Box::new(Maximizer::unbounded(inner_expr))),
-            Expr::Recip(inner_expr) => Expr::Recip(Box::new(Maximizer::unbounded(inner_expr))),
-            Expr::Sum(terms) => Expr::Sum(terms.iter().map(Self::unbounded).collect()),
-            Expr::Prod(_) => todo!(),
-            Expr::Atom(Atom::Literal(_)) => expr.clone(),
-            Expr::Atom(Atom::Named(_)) => Expr::Atom(Atom::Literal(-Int::Infinity)),
-        }
-    }
-
+impl<'a: 'b, 'b> Minimizer<'a> {
     /// Returns an upper bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
-    fn sub_bound(expr: &Expr<'a>, x: &Expr<'a>, bound: &Bound<'a>) -> Expr<'a> {
+    pub fn sub_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Option<Expr<'a>> {
         // If the expression is x, then an upper bound is given directly.
-        if expr.eq(x) {
-            return match bound {
-                Bound::Ge(bound_expr) => bound_expr.clone(),
-                Bound::Le(_) => expr.clone(),
+        if *expr == Expr::Atom(Atom::Named(bound.subject)) {
+            return match &bound.bound {
+                Bound::Ge(bound_expr) => Some(bound_expr.clone()),
+                Bound::Le(_) => None,
             };
         }
-        sub_bound_into(expr, x, bound, Minimizer::sub_bound, Maximizer::sub_bound)
+        sub_bound_into(expr, bound, Minimizer::sub_bound, Maximizer::sub_bound)
     }
 }
 
-impl<'a> Maximizer<'a> {
-    /// Not yet used
-    fn unbounded(expr: &Expr<'a>) -> Expr<'a> {
-        match expr {
-            Expr::Neg(inner_expr) => Expr::Neg(Box::new(Minimizer::unbounded(inner_expr))),
-            Expr::Recip(inner_expr) => Expr::Recip(Box::new(Minimizer::unbounded(inner_expr))),
-            Expr::Sum(terms) => Expr::Sum(terms.iter().map(Self::unbounded).collect()),
-            Expr::Prod(_) => todo!(),
-            Expr::Atom(Atom::Literal(_)) => expr.clone(),
-            Expr::Atom(Atom::Named(_)) => Expr::Atom(Atom::Literal(Int::Infinity)),
-        }
-    }
-
+impl<'a: 'b, 'b> Maximizer<'a> {
     /// Returns a lower bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
-    fn sub_bound(expr: &Expr<'a>, x: &Expr<'a>, bound: &Bound<'a>) -> Expr<'a> {
-        if expr.eq(x) {
-            return match bound {
-                Bound::Le(bound_expr) => bound_expr.clone(),
-                Bound::Ge(_) => expr.clone(),
+    pub fn sub_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Option<Expr<'a>> {
+        if *expr == Expr::Atom(Atom::Named(bound.subject)) {
+            return match &bound.bound {
+                Bound::Le(bound_expr) => Some(bound_expr.clone()),
+                Bound::Ge(_) => None,
             };
         }
-        sub_bound_into(expr, x, bound, Maximizer::sub_bound, Minimizer::sub_bound)
+        sub_bound_into(expr, bound, Maximizer::sub_bound, Minimizer::sub_bound)
     }
 }
