@@ -1,4 +1,5 @@
 use super::bound::Bound;
+use super::bound_group::BoundGroup;
 use super::int::Int;
 use super::optimiser::{Maximizer, Minimizer};
 use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
@@ -7,25 +8,17 @@ use crate::ast::Ident;
 pub type FullProver<'a> = ScopedSimpleProver<'a, Prover<'a>>;
 
 pub struct Prover<'a> {
-    bounds: Vec<Vec<(Ident<'a>, Bound<'a>)>>,
+    bound_group: BoundGroup<'a>,
     max_depth: usize,
 }
 
 impl<'a> SimpleProver<'a> for Prover<'a> {
     fn new(reqs: Vec<Requirement<'a>>) -> Prover<'a> {
+        let reqs = reqs.iter().map(Requirement::simplify).collect::<Vec<_>>();
+        println!("{:?}", BoundGroup::from_requirements(reqs.clone()));
+        //panic!("Yes!");
         Prover {
-            bounds: reqs
-                .iter()
-                .map(|req| {
-                    req.simplify()
-                        .bounds()
-                        .iter()
-                        .map(|(ident, bound)| (*ident, bound.simplify()))
-                        .collect()
-                })
-                .collect(),
-            // FIXME TODO UNFLATTEN
-            //bounds: reqs.iter().map(|req| req.simplify().bounds()).flatten().map(|b| vec![b]).collect(),
+            bound_group: BoundGroup::from_requirements(reqs),
             max_depth: 10,
         }
     }
@@ -35,13 +28,13 @@ impl<'a> SimpleProver<'a> for Prover<'a> {
         // simplify it ourself.
         let req = req.simplify();
 
-        let mini = Minimizer::new(self.bounds.clone(), req.ge0.clone(), self.max_depth);
+        let mini = Minimizer::new_root(req.ge0.clone(), self.bound_group.clone(), self.max_depth);
         // The statement is always true if a lower bound is >= 0
         if mini.int_bounds().any(|bound| bound >= Int::ZERO) {
             return ProofResult::True;
         }
         // The statement is always false if an upper bound is < 0
-        let maxi = Maximizer::new(self.bounds.clone(), req.ge0.clone(), self.max_depth);
+        let maxi = Maximizer::new_root(req.ge0.clone(), self.bound_group.clone(), self.max_depth);
         if maxi.int_bounds().any(|bound| bound < Int::ZERO) {
             return ProofResult::False;
         }

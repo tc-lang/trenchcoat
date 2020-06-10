@@ -1,5 +1,5 @@
 use super::expr::{Atom, Expr, ZERO};
-use super::optimiser2::{bound_sub, Maximizer, Minimizer};
+use super::optimiser::{bound_sub, Maximizer, Minimizer};
 use crate::ast::Ident;
 use std::fmt;
 

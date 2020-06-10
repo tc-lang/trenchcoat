@@ -1,4 +1,4 @@
-use super::bound_method2::{FullProver, Prover as BoundsProver};
+use super::bound_method::{FullProver, Prover as BoundsProver};
 use super::{ProofResult, Prover, Requirement, SimpleProver};
 use crate::ast::proof::Condition;
 use crate::tokens::tokenize;
@@ -323,6 +323,7 @@ fn test_lots_of_variables() {
     println!("{}", mini.enumerate().last().unwrap().0);
     */
 
+    /*
     let mini = super::optimiser::Minimizer::new(
         reqs.iter()
             .map(|req| {
@@ -349,6 +350,7 @@ fn test_lots_of_variables() {
             }
         );
     }
+    */
     //panic!("Hi");
 
     prove!(prover: "0 <= n" => ProofResult::True);
