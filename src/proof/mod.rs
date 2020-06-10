@@ -15,7 +15,7 @@ mod optimiser;
 #[cfg(test)]
 mod tests;
 
-use self::bound::{Bound, Relation, RelationKind};
+use self::bound::{Bound, DescriptiveBound, Relation, RelationKind};
 use self::error::Error;
 use self::expr::{Atom, Expr, ONE, ZERO};
 use crate::ast::{self, proof::Condition as AstCondition, Ident};
@@ -29,75 +29,70 @@ fn validate<'a>(top_level_items: &'a [ast::Item<'a>]) -> Vec<Error<'a>> {
     todo!()
 }
 
-/// Represents the requirement `ge0 >= 0`
-/// All requirements can written in this form.
 #[derive(Debug, Clone)]
 pub struct Requirement<'a> {
-    pub ge0: Expr<'a>,
+    relation: bound::Relation<'a>,
 }
 
 impl<'a> Requirement<'a> {
-    pub fn map_ge0(&self, f: impl Fn(&Expr<'a>) -> Expr<'a>) -> Requirement<'a> {
-        Requirement { ge0: f(&self.ge0) }
-    }
-
     /// Returns a Requirement which is true iff self is false.
     pub fn contra_positive(&self) -> Requirement<'a> {
-        //  ¬(0 <= expr)
-        // => 0 >  expr
-        // => 0 <  -expr
-        // => 0 <= -expr -1
-        self.map_ge0(|expr| {
-            Expr::Sum(vec![
-                Expr::Neg(Box::new(expr.clone())),
-                Expr::Neg(Box::new(ONE)),
-            ])
-        })
+        Requirement {
+            relation: self.relation.contra_positive(),
+        }
     }
 
-    /// Returns a requirement with a simplified ge0 expression
+    /// Returns a requirement with a simplified relation.
     pub fn simplify(&self) -> Requirement<'a> {
-        self.map_ge0(Expr::simplify)
+        Requirement {
+            relation: self.relation.simplify(),
+        }
     }
 
     /// Substitute `x` with `with` in self and return the result.
     pub fn substitute(&self, x: Ident<'a>, with: &Expr<'a>) -> Requirement<'a> {
-        self.map_ge0(|expr| expr.substitute(x, with))
+        Requirement {
+            relation: self.relation.substitute(x, with),
+        }
     }
 
     /// Returns a vector of the distinct variables the requirement applies to.
     pub fn variables(&self) -> Vec<Ident<'a>> {
-        self.ge0.variables()
+        self.relation.variables()
     }
 
     /// Returns the bounds on `name` given by self.
     /// If no bounds are given or if they cannot be computed, None is returned.
-    pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
-        let name_expr = Expr::Atom(Atom::Named(*name));
-        Relation {
-            left: self.ge0.single_x(&name_expr)?,
-            relation: RelationKind::Ge,
-            right: ZERO,
-        }
-        .bounds_on_unsafe(&name_expr)
+    pub fn bounds_on(&self, name: Ident<'a>) -> Option<Bound<'a>> {
+        self.relation.bounds_on(name)
     }
 
     /// Returns bounds specified by self.
     /// The tuple contains the variable the bound is on and the bound itself.
     /// It may not return all bounds since some bounds cannot yet be calculated.
-    fn bounds(&self) -> Vec<(Ident<'a>, Bound<'a>)> {
-        self.ge0
-            .variables()
-            .iter()
-            .filter_map(|x| self.bounds_on(x).map(|bounds| (*x, bounds)))
-            .collect()
+    fn bounds(&self) -> Vec<DescriptiveBound<'a>> {
+        self.relation.bounds()
     }
 
-    fn as_relation(&self) -> Relation<'a> {
-        Relation {
-            left: self.ge0.clone(),
-            relation: RelationKind::Ge,
-            right: ZERO,
+    fn as_relation<'b>(&'b self) -> &'b Relation<'a> {
+        &self.relation
+    }
+
+    /// Returns an expression that is >= 0 if and only if self is true.
+    pub fn ge0(&self) -> Expr<'a> {
+        match self.relation.relation {
+            // left <= right
+            // ==> 0 <= right-left
+            RelationKind::Le => Expr::Sum(vec![
+                self.relation.right.clone(),
+                Expr::Neg(Box::new(self.relation.left.clone())),
+            ]),
+            // left >= right
+            // ==> left-right >= 0
+            RelationKind::Ge => Expr::Sum(vec![
+                self.relation.left.clone(),
+                Expr::Neg(Box::new(self.relation.right.clone())),
+            ]),
         }
     }
 }
@@ -109,12 +104,20 @@ impl<'a> From<&AstCondition<'a>> for Requirement<'a> {
         match &cond.kind {
             // lhs <= rhs => 0 <= rhs-lhs
             Simple { lhs, op: Le, rhs } => Requirement {
-                ge0: Expr::Sum(vec![Expr::from(rhs), Expr::Neg(Box::new(Expr::from(lhs)))]),
+                relation: Relation {
+                    left: Expr::from(lhs),
+                    relation: RelationKind::Le,
+                    right: Expr::from(rhs),
+                },
             },
 
             // lhs >= rhs => lhs-rhs >= 0
             Simple { lhs, op: Ge, rhs } => Requirement {
-                ge0: Expr::Sum(vec![Expr::from(lhs), Expr::Neg(Box::new(Expr::from(rhs)))]),
+                relation: Relation {
+                    left: Expr::from(lhs),
+                    relation: RelationKind::Ge,
+                    right: Expr::from(rhs),
+                },
             },
 
             Compound {
@@ -251,7 +254,7 @@ impl<'a, P: SimpleProver<'a>> ScopedSimpleProver<'a, P> {
 
 impl<'a> fmt::Display for Requirement<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "0 <= {}", self.ge0)
+        write!(f, "{}", self.relation)
     }
 }
 

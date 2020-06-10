@@ -24,13 +24,21 @@ impl<'a> SimpleProver<'a> for Prover<'a> {
         // simplify it ourself.
         let req = req.simplify();
 
-        let mini = Minimizer::new_root(req.ge0.clone(), self.bound_group.clone(), self.max_depth);
+        let mini = Minimizer::new_root(
+            req.ge0().simplify(),
+            self.bound_group.clone(),
+            self.max_depth,
+        );
         // The statement is always true if a lower bound is >= 0
         if mini.int_bounds().any(|bound| bound >= Int::ZERO) {
             return ProofResult::True;
         }
         // The statement is always false if an upper bound is < 0
-        let maxi = Maximizer::new_root(req.ge0.clone(), self.bound_group.clone(), self.max_depth);
+        let maxi = Maximizer::new_root(
+            req.ge0().simplify(),
+            self.bound_group.clone(),
+            self.max_depth,
+        );
         if maxi.int_bounds().any(|bound| bound < Int::ZERO) {
             return ProofResult::False;
         }

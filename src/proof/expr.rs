@@ -42,6 +42,8 @@ pub enum Atom<'a> {
 pub const ZERO: Expr = Expr::Atom(Atom::Literal(Rational::ZERO));
 /// An expression with the literal value 1
 pub const ONE: Expr = Expr::Atom(Atom::Literal(Rational::ONE));
+/// An expression with the literal value -1
+pub const MINUS_ONE: Expr = Expr::Atom(Atom::Literal(Rational::MINUS_ONE));
 
 impl<'b, 'a: 'b> Expr<'a> {
     /// Returns true if the expressions are equal or if their simplified values are equal.

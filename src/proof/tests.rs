@@ -63,6 +63,25 @@ macro_rules! requirements {
 }
 
 #[test]
+fn contra_positive_test() {
+    let tokens = tokenize("a >= z");
+    let cond = Condition::parse(&tokens).unwrap();
+    let req = Requirement::from(&cond);
+    //   ¬(a >= z)
+    // ==> a < z
+    // ==> a+1 <= z
+    assert_eq!(format!("{}", req.contra_positive().simplify()), "a + 1 <= z");
+
+    let tokens = tokenize("a <= z");
+    let cond = Condition::parse(&tokens).unwrap();
+    let req = Requirement::from(&cond);
+    //   ¬(a <= z)
+    // ==> a > z
+    // ==> a-1 >= z
+    assert_eq!(format!("{}", req.contra_positive().simplify()), "-(1) + a >= z");
+}
+
+#[test]
 fn example_test() {
     // Also, to get an idea for the running time of the algorithm, this would be the time for a
     // function with 5 requirements and 21 unique statements to prove.

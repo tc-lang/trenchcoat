@@ -1,4 +1,4 @@
-use super::expr::{Atom, Expr, ZERO};
+use super::expr::{Atom, Expr, ONE, MINUS_ONE, ZERO};
 use super::optimiser::bound_sub;
 use crate::ast::Ident;
 use std::fmt;
@@ -274,6 +274,52 @@ impl<'a> Relation<'a> {
                 })
             })
             .collect()
+    }
+
+    /// Returns a Relation which is true iff self is false.
+    pub fn contra_positive(&self) -> Relation<'a> {
+        //   ¬(lhs <= rhs)
+        // ==> lhs > rhs
+        // ==> lhs-1 >= rhs
+        //
+        //   ¬(lhs >= rhs)
+        // ==> lhs < rhs
+        // ==> lhs+1 <= rhs
+        let to_add = match self.relation {
+            RelationKind::Le => MINUS_ONE,
+            RelationKind::Ge => ONE,
+        };
+        Relation {
+            left: Expr::Sum(vec![self.left.clone(), to_add]),
+            relation: self.relation.opposite(),
+            right: self.right.clone(),
+        }
+    }
+
+    /// Returns Relation but with the left and right expressions simplified.
+    pub fn simplify(&self) -> Relation<'a> {
+        Relation {
+            left: self.left.simplify(),
+            relation: self.relation,
+            right: self.right.simplify(),
+        }
+    }
+
+    /// Substitute `x` with `with` in self and return the result.
+    pub fn substitute(&self, x: Ident<'a>, with: &Expr<'a>) -> Relation<'a> {
+        Relation {
+            left: self.left.substitute(x, with),
+            relation: self.relation,
+            right: self.right.substitute(x, with),
+        }
+    }
+
+    /// Returns a vector of the distinct variables this Relation contains.
+    pub fn variables(&self) -> Vec<Ident<'a>> {
+        let mut vars = self.left.variables();
+        vars.extend(self.right.variables());
+        vars.dedup();
+        vars
     }
 }
 

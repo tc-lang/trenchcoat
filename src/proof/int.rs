@@ -27,6 +27,7 @@ pub struct Rational {
 impl Int {
     pub const ZERO: Int = Int::I(0);
     pub const ONE: Int = Int::I(1);
+    pub const MINUS_ONE: Int = Int::I(-1);
 
     pub fn is_finite(&self) -> bool {
         use Int::{Infinity, NegInfinity, I};
@@ -98,6 +99,10 @@ impl Rational {
     };
     pub const ONE: Rational = Rational {
         numerator: Int::ONE,
+        denominator: Int::ONE,
+    };
+    pub const MINUS_ONE: Rational = Rational {
+        numerator: Int::MINUS_ONE,
         denominator: Int::ONE,
     };
     pub const INFINITY: Rational = Rational {
