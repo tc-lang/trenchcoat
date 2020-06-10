@@ -289,8 +289,8 @@ impl<'a> DescriptiveBound<'a> {
 
     pub fn sub(&self, sub: &DescriptiveBound<'a>) -> Option<DescriptiveBound<'a>> {
         Some(match self.bound {
-            Bound::Le(_) => bound_sub(Maximizer::sub_bound, self, &sub)?,
-            Bound::Ge(_) => bound_sub(Minimizer::sub_bound, self, &sub)?,
+            Bound::Le(_) => bound_sub(self, &sub)?,
+            Bound::Ge(_) => bound_sub(self, &sub)?,
         })
     }
 }

@@ -314,20 +314,24 @@ macro_rules! optimizer_next_body {
     }};
 }
 
+/// Substitutes sub_bound in to bound and returns the result.
+/// This uses {Minimizer, Maximizer}::sub_bound
 pub fn bound_sub<'a>(
-    subber: impl Fn(&Expr<'a>, &DescriptiveBound<'a>) -> Option<Expr<'a>>,
     bound: &DescriptiveBound<'a>,
     sub_bound: &DescriptiveBound<'a>,
 ) -> Option<DescriptiveBound<'a>> {
-    let x = Expr::Atom(Atom::Named(bound.subject));
-    let (relation_kind, bound_expr) = match &bound.bound {
-        Bound::Le(expr) => (RelationKind::Le, expr),
-        Bound::Ge(expr) => (RelationKind::Ge, expr),
+    let (relation_kind, new_bound_expr) = match &bound.bound {
+        Bound::Le(expr) => (RelationKind::Le, Maximizer::sub_bound(expr, sub_bound)),
+        Bound::Ge(expr) => (RelationKind::Ge, Minimizer::sub_bound(expr, sub_bound)),
     };
-    let new_bound_expr = match subber(bound_expr, sub_bound) {
+    // Unwrap new_bound_expr
+    // If no substitution was made, just clone the existing bound.
+    let new_bound_expr = match new_bound_expr {
         Some(expr) => expr,
         None => return Some(bound.clone()),
     };
+
+    let x = Expr::Atom(Atom::Named(bound.subject));
     let lhs = Expr::Sum(vec![x.clone(), Expr::Neg(Box::new(new_bound_expr))]).simplify();
     if lhs
         .variables()
@@ -337,6 +341,7 @@ pub fn bound_sub<'a>(
     {
         return None;
     }
+
     Some(DescriptiveBound {
         subject: bound.subject,
         bound: Relation {
@@ -347,38 +352,6 @@ pub fn bound_sub<'a>(
         .bounds_on_unsafe(&x)?
         .simplify(),
     })
-}
-
-fn bound_sub_all<'a>(
-    subber: impl Fn(&Expr<'a>, &Expr<'a>, &Bound<'a>) -> Expr<'a>,
-    x: Ident<'a>,
-    bound: &Bound<'a>,
-    sub_x: &Expr<'a>,
-    sub_bound: &Bound<'a>,
-) -> Vec<(Ident<'a>, Bound<'a>)> {
-    let x = Expr::Atom(Atom::Named(x));
-    let (relation_kind, bound_expr) = match bound {
-        Bound::Le(expr) => (RelationKind::Le, expr),
-        Bound::Ge(expr) => (RelationKind::Ge, expr),
-    };
-    let new_bound_expr = subber(bound_expr, sub_x, sub_bound);
-    let lhs = Expr::Sum(vec![x.clone(), Expr::Neg(Box::new(new_bound_expr))]).simplify();
-    lhs.variables()
-        .iter()
-        .filter_map(|var_ident| {
-            let var = Expr::Atom(Atom::Named(var_ident.clone()));
-            Some((
-                *var_ident,
-                Relation {
-                    left: lhs.single_x(&var)?,
-                    relation: relation_kind,
-                    right: expr::ZERO,
-                }
-                .bounds_on_unsafe(&var)?
-                .simplify(),
-            ))
-        })
-        .collect()
 }
 
 impl<'a: 'b, 'b> Iterator for Minimizer<'a> {
@@ -404,6 +377,7 @@ impl<'a: 'b, 'b> Iterator for Maximizer<'a> {
     }
 }
 
+/// Used internally by {Minimizer, Maximizer}::sub_bound
 fn sub_bound_into<'a>(
     expr: &Expr<'a>,
     bound: &DescriptiveBound<'a>,
