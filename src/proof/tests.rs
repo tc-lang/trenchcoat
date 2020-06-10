@@ -6,15 +6,12 @@ use crate::tokens::tokenize;
 const ONLY_TEST: Option<ProofResult> = None;
 
 macro_rules! requirements {
-    (append($reqs:expr; $req:expr)) => {
-        let tokens = tokenize($req);
-        let cond = Condition::parse(&tokens).unwrap();
-        $reqs.push(Requirement::from(&cond));
-    };
-
-    (append($reqs:expr; $head:expr,$($tail:expr),*)) => {
-        requirements!(append($reqs; $head));
-        requirements!(append($reqs; $($tail),*));
+    (append($reqs:expr; $($strings:expr),*)) => {
+        $(
+            let tokens = tokenize($strings);
+            let cond = Condition::parse(&tokens).unwrap();
+            $reqs.push(Requirement::from(&cond));
+        )*
     };
 
     (let $name:ident = [$($strings:expr),+$(,)?]) => {
