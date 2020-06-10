@@ -50,7 +50,10 @@ macro_rules! requirements {
         macro_rules! cleanup {
             () => {
                 if !errors.is_empty() {
-                    panic!("{}", errors.into_iter().fold(String::new(), |s, (is_contra, stmt, result, expected)| {
+                    panic!("{}", errors.into_iter().fold(String::new(), |mut s, (is_contra, stmt, result, expected)| {
+                        if s.is_empty() {
+                            s.push('\n');
+                        }
                         s + &(match is_contra {
                             false => format!("{} gave: {}, expected: {}", stmt, result, expected),
                             true => format!("!({}) gave: {}, expected: {}", stmt, result, expected),
