@@ -324,7 +324,7 @@ pub struct Inequality {
 
 impl Inequality {
     pub fn from_req<'a>(req: Requirement<'a>) -> (Inequality, Option<Expr<'a>>) {
-        let req = req.0;
+        let req = req.relation;
         // Re-order the sides so that we get our condition in terms of A <= B.
         // Shifting is not currently used, but will be (eventually) to account for
         // conditions using strict inequality (i.e. x < y instead of x <= y).

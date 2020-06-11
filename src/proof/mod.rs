@@ -25,7 +25,9 @@ fn validate<'a>(top_level_items: &'a [ast::Item<'a>]) -> Vec<Error<'a>> {
 }
 
 #[derive(Debug, Clone)]
-pub struct Requirement<'a>(bound::Relation<'a>);
+pub struct Requirement<'a> {
+    relation: bound::Relation<'a>,
+}
 
 /// A result from an attempt to prove something.
 #[derive(Debug, PartialEq, Eq)]
