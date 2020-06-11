@@ -2,7 +2,7 @@
 
 use super::expr::Expr;
 use super::term::{Inequality, Term};
-use super::{ProofResult, Requirement};
+use super::{ProofResult, Requirement, SimpleProver};
 use crate::ast::Ident;
 use std::mem;
 
@@ -65,7 +65,7 @@ struct Edge {
 impl Prover {
     /// An identical function to `super::Prover::prove`, except this is a helper for the recursion,
     /// which we use to manage attempting to prove the contrapositive.
-    fn prove(&mut self, req: Inequality, recurse: bool) -> ProofResult {
+    fn prove(&self, req: Inequality, recurse: bool) -> ProofResult {
         // Attempts to prove the requirement by finding the path the shortest length from req.lhs
         // to req.rhs
         //
@@ -134,7 +134,7 @@ impl Prover {
     /// A dedicated function for attempting to prove via the "split" method
     ///
     /// This is detailed above, in the doc comment for `Prover.try_splits`.
-    fn prove_splits(&mut self, req: Inequality, recurse: bool) -> ProofResult {
+    fn prove_splits(&self, req: Inequality, recurse: bool) -> ProofResult {
         // We require that the requirement has all terms on the right-hand side in order to properly
         // break it apart to find the upper bound - that way we can simply start from 0 and find
         // the upper bound on the negation, just as we would in `prove`.
@@ -442,7 +442,7 @@ impl Prover {
     }
 
     // A helper function for use in `<Prover as super::Prover>::new`
-    fn establish_stack(&mut self, stack: &mut Vec<Inequality>, negated: &mut bool) -> bool {
+    fn establish_stack(&self, stack: &mut Vec<Inequality>, negated: &mut bool) -> bool {
         while let Some(stack_ineq) = stack.pop() {
             let local_ineq = || match negated {
                 true => stack_ineq.clone().negate(),
@@ -495,7 +495,7 @@ impl Prover {
     }
 }
 
-impl<'a> super::Prover<'a> for Prover {
+impl<'a> SimpleProver<'a> for Prover {
     fn new(reqs: Vec<Requirement<'a>>) -> Self {
         let mut prover = Prover {
             nodes: Vec::new(),
@@ -583,7 +583,7 @@ impl<'a> super::Prover<'a> for Prover {
         prover
     }
 
-    fn prove(&mut self, req: &Requirement) -> ProofResult {
+    fn prove(&self, req: &Requirement) -> ProofResult {
         let (ineq, mut stack) = Inequality::make_stack(req.clone());
         let mut negated = false;
 
@@ -597,13 +597,5 @@ impl<'a> super::Prover<'a> for Prover {
             true => self.prove(ineq.negate(), true),
             false => self.prove(ineq, true),
         }
-    }
-
-    fn define(&'a self, x: Ident<'a>, expr: &'a Expr<'a>) -> Self {
-        todo!()
-    }
-
-    fn shadow(&self, x: Ident<'a>) -> Self {
-        todo!()
     }
 }
