@@ -18,6 +18,9 @@ pub enum Expr<'a> {
     Neg(Box<Expr<'a>>),
 
     /// 1/e
+    /// The bool represents the rounding direction:
+    ///   Recip(x, false) = 1//x (round down)
+    ///   Recip(x, true)  = 1/^x (round up)
     Recip(Box<Expr<'a>>, bool),
 
     /// e[0] + e[1] + ...

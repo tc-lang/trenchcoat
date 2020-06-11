@@ -1,6 +1,6 @@
 use super::ast::Ident;
 use super::bound::{Bound, DescriptiveBound, Relation, RelationKind};
-use super::bound_group::{BoundGroup, BoundRef, RequirementRef};
+use super::bound_group::BoundGroup;
 use super::expr::{self, Atom, Expr};
 use super::int::{Int, Rational};
 use std::iter::Iterator;
@@ -11,6 +11,8 @@ use std::iter::Iterator;
 // perhaps we don't make that assumption and instead simplify them then. This would perhaps be less
 // efficient but make mistakes less likely. (Wouldn't attributes for this be so nice? We could
 // consider adding a phantom type to Expr and Bound also to garentee this.)
+
+const TRY_NO_SUB: bool = true;
 
 /// Minimizer is a type for generating lower bounds on an expression, given a set of requirements.
 /// It can be constructed with `Minimizer::new`, see that documentation for more details.
@@ -28,20 +30,22 @@ pub struct Minimizer<'a> {
 
     /// The BoundGroup of the requirements that are assumed to be true.
     given: BoundGroup<'a>,
-    /// A map of requirement id (from given) to whether or not a substitution had already been made
-    /// from the requirement.
-    tried: Vec<bool>,
 
     /// The permutation group that this node is permuting.
     /// None if this is a final node.
-    permutation_group: Option<Vec<(DescriptiveBound<'a>, usize)>>,
+    /// The tuple is (Bound, solving.sub(bound), requirement ID)
+    permutation_group: Option<Vec<(DescriptiveBound<'a>, Expr<'a>, usize)>>,
     /// The index of the next bound in permutation_group to try and substitute.
     group_idx: usize,
 
     /// The maximum number of childeren.
-    max_depth: usize,
+    budget: isize,
+    finished: bool,
     /// An optional current child. This will be a minimizer created from making a substitution.
     child: Option<Box<Minimizer<'a>>>,
+    pg_id: usize,
+
+    //indent: String,
 }
 
 /// Maximizer is a type for generating upper bounds on an expression, given a set of requirements.
@@ -53,11 +57,13 @@ pub struct Maximizer<'a> {
     solving: Expr<'a>,
     vars: Vec<Ident<'a>>,
     given: BoundGroup<'a>,
-    tried: Vec<bool>,
-    permutation_group: Option<Vec<(DescriptiveBound<'a>, usize)>>,
+    permutation_group: Option<Vec<(DescriptiveBound<'a>, Expr<'a>, usize)>>,
     group_idx: usize,
-    max_depth: usize,
+    budget: isize,
+    finished: bool,
     child: Option<Box<Maximizer<'a>>>,
+    pg_id: usize,
+    //indent: String,
 }
 
 impl<'a: 'b, 'b> Minimizer<'a> {
@@ -78,26 +84,34 @@ impl<'a: 'b, 'b> Minimizer<'a> {
     pub fn new(
         solve: Expr<'a>,
         given: BoundGroup<'a>,
-        tried: Vec<bool>,
-        max_depth: usize,
+        budget: isize,
+        //indent: String,
     ) -> Minimizer<'a> {
         let vars = solve.variables();
         Minimizer {
             solving: solve,
             vars,
             given,
-            tried,
             permutation_group: None,
             group_idx: 0,
-            max_depth,
+            budget,
+            finished: false,
             child: None,
+            pg_id: 0,
+            //indent,
         }
     }
 
-    pub fn new_root(solve: Expr<'a>, given: BoundGroup<'a>, max_depth: usize) -> Minimizer<'a> {
+    pub fn new_root(solve: Expr<'a>, given: BoundGroup<'a>, budget: isize) -> Minimizer<'a> {
         // `tried` is initialized with every element false.
         let max_req_id = given.max_requirement_id();
-        Self::new(solve, given, vec![false; max_req_id], max_depth)
+        let max_pg_id = given.max_pg_id();
+        Self::new(
+            solve,
+            given,
+            budget,
+            //" | ".to_string(),
+        )
     }
 
     /// Returns an iterator of evaluated bounds.
@@ -108,34 +122,60 @@ impl<'a: 'b, 'b> Minimizer<'a> {
         self.filter_map(|expr| Some(expr.eval()?.as_lower_bound()))
     }
 
-    fn find_permutation_group(&mut self) {
-        // Find the permutation group of the first bound that we've not yet subbed.
-        self.permutation_group = self
-            .given
-            .iter()
-            // BoundRef -> (BoundRef, requirement ID)
-            .map(|bound| (bound, bound.requirement().unwrap().id()))
-            // Filter requirements we've already used
-            .filter(|(_, req)| !self.tried[*req])
-            // (BoundRef, req ID) -> (BoundRef, subbed and simplified Expr, req ID)
-            .filter_map(|(bound, req)| {
-                Some((
-                    bound,
-                    Self::sub_bound(&self.solving, &*bound)?.simplify(),
-                    req,
-                ))
-            })
-            // Filter out subs that have no effect on the expression
-            .filter(|(_, expr, _)| *expr != self.solving)
-            .map(|(bound, _, _)| bound.permutation_group())
-            .next()
-            .map(|perm_grp| {
-                perm_grp
-                    .iter()
-                    .map(|bound| ((**bound).clone(), bound.requirement().unwrap().id()))
-                    .collect()
-            });
+}
+
+macro_rules! find_pg_group_fn {
+    () => {
+        fn find_permutation_group(&mut self) {
+            let mut pg_id = 0;
+            // Find the permutation group of the first bound that we've not yet subbed.
+            self.permutation_group = self
+                .given
+                .iter()
+                // BoundRef -> (BoundRef, requirement ID)
+                .map(|bound| (bound, bound.requirement().unwrap().id()))
+                // Filter requirements we've already used
+                //.filter(|(_, req)| !self.tried[*req])
+                //.filter(|(bound, _)| !self.tried_pg[bound.permutation_group_id()])
+                .filter(|(bound, _)| self.vars.contains(&bound.subject))
+                // (BoundRef, req ID) -> (BoundRef, subbed and simplified Expr, req ID)
+                .filter_map(|(bound, req)| {
+                    Some((
+                        bound,
+                        Self::sub_bound(&self.solving, &*bound)?,
+                        req,
+                    ))
+                })
+                // Filter out subs that have no effect on the expression
+                //.filter(|(_, expr, _)| *expr != self.solving)
+                .map(|(bound, _, _)| bound.permutation_group())
+                .next()
+                .map(|perm_grp| {
+                    // TODO This finds the permutation group 3 times :(
+                    pg_id = perm_grp[0].permutation_group_id();
+                    perm_grp
+                        .iter()
+                        .filter_map(|bound| {
+                            Some((
+                                (**bound).clone(),
+                                Self::sub_bound(&self.solving, &*bound)?.simplify(),
+                                bound.requirement().unwrap().id(),
+                            ))
+                        })
+                        .collect()
+                });
+            self.pg_id = pg_id;
+        }
     }
+}
+
+
+impl<'a: 'b, 'b> Minimizer<'a> {
+    find_pg_group_fn!();
+}
+
+impl<'a: 'b, 'b> Maximizer<'a> {
+    find_pg_group_fn!();
 }
 
 impl<'a: 'b, 'b> Maximizer<'a> {
@@ -156,26 +196,34 @@ impl<'a: 'b, 'b> Maximizer<'a> {
     pub fn new(
         solve: Expr<'a>,
         given: BoundGroup<'a>,
-        tried: Vec<bool>,
-        max_depth: usize,
+        budget: isize,
+        //indent: String,
     ) -> Maximizer<'a> {
         let vars = solve.variables();
         Maximizer {
             solving: solve,
             vars,
             given,
-            tried,
             permutation_group: None,
             group_idx: 0,
-            max_depth,
+            budget,
+            finished: false,
             child: None,
+            pg_id: 0,
+            //indent,
         }
     }
 
-    pub fn new_root(solve: Expr<'a>, given: BoundGroup<'a>, max_depth: usize) -> Maximizer<'a> {
+    pub fn new_root(solve: Expr<'a>, given: BoundGroup<'a>, budget: isize) -> Maximizer<'a> {
         // `tried` is initialized with every element false
         let max_req_id = given.max_requirement_id();
-        Self::new(solve, given, vec![false; max_req_id], max_depth)
+        let max_pg_id = given.max_pg_id();
+        Self::new(
+            solve,
+            given,
+            budget,
+            //" | ".to_string(),
+        )
     }
 
     /// Returns an iterator of evaluated bounds.
@@ -184,35 +232,6 @@ impl<'a: 'b, 'b> Maximizer<'a> {
         self,
     ) -> std::iter::FilterMap<Self, fn(Expr<'a>) -> std::option::Option<Int>> {
         self.filter_map(|expr| Some(expr.eval()?.as_upper_bound()))
-    }
-
-    fn find_permutation_group(&mut self) {
-        // Find the permutation group of the first bound that we've not yet subbed.
-        self.permutation_group = self
-            .given
-            .iter()
-            // BoundRef -> (BoundRef, requirement ID)
-            .map(|bound| (bound, bound.requirement().unwrap().id()))
-            // Filter requirements we've already used
-            .filter(|(_, req)| !self.tried[*req])
-            // (BoundRef, req ID) -> (BoundRef, subbed and simplified Expr, req ID)
-            .filter_map(|(bound, req)| {
-                Some((
-                    bound,
-                    Self::sub_bound(&self.solving, &*bound)?.simplify(),
-                    req,
-                ))
-            })
-            // Filter out subs that have no effect on the expression
-            //.filter(|(_, expr, _)| *expr != self.solving)
-            .map(|(bound, _, _)| bound.permutation_group())
-            .next()
-            .map(|perm_grp| {
-                perm_grp
-                    .iter()
-                    .map(|bound| ((**bound).clone(), bound.requirement().unwrap().id()))
-                    .collect()
-            });
     }
 }
 
@@ -228,18 +247,31 @@ macro_rules! optimizer_next_body {
             }
         }
 
-        // If we've reached the maximum depth, we should not continue.
-        if $self.max_depth == 0 {
-            //println!("Bye");
+        if $self.finished {
             return None;
+        }
+
+        if $self.budget <= 0 {
+            $self.finished = true;
+            /*println!(
+                "{}YIELDING {} = {}",
+                $self.indent,
+                $self.solving.clone(),
+                match $self.solving.eval() {
+                    Some(x) => x,
+                    None => Int::Infinity.into(),
+                }
+            );*/
+            return Some($self.solving.clone());
         }
 
         if $self.permutation_group.is_none() {
             $self.find_permutation_group();
             if $self.permutation_group.is_none() {
-                $self.max_depth = 0;
+                $self.finished = true;
                 /*println!(
-                    "YIELDING {} = {}",
+                    "{}YIELDING {} = {}",
+                    $self.indent,
                     $self.solving.clone(),
                     match $self.solving.eval() {
                         Some(x) => x,
@@ -249,19 +281,22 @@ macro_rules! optimizer_next_body {
                 return Some($self.solving.clone());
             }
         }
+
         let permutation_group = $self.permutation_group.as_ref()?;
 
         // Now we want to make another substitution.
         // We will find a variable with a bound that we can use.
-        let (bound, requirement_id) = loop {
+        let (bound, subbed_expr, rg_id) = loop {
             //println!("i: {}", $self.group_idx);
             // If there are no more substitutions to make, we can finish.
             // To do this, we'll mark this as the final child (see the early return case above) and
             // return the current expression since it is a bound of itself.
-            if $self.group_idx >= permutation_group.len() {
-                $self.max_depth = 0;
+            if $self.group_idx > permutation_group.len() || !TRY_NO_SUB && $self.group_idx == permutation_group.len() {
+                $self.finished = true;
+                $self.group_idx += 1;
                 /*println!(
-                    "YIELDING {} = {}",
+                    "{}YIELDING {} = {}",
+                    $self.indent,
                     $self.solving.clone(),
                     match $self.solving.eval() {
                         Some(x) => x,
@@ -270,44 +305,54 @@ macro_rules! optimizer_next_body {
                 );*/
                 return Some($self.solving.clone());
             }
-
-            let (ref bound, requirement_id) = permutation_group[$self.group_idx];
-
-            if $self.tried[requirement_id] {
-                //println!("Already tried...");
+            if $self.group_idx == permutation_group.len() {
                 $self.group_idx += 1;
-                continue;
+                break (None, $self.solving.clone(), 10000);
             }
+
+            let (ref bound, ref subbed_expr, requirement_id) = permutation_group[$self.group_idx];
 
             $self.group_idx += 1;
 
             // We only need to make a substitution if the expression contains the variable.
-            if $self.vars.contains(&bound.subject) {
-                break (bound, requirement_id);
-            }
+            // We actually know this is true since we chose it to be when we selected the
+            // permutation group
+            //if $self.vars.contains(&bound.subject) {
+                break (Some(bound), subbed_expr.clone(), requirement_id);
+            //}
             //println!("{} doesn't include {}", $self.solving, bound.subject);
         };
 
-        let mut new_tried = $self.tried.clone();
-        new_tried[requirement_id] = true;
-
-        //println!("Subbing {}", bound);
+        /*println!("{}Subbing {}", $self.indent, match bound {
+            Some(b) => format!("{}", b),
+            None => "nout".into(),
+        });*/
 
         // Substitute the bound
-        let new_expr = match Self::sub_bound(&$self.solving, &bound) {
+        /*let new_expr = match Self::sub_bound(&$self.solving, &bound) {
             Some(expr) => expr.simplify(),
             None => return $self.next(),
-        };
+        };*/
 
-        //println!("Solving: {} <== {}", &$self.solving, new_expr);
+        /*println!(
+            "{}Solving: {} <== {}",
+            $self.indent, &$self.solving, subbed_expr
+        );*/
+
+        let cost = permutation_group.len() as isize;
+        let new_budget = ($self.budget - cost)/(cost);
+        println!("{} {}", $self.budget, new_budget);
 
         //println!("Making a child!");
         // Create the new child
         $self.child = Some(Box::new(Self::new(
-            new_expr,
-            $self.given.sub_bound(&bound),
-            new_tried,
-            $self.max_depth - 1,
+            subbed_expr.clone(),
+            match bound {
+                Some(bound) => $self.given.exclude(rg_id, $self.pg_id).sub_bound(bound),
+                None => $self.given.exclude(rg_id, $self.pg_id).clone(),
+            },
+            new_budget,
+            //$self.indent.clone() + " | ",
         )));
 
         $self.next()
@@ -357,22 +402,12 @@ pub fn bound_sub<'a>(
 impl<'a: 'b, 'b> Iterator for Minimizer<'a> {
     type Item = Expr<'a>;
     fn next(&mut self) -> Option<Expr<'a>> {
-        /*println!(
-            "\nMinimizer next on ({}) {}",
-            self.group_idx,
-            self.solving.clone()
-        );*/
         optimizer_next_body!(self)
     }
 }
 impl<'a: 'b, 'b> Iterator for Maximizer<'a> {
     type Item = Expr<'a>;
     fn next(&mut self) -> Option<Expr<'a>> {
-        /*println!(
-            "\nMaximizer next on ({}) {}",
-            self.group_idx,
-            self.solving.clone()
-        );*/
         optimizer_next_body!(self)
     }
 }

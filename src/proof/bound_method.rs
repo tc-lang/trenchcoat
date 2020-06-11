@@ -7,7 +7,7 @@ pub type FullProver<'a> = ScopedSimpleProver<'a, Prover<'a>>;
 
 pub struct Prover<'a> {
     bound_group: BoundGroup<'a>,
-    max_depth: usize,
+    max_depth: isize,
 }
 
 impl<'a> SimpleProver<'a> for Prover<'a> {
@@ -20,37 +20,37 @@ impl<'a> SimpleProver<'a> for Prover<'a> {
     }
 
     fn prove(&self, req: &Requirement) -> ProofResult {
-        // The SimpleProver trait doesn't allow us to assume that req is simplified so we must
-        // simplify it ourself.
-        let req = req.simplify();
+        // req is true if and only if ge0 >= 0
+        // So we will bound ge0 and see if we can prove that it's >= 0 or that it's < 0
+        let ge0 = req.ge0().simplify();
 
         let mini = Minimizer::new_root(
-            req.ge0().simplify(),
+            ge0.clone(),
             self.bound_group.clone(),
             self.max_depth,
         );
-        // The statement is always true if a lower bound is >= 0
         if mini.int_bounds().any(|bound| bound >= Int::ZERO) {
             return ProofResult::True;
         }
-        // The statement is always false if an upper bound is < 0
+
         let maxi = Maximizer::new_root(
-            req.ge0().simplify(),
+            ge0,
             self.bound_group.clone(),
             self.max_depth,
         );
         if maxi.int_bounds().any(|bound| bound < Int::ZERO) {
             return ProofResult::False;
         }
+
         ProofResult::Undetermined
     }
 }
 
 impl<'a> Prover<'a> {
-    pub fn max_depth(&self) -> usize {
+    pub fn max_depth(&self) -> isize {
         self.max_depth
     }
-    pub fn set_max_depth(&mut self, max_depth: usize) {
+    pub fn set_max_depth(&mut self, max_depth: isize) {
         self.max_depth = max_depth
     }
 }

@@ -320,6 +320,7 @@ impl<'a> Relation<'a> {
     pub fn variables(&self) -> Vec<Ident<'a>> {
         let mut vars = self.left.variables();
         vars.extend(self.right.variables());
+        vars.sort_unstable();
         vars.dedup();
         vars
     }
