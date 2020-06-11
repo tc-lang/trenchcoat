@@ -9,8 +9,10 @@ mod bound_group;
 mod bound_method;
 pub mod error;
 mod expr;
+mod graph;
 mod int;
 mod optimiser;
+mod term;
 
 #[cfg(test)]
 mod tests;
@@ -19,7 +21,6 @@ use self::bound::{Bound, DescriptiveBound, Relation, RelationKind};
 use self::error::Error;
 use self::expr::{Atom, Expr, ONE, ZERO};
 use crate::ast::{self, proof::Condition as AstCondition, Ident};
-
 use std::fmt;
 use std::ops::Not;
 

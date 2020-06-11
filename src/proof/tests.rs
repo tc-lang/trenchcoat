@@ -1,7 +1,46 @@
 use super::bound_method::{FullProver, Prover as BoundsProver};
+use super::graph::Prover as GraphProver;
 use super::{ProofResult, Prover, Requirement, SimpleProver};
 use crate::ast::proof::Condition;
 use crate::tokens::tokenize;
+
+#[cfg(not(any(feature = "graph", feature = "bounds")))]
+compile_error!("Either the 'graph' feature or the 'bounds' feature must be enabled");
+
+#[cfg(all(feature = "graph", feature = "bounds"))]
+compile_error!("Only one of the 'graph' feature or the 'bounds' feature can be enabled");
+
+#[cfg(feature = "bounds")]
+macro_rules! make_prover {
+    ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
+        // Option A: Bounds method
+        let mut bounds_prover = BoundsProver::new($reqs.clone());
+        bounds_prover.set_max_depth($depth);
+        $name = FullProver::from(bounds_prover);
+    };
+}
+
+#[cfg(feature = "graph")]
+macro_rules! make_prover {
+    ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
+        // Option B: Graph method
+        $name = GraphProver::new($reqs.clone())
+    };
+}
+
+#[cfg(any(
+    not(any(feature = "bounds", feature = "graph")),
+    all(feature = "bounds", feature = "graph")
+))]
+macro_rules! make_prover {
+    ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
+        // A dummy macro so that we only get one error if the features are wrong
+        //
+        // Because we still need to provide a type, we'll actually default to the graph prover to
+        // avoid errors because it's simpler
+        $name = GraphProver::new($reqs.clone())
+    };
+}
 
 const ONLY_TEST: Option<ProofResult> = None;
 
@@ -54,7 +93,7 @@ macro_rules! requirements {
                         "\n\n".to_string(),
                         |mut s, (is_contra, stmt, result, expected)| {
                             s + &(match is_contra {
-                                false => format!("    {}\t gave: {}, expected: {}", stmt, result, expected),
+                                false => format!("    {} \t gave: {}, expected: {}", stmt, result, expected),
                                 true => format!("  ¬({})\t gave: {}, expected: {}", stmt, result, expected),
                             } + "\n")
                         },
@@ -105,15 +144,12 @@ fn example_test() {
         "x/2+y >= 1",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs.clone());
     // We can garentee that this will be worst case O(n^4)
-    bounds_prover.set_max_depth(3);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 3);
 
     /*
     let tokens = tokenize("8 - y");
     let expr = crate::ast::proof::Expr::parse(&tokens).unwrap();
-
     let mini = super::optimiser::Minimizer::new(
         reqs.iter()
             .map(|req| {
@@ -203,10 +239,8 @@ fn test_3_vars_different_coeffs() {
         "y <= z+2",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
     // We can garentee that this will be worst case O(n^3)
-    bounds_prover.set_max_depth(3);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 3);
 
     prove!("x <= z+5" => ProofResult::True);
 
@@ -223,10 +257,8 @@ fn test_3_variables_different_coeffs_2() {
         "y <= z/2+2",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
     // We can garentee that this will be worst case O(n^3)
-    bounds_prover.set_max_depth(3);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 3);
 
     prove!("x <= z+4" => ProofResult::True);
 
@@ -246,9 +278,7 @@ fn test_3_variables() {
         "z <= 3",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(4);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 4);
 
     prove!("x <= 11" => ProofResult::True);
     prove!("x <= 10" => ProofResult::True);
@@ -299,9 +329,7 @@ fn test_3_variables_2() {
         "z <= x",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(4);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 4);
 
     prove!("x <= 11" => ProofResult::True);
     prove!("x <= 10" => ProofResult::True);
@@ -367,9 +395,7 @@ fn test_lots_of_variables() {
         "y >= 0",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs.clone());
-    bounds_prover.set_max_depth(5);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 5);
 
     let tokens = tokenize("y-2*n");
     let expr = crate::ast::proof::Expr::parse(&tokens).unwrap();
@@ -432,7 +458,7 @@ fn test_lots_of_variables() {
     prove!("10*y <= 198" => ProofResult::True);
     // TODO The next statement is true but quite hard to prove.
     // Maybe we can prove it?
-    // assert!(prove(&prover, "10*y <= 197") == ProofResult::True);
+    prove!("10*y <= 197" => ProofResult::True);
     prove!("y <= 20" => ProofResult::True);
     prove!("y <= 19" => ProofResult::True);
     prove!("0 <= z" => ProofResult::True);
@@ -485,9 +511,7 @@ fn new_tests<'a>() {
         "l >= 0",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(7);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 7);
     // Note that l <= z <= y <= f + g + b/2 <= l/4 + l/4 + l/2 = l
     // Hence l = z = y = f + g + b/2
 
@@ -573,9 +597,7 @@ fn real_world_example() {
         "i2-1 <= end",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(3);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 3);
 
     // So, we want to index with i and j!
     prove!("i >= 0" => ProofResult::True);
@@ -635,9 +657,7 @@ fn really_long_chain() {
         "y <= z",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(26);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 26);
 
     prove!("a <= z" => ProofResult::True);
     prove!("a+1 <= z" => ProofResult::Undetermined);
@@ -690,9 +710,7 @@ fn really_long_cycle() {
         "z <= a",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(30);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 30);
 
     prove!("a <= z" => ProofResult::True);
     prove!("z <= a" => ProofResult::True);
@@ -748,9 +766,7 @@ fn linked_cycles() {
         // a = b = ... = k <= l <= m <= n <= o <= p = q = ... = z
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(26);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 26);
 
     prove!("a <= z" => ProofResult::True);
     prove!("z <= a" => ProofResult::Undetermined);
@@ -822,9 +838,7 @@ fn linked_cycles_2() {
         // a = b = .. = m <= n <= o <= p = q = .. z
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(26);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 26);
 
     prove!("a <= z" => ProofResult::True);
     prove!("z <= a" => ProofResult::Undetermined);
@@ -902,9 +916,7 @@ fn linked_cycles_3() {
         // a = b = .. z
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(26);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 26);
 
     prove!("a <= z" => ProofResult::True);
     prove!("z <= a" => ProofResult::True);
@@ -934,9 +946,7 @@ fn sub_carry() {
         "d >= 0",
     ], prover);
 
-    let mut bounds_prover = BoundsProver::new(reqs);
-    bounds_prover.set_max_depth(4);
-    prover = FullProver::from(bounds_prover);
+    make_prover!(prover, reqs, max_depth = 4);
 
     prove!("0 <= a+c" => ProofResult::True);
     prove!("0 <= a+b" => ProofResult::Undetermined);

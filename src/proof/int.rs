@@ -21,8 +21,8 @@ pub struct EvalInt {
 /// Unbounded rational number.
 #[derive(Debug, Clone, Copy)]
 pub struct Rational {
-    numerator: Int,
-    denominator: Int,
+    pub numerator: Int,
+    pub denominator: Int,
 }
 
 impl Int {
