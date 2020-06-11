@@ -2,7 +2,7 @@
 
 use super::bound::RelationKind;
 use super::expr::{self, Expr};
-use super::int::Int;
+use super::int::{Int, Rational};
 use super::Requirement;
 use gcd::Gcd;
 
@@ -32,15 +32,18 @@ impl Term {
 
         match expr {
             Atom(Named(ident)) => (vec![Term::single_var(ident.name.into())], 0, None),
-            Atom(Literal(Int::I(i))) => (vec![], i, None),
-            Atom(Literal(Infinity)) | Atom(Literal(NegInfinity)) => {
-                panic!("Infinite integer literals are disallowed");
-            }
+
+            Atom(Literal(rat)) => match (rat.numerator, rat.denominator) {
+                (Int::I(n), Int::I(1)) => (vec![], n, None),
+                (Int::I(n), Int::I(d)) => (vec![], n, Some(Atom(Literal(Int::I(d).into())))),
+                (_, Infinity) | (_, NegInfinity) => (vec![], 0, None),
+                _ => panic!("Infinite integer literals are disallowed"),
+            },
             // ---
-            Recip(expr) => (vec![], 1, Some(*expr)),
+            Recip(expr, _) => (vec![], 1, Some(*expr)),
             // ---
             Neg(expr) => {
-                let ex = Prod(vec![*expr, Atom(Literal(Int::I(-1)))]);
+                let ex = Prod(vec![*expr, Atom(Literal(Rational::MINUS_ONE))]);
                 Term::simplify_to_lists(ex)
             }
             // ---
@@ -197,23 +200,29 @@ impl Term {
                 // Everything has been merged into the list of terms, so we're done
                 (terms, 0, None)
             }
-            Atom(Literal(Int::I(i))) => {
-                // Multiply each of the terms and return.
-                //
-                // We know that they'll still be sorted because the implementation of Ord for Term
-                // is first based on the comparing variables, and we're guaranteed to have no
-                // duplicate terms having the same variables but different coefficients.
-                terms.iter_mut().for_each(|t| t.coef *= i);
-                (terms, constant * i, None)
-            }
-            Atom(Literal(Infinity)) | Atom(Literal(NegInfinity)) => {
-                panic!("Infinite integer literals are disallowed");
-            }
+            Atom(Literal(rat)) => match (rat.numerator, rat.denominator) {
+                (Int::I(n), Int::I(d)) => {
+                    let agg = match d {
+                        1 => None,
+                        d => Some(Atom(Literal(Int::I(d).into()))),
+                    };
+
+                    // Multiply each of the terms and return.
+                    //
+                    // We know that they'll still be sorted because the implementation of Ord for Term
+                    // is first based on the comparing variables, and we're guaranteed to have no
+                    // duplicate terms having the same variables but different coefficients.
+                    terms.iter_mut().for_each(|t| t.coef *= n);
+                    (terms, constant * n, None)
+                }
+                (_, Infinity) | (_, NegInfinity) => (vec![], 0, None),
+                _ => panic!("Infinite integer literals are disallowed"),
+            },
             // ---
-            Recip(expr) => (terms, constant, Some(*expr)),
+            Recip(expr, _) => (terms, constant, Some(*expr)),
             // ---
             Neg(expr) => {
-                let ex = Prod(vec![*expr, Atom(Literal(Int::I(-1)))]);
+                let ex = Prod(vec![*expr, Atom(Literal(Rational::MINUS_ONE))]);
                 Term::mul_set_by_expr(terms, constant, ex)
             }
             // ---

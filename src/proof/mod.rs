@@ -5,18 +5,24 @@
 //! without error.
 
 mod bound;
+mod bound_group;
+mod bound_method;
 pub mod error;
 mod expr;
 mod graph;
 mod int;
+mod optimiser;
 mod term;
 
 #[cfg(test)]
 mod tests;
 
-use crate::ast::{self, Ident};
-use error::Error;
-use expr::Expr;
+use self::bound::{Bound, DescriptiveBound, Relation, RelationKind};
+use self::error::Error;
+use self::expr::{Atom, Expr, ONE, ZERO};
+use crate::ast::{self, proof::Condition as AstCondition, Ident};
+use std::fmt;
+use std::ops::Not;
 
 /// Attempts to prove that the entire contents of the program is within the bounds specified by the
 /// proof rules.
@@ -29,8 +35,105 @@ pub struct Requirement<'a> {
     relation: bound::Relation<'a>,
 }
 
+impl<'a> Requirement<'a> {
+    /// Returns a Requirement which is true iff self is false.
+    pub fn contra_positive(&self) -> Requirement<'a> {
+        Requirement {
+            relation: self.relation.contra_positive(),
+        }
+    }
+
+    /// Returns a requirement with a simplified relation.
+    pub fn simplify(&self) -> Requirement<'a> {
+        Requirement {
+            relation: self.relation.simplify(),
+        }
+    }
+
+    /// Substitute `x` with `with` in self and return the result.
+    pub fn substitute(&self, x: Ident<'a>, with: &Expr<'a>) -> Requirement<'a> {
+        Requirement {
+            relation: self.relation.substitute(x, with),
+        }
+    }
+
+    /// Returns a vector of the distinct variables the requirement applies to.
+    pub fn variables(&self) -> Vec<Ident<'a>> {
+        self.relation.variables()
+    }
+
+    /// Returns the bounds on `name` given by self.
+    /// If no bounds are given or if they cannot be computed, None is returned.
+    pub fn bounds_on(&self, name: Ident<'a>) -> Option<Bound<'a>> {
+        self.relation.bounds_on(name)
+    }
+
+    /// Returns bounds specified by self.
+    /// The tuple contains the variable the bound is on and the bound itself.
+    /// It may not return all bounds since some bounds cannot yet be calculated.
+    fn bounds(&self) -> Vec<DescriptiveBound<'a>> {
+        self.relation.bounds()
+    }
+
+    fn as_relation<'b>(&'b self) -> &'b Relation<'a> {
+        &self.relation
+    }
+
+    /// Returns an expression that is >= 0 if and only if self is true.
+    pub fn ge0(&self) -> Expr<'a> {
+        match self.relation.relation {
+            // left <= right
+            // ==> 0 <= right-left
+            RelationKind::Le => Expr::Sum(vec![
+                self.relation.right.clone(),
+                Expr::Neg(Box::new(self.relation.left.clone())),
+            ]),
+            // left >= right
+            // ==> left-right >= 0
+            RelationKind::Ge => Expr::Sum(vec![
+                self.relation.left.clone(),
+                Expr::Neg(Box::new(self.relation.right.clone())),
+            ]),
+        }
+    }
+}
+
+impl<'a> From<&AstCondition<'a>> for Requirement<'a> {
+    fn from(cond: &AstCondition<'a>) -> Requirement<'a> {
+        use ast::proof::CompareOp::{Ge, Le};
+        use ast::proof::ConditionKind::{Compound, Malformed, Simple};
+        match &cond.kind {
+            // lhs <= rhs => 0 <= rhs-lhs
+            Simple { lhs, op: Le, rhs } => Requirement {
+                relation: Relation {
+                    left: Expr::from(lhs),
+                    relation: RelationKind::Le,
+                    right: Expr::from(rhs),
+                },
+            },
+
+            // lhs >= rhs => lhs-rhs >= 0
+            Simple { lhs, op: Ge, rhs } => Requirement {
+                relation: Relation {
+                    left: Expr::from(lhs),
+                    relation: RelationKind::Ge,
+                    right: Expr::from(rhs),
+                },
+            },
+
+            Compound {
+                lhs: _,
+                op: _,
+                rhs: _,
+            } => todo!(),
+
+            Malformed => panic!("cannot create requirement from malformed condition"),
+        }
+    }
+}
+
 /// A result from an attempt to prove something.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum ProofResult {
     /// The statement was false.
     False,
@@ -38,6 +141,18 @@ pub enum ProofResult {
     Undetermined,
     /// The statement was true.
     True,
+}
+
+impl Not for ProofResult {
+    type Output = ProofResult;
+    fn not(self) -> ProofResult {
+        use ProofResult::{False, True, Undetermined};
+        match self {
+            True => False,
+            Undetermined => Undetermined,
+            False => True,
+        }
+    }
 }
 
 pub trait SimpleProver<'a> {
@@ -72,10 +187,8 @@ pub trait Prover<'a> {
 
     /// Create a new prover whereby `x` is treated as a new identifier even if `x` was an
     /// identifier in self.
-    fn shadow(&self, x: Ident<'a>) -> Self;
+    fn shadow(&'a self, x: Ident<'a>) -> Self;
 }
-
-/*
 
 /// A utility type for implementing Prover with a SimpleProver
 ///
@@ -139,4 +252,24 @@ impl<'a, P: SimpleProver<'a>> ScopedSimpleProver<'a, P> {
         Self::Root(sp)
     }
 }
-*/
+
+impl<'a> fmt::Display for Requirement<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        write!(f, "{}", self.relation)
+    }
+}
+
+impl fmt::Display for ProofResult {
+    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+        use ProofResult::{False, True, Undetermined};
+        write!(
+            f,
+            "{}",
+            match self {
+                True => "True",
+                Undetermined => "Undetermined",
+                False => "False",
+            }
+        )
+    }
+}
