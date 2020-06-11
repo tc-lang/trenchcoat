@@ -4,19 +4,27 @@ use super::{ProofResult, Prover, Requirement, SimpleProver};
 use crate::ast::proof::Condition;
 use crate::tokens::tokenize;
 
+#[cfg(not(any(feature = "graph", feature = "bounds")))]
+compile_error!("Either the 'graph' feature or the 'bounds' feature must be enabled");
+
+#[cfg(all(feature = "graph", feature = "bounds"))]
+compile_error!("Only one of the 'graph' feature or the 'bounds' feature can be enabled");
+
+#[cfg(feature = "bounds")]
 macro_rules! make_prover {
     ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
-        // /*
         // Option A: Bounds method
         let mut bounds_prover = BoundsProver::new($reqs.clone());
         bounds_prover.set_max_depth($depth);
         $name = FullProver::from(bounds_prover);
-        // */
+    };
+}
 
-        /*
+#[cfg(feature = "graph")]
+macro_rules! make_prover {
+    ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
         // Option B: Graph method
         $name = GraphProver::new($reqs.clone())
-        */
     };
 }
 

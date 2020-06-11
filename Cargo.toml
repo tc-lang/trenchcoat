@@ -11,3 +11,7 @@ gcd = "2.0"
 
 [profile.test]
 opt-level = 3
+
+[features]
+graph = []
+bounds = []
