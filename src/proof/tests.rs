@@ -28,6 +28,20 @@ macro_rules! make_prover {
     };
 }
 
+#[cfg(any(
+    not(any(feature = "bounds", feature = "graph")),
+    all(feature = "bounds", feature = "graph")
+))]
+macro_rules! make_prover {
+    ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
+        // A dummy macro so that we only get one error if the features are wrong
+        //
+        // Because we still need to provide a type, we'll actually default to the graph prover to
+        // avoid errors because it's simpler
+        $name = GraphProver::new($reqs.clone())
+    };
+}
+
 const ONLY_TEST: Option<ProofResult> = None;
 
 macro_rules! requirements {
