@@ -18,6 +18,7 @@ pub struct EvalInt {
     bit_less: bool,
 }
 
+/// Unbounded rational number.
 #[derive(Debug, Clone, Copy)]
 pub struct Rational {
     numerator: Int,
@@ -29,6 +30,7 @@ impl Int {
     pub const ONE: Int = Int::I(1);
     pub const MINUS_ONE: Int = Int::I(-1);
 
+    /// Returns true iff self is not Infinity or -Infinity
     pub fn is_finite(&self) -> bool {
         use Int::{Infinity, NegInfinity, I};
         match self {
@@ -110,7 +112,7 @@ impl Rational {
         denominator: Int::ONE,
     };
 
-    // Returns 1/x
+    /// Returns 1/x
     pub fn recip(x: Int) -> Rational {
         Rational {
             numerator: Int::ONE,
@@ -153,16 +155,14 @@ impl Rational {
         self
     }
 
+    /// Evaluate the rational number, rounding down (not towards 0, down).
+    /// If the division is not exact, the returned EvalInt will contain the relivent epsilon/delta.
     pub fn eval_floor(self) -> EvalInt {
-        /*println!(
-            "eval_floor {}/{} = {}",
-            self.numerator,
-            self.denominator,
-            EvalInt::from(self.numerator).div_floor(self.denominator.into())
-        );*/
         EvalInt::from(self.numerator).div_floor(self.denominator.into())
     }
 
+    /// Evaluate the rational number, rounding up (not away from 0, up).
+    /// If the division is not exact, the returned EvalInt will contain the relivent epsilon/delta.
     pub fn eval_ceil(self) -> EvalInt {
         EvalInt::from(self.numerator).div_ceil(self.denominator.into())
     }
@@ -442,6 +442,10 @@ impl Int {
         result
     }
 
+    /// Returns:
+    /// -  1 if self > 0
+    /// -  0 if self = 0
+    /// - -1 if self < =
     pub fn signnum(&self) -> Int {
         match self.cmp(&Int::ZERO) {
             Ordering::Less => -Int::ONE,
@@ -450,6 +454,10 @@ impl Int {
         }
     }
 
+    /// Returns:
+    /// -  1 if self > 0
+    /// -  0 if self = 0
+    /// - -1 if self < =
     pub fn sign_i8(&self) -> i8 {
         match self.cmp(&Int::ZERO) {
             Ordering::Less => -1,
@@ -532,6 +540,8 @@ impl Mul for EvalInt {
                 EvalInt::ZERO
             };
 
+        // TODO Below is the start of a probably more improved version.
+        // It's more effort though.
         // (self + self.e - self.d)(rhs + rhs.e - rhs.d)
         // = self*rhs + self*rhs.e - self*rhs.d
         //   + self.e*rhs + self.e*rhs.e - self.e*rhs.d
@@ -599,6 +609,7 @@ impl Mul for EvalInt {
         //    - rhs.e || self.e && rhs.d
         //
 
+        /*
         let bit_more;
         let bit_less;
 
@@ -624,6 +635,7 @@ impl Mul for EvalInt {
             bit_more: true,
             bit_less: true,
         }
+        */
     }
 }
 

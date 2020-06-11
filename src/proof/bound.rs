@@ -1,9 +1,10 @@
-use super::expr::{Atom, Expr, ONE, MINUS_ONE, ZERO};
+use super::expr::{Atom, Expr, MINUS_ONE, ONE, ZERO};
 use super::optimiser::bound_sub;
 use crate::ast::Ident;
 use std::fmt;
 
 /// Represents a bound on something.
+/// For example `<= 2` or `>= x+y`
 #[derive(Debug, Clone, PartialEq)]
 pub enum Bound<'a> {
     /// The thing must be <= expr
@@ -12,6 +13,9 @@ pub enum Bound<'a> {
     Ge(Expr<'a>),
 }
 
+/// Represents a bound on a named variables.
+/// Contains a bound and a specfic variable that the bound applies to.
+/// For example `x <= 2` or `a >= x+y`
 #[derive(Debug, Clone, PartialEq)]
 pub struct DescriptiveBound<'a> {
     pub subject: Ident<'a>,
@@ -48,11 +52,12 @@ impl<'a> Bound<'a> {
         }
     }
 
-    /// Call Expr::simplify on the bound expression
+    /// Call Expr::simplify on the bound expression and return the new bound
     pub fn simplify(&self) -> Bound<'a> {
         self.map(Expr::simplify)
     }
 
+    /// Return the RelationKind if the bound expression was on the RHS of a relation.
     pub fn relation_kind(&self) -> RelationKind {
         match self {
             Bound::Le(_) => RelationKind::Le,
@@ -262,10 +267,7 @@ impl<'a> Relation<'a> {
 
     /// Returns a list of all the bounds that can be computed from self.
     pub fn bounds(&self) -> Vec<DescriptiveBound<'a>> {
-        let mut variables = self.left.variables();
-        variables.extend(self.right.variables());
-        variables.dedup();
-        variables
+        self.variables()
             .iter()
             .filter_map(|x| {
                 Some(DescriptiveBound {

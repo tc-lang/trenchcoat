@@ -675,6 +675,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                 Atom::Named(ident) => Some(*ident),
             })
             .collect::<Vec<Ident>>();
+        vars.sort_unstable();
         vars.dedup();
         vars
     }

@@ -50,15 +50,15 @@ macro_rules! requirements {
         macro_rules! cleanup {
             () => {
                 if !errors.is_empty() {
-                    panic!("{}", errors.into_iter().fold(String::new(), |mut s, (is_contra, stmt, result, expected)| {
-                        if s.is_empty() {
-                            s.push('\n');
-                        }
-                        s + &(match is_contra {
-                            false => format!("{} gave: {}, expected: {}", stmt, result, expected),
-                            true => format!("!({}) gave: {}, expected: {}", stmt, result, expected),
-                        })
-                    }));
+                    panic!("{}", errors.into_iter().fold(
+                        "\n\n".to_string(),
+                        |mut s, (is_contra, stmt, result, expected)| {
+                            s + &(match is_contra {
+                                false => format!("    {}\t gave: {}, expected: {}", stmt, result, expected),
+                                true => format!("  ¬({})\t gave: {}, expected: {}", stmt, result, expected),
+                            } + "\n")
+                        },
+                    ) + "\n");
                 }
             }
         }
@@ -73,7 +73,10 @@ fn contra_positive_test() {
     //   ¬(a >= z)
     // ==> a < z
     // ==> a+1 <= z
-    assert_eq!(format!("{}", req.contra_positive().simplify()), "a + 1 <= z");
+    assert_eq!(
+        format!("{}", req.contra_positive().simplify()),
+        "a + 1 <= z"
+    );
 
     let tokens = tokenize("a <= z");
     let cond = Condition::parse(&tokens).unwrap();
@@ -81,7 +84,10 @@ fn contra_positive_test() {
     //   ¬(a <= z)
     // ==> a > z
     // ==> a-1 >= z
-    assert_eq!(format!("{}", req.contra_positive().simplify()), "-(1) + a >= z");
+    assert_eq!(
+        format!("{}", req.contra_positive().simplify()),
+        "-(1) + a >= z"
+    );
 }
 
 #[test]
@@ -915,6 +921,65 @@ fn linked_cycles_3() {
 
     prove!("d <= f" => ProofResult::True);
     prove!("d >= f" => ProofResult::True);
+
+    cleanup!()
+}
+
+#[test]
+fn sub_carry() {
+    let prover;
+    requirements!(let reqs = [
+        "a <= b",
+        "0-a <= c",
+        "d >= 0",
+    ], prover);
+
+    let mut bounds_prover = BoundsProver::new(reqs);
+    bounds_prover.set_max_depth(4);
+    prover = FullProver::from(bounds_prover);
+
+    prove!("0 <= a+c" => ProofResult::True);
+    prove!("0 <= a+b" => ProofResult::Undetermined);
+    prove!("0 <= a-b" => ProofResult::Undetermined);
+    prove!("0 >= a-b" => ProofResult::True);
+    prove!("0 <= b+c" => ProofResult::True);
+
+    // Let's do some trivial cases!
+    prove!("0 <= 0" => ProofResult::True);
+    prove!("a <= a" => ProofResult::True);
+    prove!("a <= a+1" => ProofResult::True);
+    prove!("a+1 <= a+1" => ProofResult::True);
+    prove!("a+2 <= a+1" => ProofResult::False);
+    prove!("a+2 <= a+2" => ProofResult::True);
+    prove!("a+0 <= a+2" => ProofResult::True);
+    prove!("b <= b+1" => ProofResult::True);
+    prove!("b+1 <= b+1" => ProofResult::True);
+    prove!("b+2 <= b+1" => ProofResult::False);
+    prove!("b+2 <= b+2" => ProofResult::True);
+    prove!("b+0 <= b+2" => ProofResult::True);
+    prove!("c <= c+1" => ProofResult::True);
+    prove!("c+1 <= c+1" => ProofResult::True);
+    prove!("c+2 <= c+1" => ProofResult::False);
+    prove!("c+2 <= c+2" => ProofResult::True);
+    prove!("c+0 <= c+2" => ProofResult::True);
+
+    prove!("a <= 2*a" => ProofResult::Undetermined);
+    prove!("d <= 2*d" => ProofResult::True);
+    prove!("a <= a+b" => ProofResult::Undetermined);
+    prove!("a <= a+d" => ProofResult::True);
+    prove!("a <= a+a+c" => ProofResult::True);
+    prove!("a <= 2*a+c" => ProofResult::True);
+    prove!("0-d <= 0" => ProofResult::True);
+    prove!("0-d <= 1" => ProofResult::True);
+
+    // Tiny bit harder
+    prove!("0-d <= a+c" => ProofResult::True);
+    prove!("0-d <= b+c" => ProofResult::True);
+    prove!("0-d <= a+b" => ProofResult::Undetermined);
+    prove!("0 <= a + b + 2*c" => ProofResult::True);
+    prove!("0-d <= a + b + 2*c" => ProofResult::True);
+    prove!("0-c <= a+b+c+d" => ProofResult::True);
+    prove!("0 <= a+b+c+d" => ProofResult::Undetermined);
 
     cleanup!()
 }
