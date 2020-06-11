@@ -57,6 +57,14 @@ impl<'a> Requirement<'a> {
         }
     }
 
+    /// Perform an atomic substitution of a group, replacing each occurence of the identifiers with
+    /// the paired expression.
+    pub fn substitute_all(&self, subs: &[(Ident<'a>, &Expr<'a>)]) -> Requirement<'a> {
+        Requirement {
+            relation: self.relation.substitute_all(subs),
+        }
+    }
+
     /// Returns a vector of the distinct variables the requirement applies to.
     pub fn variables(&self) -> Vec<Ident<'a>> {
         self.relation.variables()

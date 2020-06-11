@@ -316,6 +316,16 @@ impl<'a> Relation<'a> {
         }
     }
 
+    /// Perform an atomic substitution of a group, replacing each occurence of the identifiers with
+    /// the paired expression.
+    pub fn substitute_all(&self, subs: &[(Ident<'a>, &Expr<'a>)]) -> Relation<'a> {
+        Relation {
+            left: self.left.substitute_all(subs),
+            relation: self.relation,
+            right: self.right.substitute_all(subs),
+        }
+    }
+
     /// Returns a vector of the distinct variables this Relation contains.
     pub fn variables(&self) -> Vec<Ident<'a>> {
         let mut vars = self.left.variables();
