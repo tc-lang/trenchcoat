@@ -710,6 +710,29 @@ impl<'b, 'a: 'b> Expr<'a> {
         }
     }
 
+    /// Perform an atomic substitution of a group, replacing each occurence of the identifiers with
+    /// the paired expression.
+    pub fn substitute_all(&self, subs: &[(Ident<'a>, &Expr<'a>)]) -> Expr<'a> {
+        match self {
+            Expr::Atom(Atom::Named(x)) => match subs.iter().find(|(id, _)| id == x) {
+                Some((_, expr)) => <Expr as Clone>::clone(expr),
+                None => self.clone(),
+            },
+            Expr::Atom(Atom::Literal(_)) => self.clone(),
+            Expr::Sum(terms) => {
+                Expr::Sum(terms.iter().map(|term| term.substitute_all(subs)).collect())
+            }
+            Expr::Prod(terms) => {
+                Expr::Prod(terms.iter().map(|term| term.substitute_all(subs)).collect())
+            }
+
+            Expr::Neg(term) => Expr::Neg(Box::new(term.substitute_all(subs))),
+            Expr::Recip(term, rounding) => {
+                Expr::Recip(Box::new(term.substitute_all(subs)), *rounding)
+            }
+        }
+    }
+
     /// Tries to evaluate self.
     /// This requires all atoms to be literals - None will be returned if this is not the case.
     /// It also assumes self is simplified. The behaviour of eval is undefined if the expression is
