@@ -107,7 +107,8 @@ macro_rules! requirements {
 fn budget(n: usize) -> usize {
     //(2*n).min(n+16)//.min(n/8+32)
     //8*(0_usize.leading_zeros()-(n+1).leading_zeros()) as usize + (n/8).min(16)
-    (0_usize.leading_zeros()-(n+1).saturating_pow(8).leading_zeros()) as usize + (n/8).min(16) + 30000000
+    //(0_usize.leading_zeros()-(n+1).saturating_pow(8).leading_zeros()) as usize + (n/8).min(16)
+    (0_usize.leading_zeros()-(n+1).saturating_pow(4).leading_zeros()) as usize + n + 1000
 }
 
 #[test]
@@ -464,7 +465,7 @@ fn test_lots_of_variables() {
     prove!("10*y <= 198" => ProofResult::True);
     // TODO The next statement is true but quite hard to prove.
     // Maybe we can prove it?
-    // TODO prove!("10*y <= 197" => ProofResult::True);
+    prove!("10*y <= 197" => ProofResult::True);
     prove!("y <= 20" => ProofResult::True);
     prove!("y <= 19" => ProofResult::True);
     prove!("0 <= z" => ProofResult::True);
@@ -537,7 +538,7 @@ fn new_tests<'a>() {
     prove!("g + f <= l/2" => ProofResult::True);
     prove!("l <= y" => ProofResult::True);
     prove!("y <= l" => ProofResult::True);
-    // FIXME FIXME prove!("g + f <= l/4" => ProofResult::Undetermined);
+    prove!("g + f <= l/4" => ProofResult::Undetermined);
     prove!("g + f + b/2 <= l" => ProofResult::True);
     prove!("g + f + b/2 >= l" => ProofResult::True);
     // FIXME prove!("g + f + b <= l" => ProofResult::False);
@@ -545,18 +546,18 @@ fn new_tests<'a>() {
     prove!("l <= z" => ProofResult::True);
     prove!("z <= l" => ProofResult::True);
     prove!("z <= y" => ProofResult::True);
-    // FIXME prove!("y <= z" => ProofResult::True);
+    prove!("y <= z" => ProofResult::True);
     prove!("b <= f + b/2 + g" => ProofResult::True);
     prove!("b/2 <= f + g" => ProofResult::True);
     prove!("b <= 2*f + 2*g" => ProofResult::True);
-    // FIXME prove!("l <= 2*f + 2*g" => ProofResult::True);
-    // FIXME prove!("c+d <= 2*f + 2*g" => ProofResult::True);
-    // FIXME prove!("c+d-1 <= 2*f + 2*g" => ProofResult::True);
-    // FIXME prove!("c+d-2 <= 2*f + 2*g" => ProofResult::True);
+    prove!("l <= 2*f + 2*g" => ProofResult::True);
+    prove!("c+d <= 2*f + 2*g" => ProofResult::True);
+    prove!("c+d-1 <= 2*f + 2*g" => ProofResult::True);
+    prove!("c+d-2 <= 2*f + 2*g" => ProofResult::True);
     prove!("c+d+1 <= 2*f + 2*g" => ProofResult::Undetermined);
     prove!("c+d+2 <= 2*f + 2*g" => ProofResult::Undetermined);
-    // TODO Properly check this prove!("l >= 2*f + 2*g" => ProofResult::True);
-    // FIXME prove!("l <= 2*f + 2*g" => ProofResult::True);
+    prove!("l >= 2*f + 2*g" => ProofResult::True);
+    prove!("l <= 2*f + 2*g" => ProofResult::True);
 
     prove!("5 >= 3*x" => ProofResult::Undetermined);
     prove!("6 >= 3*x" => ProofResult::True);

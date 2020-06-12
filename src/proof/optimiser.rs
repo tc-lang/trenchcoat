@@ -20,6 +20,7 @@ const TRY_NO_SUB: bool = true;
 /// Note that upper bounds should be rounded up when evaluated.
 /// Rounding down will not lead to incorrect behaviour but can lead to loose bounds.
 /// This is the behaviur of the int_bounds() method.
+#[derive(Clone)]
 pub struct Minimizer<'a> {
     /// The expression to find bounds on
     /// This must be simplified.
@@ -35,15 +36,15 @@ pub struct Minimizer<'a> {
     /// None if this is a final node.
     /// The tuple is (Bound, solving.sub(bound), requirement ID)
     permutation_group: Option<Vec<(DescriptiveBound<'a>, Expr<'a>, usize)>>,
-    /// The index of the next bound in permutation_group to try and substitute.
-    group_idx: usize,
 
-    /// The maximum number of childeren.
+    /// The current budget of this node.
     budget: isize,
-    finished: bool,
-    /// An optional current child. This will be a minimizer created from making a substitution.
-    child: Option<Box<Minimizer<'a>>>,
-    pg_id: usize,
+    
+    /// This nodes direct children.
+    children: Vec<Child<'a, Minimizer<'a>>>,
+
+    /// Current state tracker
+    state: BudgetState,
 
     //indent: String,
 }
@@ -53,17 +54,140 @@ pub struct Minimizer<'a> {
 ///
 /// Note that lower bounds should be down up when evaluated.
 /// This is the behaviur of the int_bounds() method.
+#[derive(Clone)]
 pub struct Maximizer<'a> {
     solving: Expr<'a>,
     vars: Vec<Ident<'a>>,
     given: BoundGroup<'a>,
     permutation_group: Option<Vec<(DescriptiveBound<'a>, Expr<'a>, usize)>>,
-    group_idx: usize,
     budget: isize,
-    finished: bool,
-    child: Option<Box<Maximizer<'a>>>,
-    pg_id: usize,
+    children: Vec<Child<'a, Maximizer<'a>>>,
+    state: BudgetState,
     //indent: String,
+}
+
+#[derive(Clone)]
+enum Child<'a, T: Budget + Iterator<Item = Expr<'a>> + Clone> {
+    Node(Box<T>),
+    Final(Final<'a>),
+}
+
+/// A final node
+#[derive(Clone)]
+struct Final<'a> {
+    expr: Expr<'a>,
+    yielded: bool,
+}
+
+trait Budget {
+    fn remaining_budget(&self) -> isize;
+    fn state(&self) -> BudgetState;
+    fn give(&mut self, extra_budget: isize);
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum BudgetState {
+    Working,
+    Finished,
+    Stalved,
+}
+
+// Pass on iterator methods
+impl<'a, T: Budget + Iterator<Item = Expr<'a>> + Clone> Iterator for Child<'a, T> {
+    type Item = Expr<'a>;
+    fn next(&mut self) -> Option<Expr<'a>> {
+        match self {
+            Child::Final(f) => f.next(),
+            Child::Node(n) => n.next(),
+        }
+    }
+}
+
+impl<'a> Final<'a> {
+    fn new(expr: Expr<'a>) -> Final<'a> {
+        Final {
+            expr,
+            yielded: false,
+        }
+    }
+}
+
+impl<'a> Iterator for Final<'a> {
+    type Item = Expr<'a>;
+    fn next(&mut self) -> Option<Expr<'a>> {
+        // Yield self.expr exactly once
+        match self.yielded {
+            false => {
+                self.yielded = true;
+                Some(self.expr.clone())
+            },
+            true => None,
+        }
+    }
+}
+
+impl<'a> Budget for Final<'a> {
+    fn remaining_budget(&self) -> isize {
+        // Final cannot hold a budget
+        0
+    }
+    fn state(&self) -> BudgetState {
+        // We've finished if we've yielded; otherwise we're working.
+        match self.yielded {
+            false => BudgetState::Working,
+            true => BudgetState::Finished,
+        }
+    }
+    fn give(&mut self, _extra_budget: isize) {
+        panic!("Final node cannot accept extra budget");
+    }
+}
+
+// Pass on Budget methods
+impl<'a, T: Budget + Iterator<Item = Expr<'a>> + Clone> Budget for Child<'a, T> {
+    fn state(&self) -> BudgetState {
+        match self {
+            Child::Node(node) => node.state(),
+            Child::Final(f) => f.state(),
+        }
+    }
+    fn remaining_budget(&self) -> isize {
+        match self {
+            Child::Node(node) => node.remaining_budget(),
+            Child::Final(f) => f.remaining_budget(),
+        }
+    }
+    fn give(&mut self, extra_budget: isize) {
+        match self {
+            Child::Node(node) => node.give(extra_budget),
+            Child::Final(f) => f.give(extra_budget),
+        }
+    }
+}
+
+/// Budget implementation for Minimizer and Maximizer
+macro_rules! budget_impl {
+    () => {
+        fn remaining_budget(&self) -> isize {
+            self.budget
+        }
+        fn state(&self) -> BudgetState {
+            self.state
+        }
+        fn give(&mut self, extra_budget: isize) {
+            debug_assert!(self.state != BudgetState::Finished);
+            self.budget += extra_budget;
+            self.state = BudgetState::Working;
+        }
+    };
+}
+
+impl<'a> Budget for Minimizer<'a> {
+    budget_impl!();
+}
+
+impl<'a> Budget for Maximizer<'a> {
+    budget_impl!();
 }
 
 impl<'a: 'b, 'b> Minimizer<'a> {
@@ -93,23 +217,16 @@ impl<'a: 'b, 'b> Minimizer<'a> {
             vars,
             given,
             permutation_group: None,
-            group_idx: 0,
             budget,
-            finished: false,
-            child: None,
-            pg_id: 0,
+            children: Vec::new(),
+            state: BudgetState::Working,
             //indent,
         }
     }
 
     pub fn new_root(solve: Expr<'a>, given: BoundGroup<'a>, budget: isize) -> Minimizer<'a> {
-        // `tried` is initialized with every element false.
-        let max_req_id = given.max_requirement_id();
-        let max_pg_id = given.max_pg_id();
         Self::new(
-            solve,
-            given,
-            budget,
+            solve, given, budget,
             //" | ".to_string(),
         )
     }
@@ -121,61 +238,6 @@ impl<'a: 'b, 'b> Minimizer<'a> {
     ) -> std::iter::FilterMap<Self, fn(Expr<'a>) -> std::option::Option<Int>> {
         self.filter_map(|expr| Some(expr.eval()?.as_lower_bound()))
     }
-
-}
-
-macro_rules! find_pg_group_fn {
-    () => {
-        fn find_permutation_group(&mut self) {
-            let mut pg_id = 0;
-            // Find the permutation group of the first bound that we've not yet subbed.
-            self.permutation_group = self
-                .given
-                .iter()
-                // BoundRef -> (BoundRef, requirement ID)
-                .map(|bound| (bound, bound.requirement().unwrap().id()))
-                // Filter requirements we've already used
-                //.filter(|(_, req)| !self.tried[*req])
-                //.filter(|(bound, _)| !self.tried_pg[bound.permutation_group_id()])
-                .filter(|(bound, _)| self.vars.contains(&bound.subject))
-                // (BoundRef, req ID) -> (BoundRef, subbed and simplified Expr, req ID)
-                .filter_map(|(bound, req)| {
-                    Some((
-                        bound,
-                        Self::sub_bound(&self.solving, &*bound)?,
-                        req,
-                    ))
-                })
-                // Filter out subs that have no effect on the expression
-                //.filter(|(_, expr, _)| *expr != self.solving)
-                .map(|(bound, _, _)| bound.permutation_group())
-                .next()
-                .map(|perm_grp| {
-                    // TODO This finds the permutation group 3 times :(
-                    pg_id = perm_grp[0].permutation_group_id();
-                    perm_grp
-                        .iter()
-                        .filter_map(|bound| {
-                            Some((
-                                (**bound).clone(),
-                                Self::sub_bound(&self.solving, &*bound)?.simplify(),
-                                bound.requirement().unwrap().id(),
-                            ))
-                        })
-                        .collect()
-                });
-            self.pg_id = pg_id;
-        }
-    }
-}
-
-
-impl<'a: 'b, 'b> Minimizer<'a> {
-    find_pg_group_fn!();
-}
-
-impl<'a: 'b, 'b> Maximizer<'a> {
-    find_pg_group_fn!();
 }
 
 impl<'a: 'b, 'b> Maximizer<'a> {
@@ -205,23 +267,16 @@ impl<'a: 'b, 'b> Maximizer<'a> {
             vars,
             given,
             permutation_group: None,
-            group_idx: 0,
             budget,
-            finished: false,
-            child: None,
-            pg_id: 0,
+            children: Vec::new(),
+            state: BudgetState::Working,
             //indent,
         }
     }
 
     pub fn new_root(solve: Expr<'a>, given: BoundGroup<'a>, budget: isize) -> Maximizer<'a> {
-        // `tried` is initialized with every element false
-        let max_req_id = given.max_requirement_id();
-        let max_pg_id = given.max_pg_id();
         Self::new(
-            solve,
-            given,
-            budget,
+            solve, given, budget,
             //" | ".to_string(),
         )
     }
@@ -235,127 +290,163 @@ impl<'a: 'b, 'b> Maximizer<'a> {
     }
 }
 
+// Methods on both Maximizer and Minimizer
+macro_rules! find_pg_group_fn {
+    () => {
+        fn find_permutation_group(&mut self) -> usize {
+            let mut pg_id = 0;
+            // Find the permutation group of the first bound that we've not yet subbed.
+            self.permutation_group = self
+                .given
+                .iter()
+                // BoundRef -> (BoundRef, requirement ID)
+                .map(|bound| (bound, bound.requirement().unwrap().id()))
+                // Quick check before we try and substitute
+                .filter(|(bound, _)| self.vars.contains(&bound.subject))
+                .filter_map(|(bound, req)| {
+                    Some((bound, Self::sub_bound(&self.solving, &*bound)?, req))
+                })
+                .map(|(bound, _, _)| bound.permutation_group())
+                .next()
+                .map(|perm_grp| {
+                    pg_id = perm_grp[0].permutation_group_id();
+                    perm_grp
+                        .iter()
+                        .filter_map(|bound| {
+                            Some((
+                                (**bound).clone(),
+                                // FIXME We make the same substitution as above here, among others
+                                Self::sub_bound(&self.solving, &*bound)?.simplify(),
+                                bound.requirement().unwrap().id(),
+                            ))
+                        })
+                        .collect()
+                });
+            pg_id
+        }
+
+        fn generate_children(&mut self) {
+            debug_assert!(self.permutation_group.is_none());
+
+            // If we don't have any budget then we can't do substitutions to work out the
+            // permutation group. So we shouldn't try and we should mark ourselves as stalved.
+            if self.budget <= 0 {
+                self.state = BudgetState::Stalved;
+                return;
+            }
+
+            // Find our permutation group
+            let pg_id = self.find_permutation_group();
+            
+            // If there's nothing to sub in, we've reached a final node
+            if self.permutation_group.is_none() {
+                self.children = vec![Child::Final(Final::new(self.solving.clone()))];
+                return;
+            }
+
+            // n = total number of children
+            let n = 1 + self.permutation_group.as_ref().unwrap().len();
+            let ni = n as isize;
+
+            // We've already made n-1 expr to get the expressions
+            self.budget -= ni-1;
+            // Work out our budget per child
+            let child_budget = self.budget.max(0) / n as isize;
+            // Subtract the total budget spent from our budget
+            self.budget -= child_budget * ni;
+
+            let mut children = Vec::with_capacity(n);
+            if TRY_NO_SUB {
+                children.push(Child::Node(Box::new(Self::new(
+                    self.solving.clone(),
+                    self.given.exclude(100000, pg_id),
+                    child_budget,
+                ))));
+            }
+            children
+                .extend(self.permutation_group.as_ref().unwrap().iter().map(
+                    |(bound, to_solve, req_id)| {
+                        Child::Node(Box::new(Self::new(
+                            to_solve.clone(),
+                            self.given.exclude(*req_id, pg_id).sub_bound(bound),
+                            child_budget,
+                        )))
+                    },
+                ));
+            self.children = children;
+        }
+    };
+}
+
+impl<'a: 'b, 'b> Minimizer<'a> {
+    find_pg_group_fn!();
+}
+
+impl<'a: 'b, 'b> Maximizer<'a> {
+    find_pg_group_fn!();
+}
+
 /// Used to construct the body of the Iterator next method for Minimizer and Maximizer.
 /// The bounds we can assume to be true. Probably given by the function requirements/lemmas.
 macro_rules! optimizer_next_body {
     ($self:expr) => {{
-        // First, if we have a child, we want to iterate all the way through it.
-        if let Some(child) = &mut $self.child {
+        // Don't try the children if we know we're not working.
+        if $self.state != BudgetState::Working {
+            return None;
+        }
+
+        // We will always have at least 1 child, so no children means we need to generate them.
+        // We could have 0 children if we are finished but the case above woul have returned early.
+        if $self.children.len() == 0 {
+            $self.generate_children();
+            // We could be stalving after this, so we should start the function again.
+            return $self.next();
+        }
+
+        // Iterate through all of our children.
+        // TODO Don't call next on children we know are empty
+        for child in &mut $self.children {
             match child.next() {
-                Some(x) => return Some(x),
+                Some(expr) => return Some(expr),
                 None => (),
             }
         }
 
-        if $self.finished {
+        // Kill the children that have finished and collect their remaining budgets.
+        let mut remaining_children = Vec::<Child<_>>::with_capacity($self.children.len());
+        for child in &$self.children {
+            match child.state() {
+                BudgetState::Finished => {
+                    // This will subtract if they've gone over budget.
+                    $self.budget += child.remaining_budget();
+                }
+                BudgetState::Stalved => {
+                    remaining_children.push((*child).clone());
+                }
+                BudgetState::Working => panic!("working child returned None"),
+            }
+        }
+        $self.children = remaining_children;
+
+        // We've finished if all of our children have finished!
+        if $self.children.len() == 0 {
+            $self.state = BudgetState::Finished;
             return None;
         }
 
-        if $self.budget <= 0 {
-            $self.finished = true;
-            /*println!(
-                "{}YIELDING {} = {}",
-                $self.indent,
-                $self.solving.clone(),
-                match $self.solving.eval() {
-                    Some(x) => x,
-                    None => Int::Infinity.into(),
-                }
-            );*/
-            return Some($self.solving.clone());
+        // Calculate any budget we can distribute to our children.
+        let child_budget = $self.budget / ($self.children.len() as isize);
+        // Distribute it and continue if we have some.
+        if child_budget > 0 {
+            for child in &mut $self.children {
+                child.give(child_budget);
+            }
+            $self.budget -= child_budget * ($self.children.len() as isize);
+            return $self.next();
         }
-
-        if $self.permutation_group.is_none() {
-            $self.find_permutation_group();
-            if $self.permutation_group.is_none() {
-                $self.finished = true;
-                /*println!(
-                    "{}YIELDING {} = {}",
-                    $self.indent,
-                    $self.solving.clone(),
-                    match $self.solving.eval() {
-                        Some(x) => x,
-                        None => Int::Infinity.into(),
-                    }
-                );*/
-                return Some($self.solving.clone());
-            }
-        }
-
-        let permutation_group = $self.permutation_group.as_ref()?;
-
-        // Now we want to make another substitution.
-        // We will find a variable with a bound that we can use.
-        let (bound, subbed_expr, rg_id) = loop {
-            //println!("i: {}", $self.group_idx);
-            // If there are no more substitutions to make, we can finish.
-            // To do this, we'll mark this as the final child (see the early return case above) and
-            // return the current expression since it is a bound of itself.
-            if $self.group_idx > permutation_group.len() || !TRY_NO_SUB && $self.group_idx == permutation_group.len() {
-                $self.finished = true;
-                $self.group_idx += 1;
-                /*println!(
-                    "{}YIELDING {} = {}",
-                    $self.indent,
-                    $self.solving.clone(),
-                    match $self.solving.eval() {
-                        Some(x) => x,
-                        None => Int::Infinity.into(),
-                    }
-                );*/
-                return Some($self.solving.clone());
-            }
-            if $self.group_idx == permutation_group.len() {
-                $self.group_idx += 1;
-                break (None, $self.solving.clone(), 10000);
-            }
-
-            let (ref bound, ref subbed_expr, requirement_id) = permutation_group[$self.group_idx];
-
-            $self.group_idx += 1;
-
-            // We only need to make a substitution if the expression contains the variable.
-            // We actually know this is true since we chose it to be when we selected the
-            // permutation group
-            //if $self.vars.contains(&bound.subject) {
-                break (Some(bound), subbed_expr.clone(), requirement_id);
-            //}
-            //println!("{} doesn't include {}", $self.solving, bound.subject);
-        };
-
-        /*println!("{}Subbing {}", $self.indent, match bound {
-            Some(b) => format!("{}", b),
-            None => "nout".into(),
-        });*/
-
-        // Substitute the bound
-        /*let new_expr = match Self::sub_bound(&$self.solving, &bound) {
-            Some(expr) => expr.simplify(),
-            None => return $self.next(),
-        };*/
-
-        /*println!(
-            "{}Solving: {} <== {}",
-            $self.indent, &$self.solving, subbed_expr
-        );*/
-
-        let cost = permutation_group.len() as isize;
-        let new_budget = ($self.budget - cost)/(cost);
-        println!("{} {}", $self.budget, new_budget);
-
-        //println!("Making a child!");
-        // Create the new child
-        $self.child = Some(Box::new(Self::new(
-            subbed_expr.clone(),
-            match bound {
-                Some(bound) => $self.given.exclude(rg_id, $self.pg_id).sub_bound(bound),
-                None => $self.given.exclude(rg_id, $self.pg_id).clone(),
-            },
-            new_budget,
-            //$self.indent.clone() + " | ",
-        )));
-
-        $self.next()
+        // Otherwise, we're stalved.
+        $self.state = BudgetState::Stalved;
+        return None;
     }};
 }
 
