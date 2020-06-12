@@ -49,7 +49,7 @@ pub struct Minimizer<'a> {
     budget: isize,
 
     /// The currently generated direct children.
-    children: Vec<Child<'a, Minimizer<'a>>>,
+    children: Vec<Minimizer<'a>>,
     /// The index in self.children that we should next iterate on.
     child_idx: usize,
     /// The permutation group ID that this node is permuting.
@@ -62,7 +62,7 @@ pub struct Minimizer<'a> {
 
     /// Current state tracker
     state: BudgetState,
-
+    is_final: bool,
     //indent: String,
 }
 
@@ -80,39 +80,13 @@ pub struct Maximizer<'a> {
     group_idx: usize,
     budget: isize,
     child_idx: usize,
-    children: Vec<Child<'a, Maximizer<'a>>>,
+    children: Vec<Maximizer<'a>>,
     pg_id: usize,
     state: BudgetState,
     child_budget: isize,
     generated: bool,
+    is_final: bool,
     //indent: String,
-}
-
-/// Represents a child in a tree.
-/// This child can either be another node of type T or a Final node.
-#[derive(Clone)]
-enum Child<'a, T: Budget + Iterator<Item = Expr<'a>> + Clone> {
-    Node(Box<T>),
-    Final(Final<'a>),
-}
-
-/// A final node is a node without any children.
-/// This node yields self.expr exactly once and then will always be in BudgetState::Finished.
-/// Final cannot store and so cannot be given budget.
-#[derive(Clone)]
-struct Final<'a> {
-    expr: Expr<'a>,
-    yielded: bool,
-}
-
-/// Methods for budgeting time complexity.
-trait Budget {
-    /// Returns the budget that self has remaining.
-    fn remaining_budget(&self) -> isize;
-    /// Returns the state of BudgetState.
-    fn state(&self) -> BudgetState;
-    /// Give self extra_budget more budget.
-    fn give(&mut self, extra_budget: isize);
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -124,108 +98,6 @@ enum BudgetState {
     Finished,
     /// The node wants to continute but cannnot due to lack of budget.
     Stalved,
-}
-
-// Pass on iterator methods for children.
-impl<'a, T: Budget + Iterator<Item = Expr<'a>> + Clone> Iterator for Child<'a, T> {
-    type Item = Expr<'a>;
-    fn next(&mut self) -> Option<Expr<'a>> {
-        match self {
-            Child::Final(f) => f.next(),
-            Child::Node(n) => n.next(),
-        }
-    }
-}
-
-// Pass on Budget methods for children
-impl<'a, T: Budget + Iterator<Item = Expr<'a>> + Clone> Budget for Child<'a, T> {
-    fn state(&self) -> BudgetState {
-        match self {
-            Child::Node(node) => node.state(),
-            Child::Final(f) => f.state(),
-        }
-    }
-    fn remaining_budget(&self) -> isize {
-        match self {
-            Child::Node(node) => node.remaining_budget(),
-            Child::Final(f) => f.remaining_budget(),
-        }
-    }
-    fn give(&mut self, extra_budget: isize) {
-        match self {
-            Child::Node(node) => node.give(extra_budget),
-            Child::Final(f) => f.give(extra_budget),
-        }
-    }
-}
-
-impl<'a> Final<'a> {
-    fn new(expr: Expr<'a>) -> Final<'a> {
-        Final {
-            expr,
-            yielded: false,
-        }
-    }
-}
-
-impl<'a> Iterator for Final<'a> {
-    type Item = Expr<'a>;
-    fn next(&mut self) -> Option<Expr<'a>> {
-        // Yield self.expr exactly once
-        match self.yielded {
-            false => {
-                self.yielded = true;
-                Some(self.expr.clone())
-            }
-            true => None,
-        }
-    }
-}
-
-impl<'a> Budget for Final<'a> {
-    fn remaining_budget(&self) -> isize {
-        // Final cannot hold a budget
-        0
-    }
-    fn state(&self) -> BudgetState {
-        // We've finished if we've yielded; otherwise we're working.
-        match self.yielded {
-            false => BudgetState::Working,
-            true => BudgetState::Finished,
-        }
-    }
-    fn give(&mut self, _extra_budget: isize) {
-        panic!("Final node cannot accept extra budget");
-    }
-}
-
-/// Budget implementation for Minimizer and Maximizer
-macro_rules! budget_impl {
-    () => {
-        fn remaining_budget(&self) -> isize {
-            self.budget
-        }
-        fn state(&self) -> BudgetState {
-            self.state
-        }
-        fn give(&mut self, extra_budget: isize) {
-            debug_assert!(self.state != BudgetState::Finished);
-            self.budget += extra_budget;
-            // We might not be stavled anymore!
-            // We'll go back to stalving on the next call to next if we've still not got enough.
-            if self.state == BudgetState::Stalved {
-                self.state = BudgetState::Working;
-            }
-        }
-    };
-}
-
-impl<'a> Budget for Minimizer<'a> {
-    budget_impl!();
-}
-
-impl<'a> Budget for Maximizer<'a> {
-    budget_impl!();
 }
 
 impl<'a: 'b, 'b> Minimizer<'a> {
@@ -244,7 +116,7 @@ impl<'a: 'b, 'b> Minimizer<'a> {
         budget: isize,
         //indent: String,
     ) -> Minimizer<'a> {
-        // This isn't allowed
+        // This combination of settings isn't allowed
         assert!(!(BFS && LAZY_GENERATE_CHILDREN));
 
         let vars = solve.variables();
@@ -261,6 +133,7 @@ impl<'a: 'b, 'b> Minimizer<'a> {
             state: BudgetState::Working,
             child_budget: 0,
             generated: false,
+            is_final: false,
             //indent,
         }
     }
@@ -290,7 +163,7 @@ impl<'a: 'b, 'b> Maximizer<'a> {
         budget: isize,
         //indent: String,
     ) -> Maximizer<'a> {
-        // This isn't allowed
+        // This combination of settings isn't allowed
         assert!(!(BFS && LAZY_GENERATE_CHILDREN));
 
         let vars = solve.variables();
@@ -307,6 +180,7 @@ impl<'a: 'b, 'b> Maximizer<'a> {
             state: BudgetState::Working,
             child_budget: 0,
             generated: false,
+            is_final: false,
             //indent,
         }
     }
@@ -318,6 +192,39 @@ impl<'a: 'b, 'b> Maximizer<'a> {
     ) -> std::iter::FilterMap<Self, fn(Expr<'a>) -> std::option::Option<Int>> {
         self.filter_map(|expr| Some(expr.eval()?.as_upper_bound()))
     }
+}
+
+/// Budget methods for Minimizer and Maximizer
+macro_rules! budget_impl {
+    () => {
+        /// Returns the current state of self
+        fn state(&self) -> BudgetState {
+            self.state
+        }
+        /// Returns the budget that self has remaining.
+        /// This should be used when self has finished.
+        fn remaining_budget(&self) -> isize {
+            assert!(self.state == BudgetState::Finished);
+            self.budget
+        }
+        /// Gives extra_budget to self
+        /// A finished node cannot be given extra budget
+        fn give(&mut self, extra_budget: isize) {
+            debug_assert!(self.state != BudgetState::Finished);
+            self.budget += extra_budget;
+            // We might not be stavled anymore!
+            // We'll go back to stalving on the next call to next if we've still not got enough.
+            self.state = BudgetState::Working;
+        }
+    };
+}
+
+impl<'a> Minimizer<'a> {
+    budget_impl!();
+}
+
+impl<'a> Maximizer<'a> {
+    budget_impl!();
 }
 
 // Methods on both Maximizer and Minimizer
@@ -368,9 +275,10 @@ macro_rules! find_pg_group_fn {
             // Find our permutation group
             self.find_permutation_group();
 
-            // If there's nothing to sub in, we've reached a final node
+            // If there's nothing to sub in, we should now stop, so we go in to final mode.
+            // (See the behaviour of the next method)
             if self.permutation_group.is_none() {
-                self.children = vec![Child::Final(Final::new(self.solving.clone()))];
+                self.is_final = true;
                 if !TRY_NO_SUB {
                     self.generated = true;
                 }
@@ -378,11 +286,11 @@ macro_rules! find_pg_group_fn {
             }
 
             // n = total number of children
-            let n = 1 + self.permutation_group.as_ref().unwrap().len();
+            let n = self.permutation_group.as_ref().unwrap().len() + if TRY_NO_SUB { 1 } else { 0 };
             let ni = n as isize;
 
             // We've already made n-1 expr to get the expressions
-            self.budget -= ni - 1;
+            self.budget -= ni - if TRY_NO_SUB { 1 } else { 0 };
             // Work out our budget per child
             self.child_budget = self.budget.max(0) / ni;
             // Subtract the total budget spent from our budget
@@ -391,11 +299,12 @@ macro_rules! find_pg_group_fn {
             let mut children = Vec::with_capacity(n);
 
             if TRY_NO_SUB {
-                children.push(Child::Node(Box::new(Self::new(
+                // TODO Try putting this last?
+                children.push(Self::new(
                     self.solving.clone(),
                     self.given.exclude(100000, self.pg_id),
                     self.child_budget,
-                ))));
+                ));
             } else {
                 self.generated = true;
             }
@@ -403,18 +312,23 @@ macro_rules! find_pg_group_fn {
             if !LAZY_GENERATE_CHILDREN {
                 children.extend(self.permutation_group.as_ref().unwrap().iter().map(
                     |(bound, to_solve, req_id)| {
-                        Child::Node(Box::new(Self::new(
+                        //Child::Node(Box::new(Self::new(
+                        Self::new(
                             to_solve.clone(),
                             self.given.exclude(*req_id, self.pg_id).sub_bound(bound),
                             self.child_budget,
-                        )))
+                        )
                     },
                 ));
             }
+
             self.children = children;
         }
 
         fn generate_next_child(&mut self) -> bool {
+            // This should only be used to lazily generate children
+            assert!(LAZY_GENERATE_CHILDREN);
+            
             let (bound, to_solve, req_id) = match self
                 .permutation_group
                 .as_ref()
@@ -426,11 +340,12 @@ macro_rules! find_pg_group_fn {
 
             self.group_idx += 1;
 
-            self.children.push(Child::Node(Box::new(Self::new(
+            //self.children.push(Child::Node(Box::new(Self::new(
+            self.children.push(Self::new(
                 to_solve.clone(),
                 self.given.exclude(*req_id, self.pg_id).sub_bound(bound),
                 self.child_budget,
-            ))));
+            ));
 
             true
         }
@@ -455,8 +370,13 @@ macro_rules! optimizer_next_body {
                 return None;
             }
 
-            // We will always have at least 1 child, so no children means we need to generate them.
-            // We could have 0 children if we are finished but the case above woul have returned early.
+            // If we are in final mode (see self.generate_children for how we get in this mode)
+            // Then we should yield self.solving and then finish.
+            if $self.is_final {
+                $self.state = BudgetState::Finished;
+                return Some($self.solving.clone());
+            }
+
             if TRY_NO_SUB && $self.children.len() == 0 || !TRY_NO_SUB && !$self.generated {
                 $self.generate_children();
                 // We could be stalving after this, so we should start the again.
@@ -480,7 +400,6 @@ macro_rules! optimizer_next_body {
                 }
             } else {
                 loop {
-                    // Iterate through all of our children.
                     while $self.child_idx < $self.children.len() {
                         match $self.children[$self.child_idx].next() {
                             Some(expr) => return Some(expr),
