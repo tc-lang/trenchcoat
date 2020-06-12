@@ -12,13 +12,21 @@ use std::iter::Iterator;
 // efficient but make mistakes less likely. (Wouldn't attributes for this be so nice? We could
 // consider adding a phantom type to Expr and Bound also to garentee this.)
 
-/// Also include a child where no substitution was made for all permutation groups.
-const TRY_NO_SUB: bool = true;
+/// Also include a child where no substitution was made as the first child.
+const NO_SUB_FIRST: bool = true;
+/// Also include a child where no substitution was made as the last child.
+const NO_SUB_LAST: bool = false;
 /// Generate children lazily.
 const LAZY_GENERATE_CHILDREN: bool = true;
 /// Perform BFS rather than DFS
 /// This cannot be done also with LAZY_GENERATE_CHILDREN
 const BFS: bool = false;
+/// If true, only make substitutions that don't increase the number of variables.
+const NO_MORE_VARIABLES: bool = false;
+/// If true, only make substitutions that decrease the number of variables.
+const LESS_VARIABLES: bool = false;
+
+const TRY_NO_SUB: bool = NO_SUB_FIRST || NO_SUB_LAST;
 
 /// Minimizer is a type for generating lower bounds on an expression, given a set of requirements.
 /// It can be constructed with `Minimizer::new`, see that documentation for more details.
@@ -57,7 +65,6 @@ pub struct Minimizer<'a> {
     /// The budget to be given to new children. This is used when they are lazily generated.
     child_budget: isize,
 
-    /// Used for tracking wether the children have been generated when TRY_NO_SUB is false.
     generated: bool,
 
     /// Current state tracker
@@ -232,6 +239,7 @@ macro_rules! find_pg_group_fn {
     () => {
         fn find_permutation_group(&mut self) {
             let mut pg_id = 0;
+            let variables_now = self.vars.len();
             // Find the permutation group of the first bound that we've not yet subbed.
             self.permutation_group = self
                 .given
@@ -257,6 +265,12 @@ macro_rules! find_pg_group_fn {
                                 bound.requirement().unwrap().id(),
                             ))
                         })
+                        .filter(|(_, expr, _)| {
+                            !NO_MORE_VARIABLES || expr.variables().len() <= variables_now
+                        })
+                        .filter(|(_, expr, _)| {
+                            !LESS_VARIABLES || expr.variables().len() < variables_now
+                        })
                         .collect()
                 });
             self.pg_id = pg_id;
@@ -275,13 +289,14 @@ macro_rules! find_pg_group_fn {
             // Find our permutation group
             self.find_permutation_group();
 
+            if !NO_SUB_FIRST {
+                self.generated = true;
+            }
+
             // If there's nothing to sub in, we should now stop, so we go in to final mode.
             // (See the behaviour of the next method)
             if self.permutation_group.is_none() {
                 self.is_final = true;
-                if !TRY_NO_SUB {
-                    self.generated = true;
-                }
                 return;
             }
 
@@ -298,15 +313,12 @@ macro_rules! find_pg_group_fn {
 
             let mut children = Vec::with_capacity(n);
 
-            if TRY_NO_SUB {
-                // TODO Try putting this last?
+            if NO_SUB_FIRST {
                 children.push(Self::new(
                     self.solving.clone(),
                     self.given.exclude(100000, self.pg_id),
                     self.child_budget,
                 ));
-            } else {
-                self.generated = true;
             }
 
             if !LAZY_GENERATE_CHILDREN {
@@ -328,19 +340,30 @@ macro_rules! find_pg_group_fn {
         fn generate_next_child(&mut self) -> bool {
             // This should only be used to lazily generate children
             assert!(LAZY_GENERATE_CHILDREN);
-            
-            let (bound, to_solve, req_id) = match self
-                .permutation_group
-                .as_ref()
-                .and_then(|pg| pg.get(self.group_idx))
-            {
-                Some(stuff) => stuff,
+
+            let permutation_group = match self.permutation_group.as_ref() {
+                Some(pg) => pg,
                 None => return false,
             };
 
+            if NO_SUB_LAST && self.group_idx == permutation_group.len() {
+                self.group_idx += 1;
+
+                self.children.push(Self::new(
+                    self.solving.clone(),
+                    self.given.exclude(100000, self.pg_id),
+                    self.child_budget,
+                ));
+
+                return true;
+            } else if self.group_idx >= permutation_group.len() {
+                return false;
+            }
+
+            let (bound, to_solve, req_id) = &permutation_group[self.group_idx];
+
             self.group_idx += 1;
 
-            //self.children.push(Child::Node(Box::new(Self::new(
             self.children.push(Self::new(
                 to_solve.clone(),
                 self.given.exclude(*req_id, self.pg_id).sub_bound(bound),
@@ -377,7 +400,7 @@ macro_rules! optimizer_next_body {
                 return Some($self.solving.clone());
             }
 
-            if TRY_NO_SUB && $self.children.len() == 0 || !TRY_NO_SUB && !$self.generated {
+            if NO_SUB_FIRST && $self.children.len() == 0 || !NO_SUB_FIRST && !$self.generated {
                 $self.generate_children();
                 // We could be stalving after this, so we should start the again.
                 continue;
