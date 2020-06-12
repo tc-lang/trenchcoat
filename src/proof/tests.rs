@@ -15,7 +15,7 @@ macro_rules! make_prover {
     ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
         // Option A: Bounds method
         let mut bounds_prover = BoundsProver::new($reqs.clone());
-        bounds_prover.set_max_depth($depth as isize);
+        //bounds_prover.set_max_depth($depth as isize);
         $name = FullProver::from(bounds_prover);
     };
 }
@@ -108,7 +108,8 @@ fn budget(n: usize) -> usize {
     //(2*n).min(n+16)//.min(n/8+32)
     //8*(0_usize.leading_zeros()-(n+1).leading_zeros()) as usize + (n/8).min(16)
     //(0_usize.leading_zeros()-(n+1).saturating_pow(8).leading_zeros()) as usize + (n/8).min(16)
-    (0_usize.leading_zeros()-(n+1).saturating_pow(4).leading_zeros()) as usize + n + 1000
+    //(0_usize.leading_zeros()-(n+1).saturating_pow(4).leading_zeros()) as usize + n
+    2*n
 }
 
 #[test]
@@ -1004,6 +1005,60 @@ fn sub_carry() {
     prove!("0-d <= a + b + 2*c" => ProofResult::True);
     prove!("0-c <= a+b+c+d" => ProofResult::True);
     prove!("0 <= a+b+c+d" => ProofResult::Undetermined);
+
+    cleanup!()
+}
+
+#[test]
+fn large_tree() {
+    let prover;
+
+    requirements!(let reqs = [
+        "a <= b",
+        "a <= c",
+        "a <= d",
+        "b <= e",
+        "b <= f",
+        "b <= g",
+        "c <= h",
+        "c <= i",
+        "c <= j",
+        "d <= k",
+        "d <= l",
+        "d <= m",
+        "e <= n",
+        "e <= o",
+        "e <= p",
+        "f <= q",
+        "f <= r",
+        "f <= s",
+        "g <= t",
+        "g <= u",
+        "g <= v",
+        "h <= w",
+        "h <= x",
+        "h <= y",
+        "i <= z",
+        "i <= aa",
+        "i <= ab",
+        "j <= ac",
+        "j <= ad",
+        "j <= ae",
+        "k <= af",
+        "k <= ag",
+        "k <= ah",
+        "l <= ai",
+        "l <= aj",
+        "l <= ak",
+        "m <= al",
+        "m <= am",
+        "m <= an",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+    
+    prove!("a <= n" => ProofResult::True);
+    prove!("a <= an" => ProofResult::True);
 
     cleanup!()
 }
