@@ -88,12 +88,14 @@ impl<'a> Relation<'a> {
     /// - `subject` only occurs exactly once in self.left.
     ///    This can be achieved by using `self.left = self.left.single_x(subject)?`
     /// - `subject` does not occur in self.right
-    pub fn rearrange_unsafe(&self, subject: &Expr<'a>) -> Option<Relation<'a>> {
+    pub fn rearrange_unsafe(&self, subject: Ident<'a>) -> Option<Relation<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
 
         // We are done if self.left = subject
-        if self.left.simplify_eq(subject) {
-            return Some(self.clone());
+        if let Expr::Atom(Atom::Named(x)) = self.left {
+            if x == subject {
+                return Some(self.clone());
+            }
         }
 
         match &self.left {
@@ -207,7 +209,7 @@ impl<'a> Relation<'a> {
 
     /// Returns the bounds on `target` given by self.
     /// This method makes the same assumptions as `rearrange_unsafe`
-    pub fn bounds_on_unsafe(&self, target: &Expr<'a>) -> Option<Bound<'a>> {
+    pub fn bounds_on_unsafe(&self, target: Ident<'a>) -> Option<Bound<'a>> {
         use RelationKind::{Ge, Le};
         Some(match self.rearrange_unsafe(target)? {
             Relation {
@@ -225,8 +227,6 @@ impl<'a> Relation<'a> {
 
     /// Returns the bound on `name` given by self if it exists and can be computed.
     pub fn bounds_on(&self, name: Ident<'a>) -> Option<Bound<'a>> {
-        let name_expr = Expr::Atom(Atom::Named(name));
-
         // These will form the Relation that we will solve.
         // This must end up satisfying the preconditions on bounds_on_unsafe.
         let lhs;
@@ -242,15 +242,15 @@ impl<'a> Relation<'a> {
                 Expr::Neg(Box::new(self.right.clone())),
             ])
             .simplify()
-            .single_x(&name_expr)?;
+            .single_x(name)?;
             relation = self.relation;
             rhs = ZERO;
         } else if left_contains && !right_contains {
-            lhs = self.left.simplify().single_x(&name_expr)?;
+            lhs = self.left.simplify().single_x(name)?;
             relation = self.relation;
             rhs = self.right.clone();
         } else if !left_contains && right_contains {
-            lhs = self.right.simplify().single_x(&name_expr)?;
+            lhs = self.right.simplify().single_x(name)?;
             relation = self.relation.opposite();
             rhs = self.left.clone();
         } else {
@@ -262,7 +262,7 @@ impl<'a> Relation<'a> {
             relation,
             right: rhs,
         }
-        .bounds_on_unsafe(&name_expr)
+        .bounds_on_unsafe(name)
     }
 
     /// Returns a list of all the bounds that can be computed from self.
@@ -355,6 +355,14 @@ impl<'a> DescriptiveBound<'a> {
     pub fn sub(&self, sub: &DescriptiveBound<'a>) -> Option<DescriptiveBound<'a>> {
         bound_sub(self, &sub)
     }
+}
+
+pub fn bounds_on_ge0<'a>(expr_ge0: Expr<'a>, subject: Ident<'a>) -> Option<Bound<'a>> {
+    Relation{
+        left: expr_ge0.single_x(subject)?,
+        relation: RelationKind::Ge,
+        right: ZERO,
+    }.bounds_on_unsafe(subject)
 }
 
 ///////////////////////////////////////////////////////////////////////////////

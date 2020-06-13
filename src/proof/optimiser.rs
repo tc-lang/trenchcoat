@@ -499,7 +499,7 @@ pub fn bound_sub<'a>(
     };
 
     let x = Expr::Atom(Atom::Named(bound.subject));
-    let lhs = Expr::Sum(vec![x.clone(), Expr::Neg(Box::new(new_bound_expr))]).simplify();
+    let lhs = Expr::Sum(vec![x, Expr::Neg(Box::new(new_bound_expr))]).simplify();
     if lhs
         .variables()
         .iter()
@@ -512,11 +512,11 @@ pub fn bound_sub<'a>(
     Some(DescriptiveBound {
         subject: bound.subject,
         bound: Relation {
-            left: lhs.single_x(&x)?,
+            left: lhs.single_x(bound.subject)?,
             relation: relation_kind,
             right: expr::ZERO,
         }
-        .bounds_on_unsafe(&x)?
+        .bounds_on_unsafe(bound.subject)?
         .simplify(),
     })
 }

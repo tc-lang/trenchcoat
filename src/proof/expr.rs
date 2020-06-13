@@ -508,16 +508,14 @@ impl<'b, 'a: 'b> Expr<'a> {
         }
     }
 
-    /// Returns true iff self contains expr or a simplification of.
-    pub(super) fn contains(&self, expr: &Expr<'a>) -> bool {
+    /// Returns true iff self contains `x`
+    pub(super) fn contains(&self, x: Ident<'a>) -> bool {
         use Expr::{Neg, Prod, Recip, Sum};
-        if self.simplify_eq(expr) {
-            return true;
-        }
         match self {
-            Sum(terms) | Prod(terms) => terms.iter().find(|term| term.contains(expr)).is_some(),
-            Neg(term) | Recip(term, _) => term.contains(expr),
-            Expr::Atom(_) => false, // This will have been checked at the comparison at the start.
+            Sum(terms) | Prod(terms) => terms.iter().find(|term| term.contains(x)).is_some(),
+            Neg(term) | Recip(term, _) => term.contains(x),
+            Expr::Atom(Atom::Literal(_)) => false,
+            Expr::Atom(Atom::Named(y)) => x.eq(y),
         }
     }
 
@@ -529,13 +527,8 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// FIXME This will work perfectly well with Atoms, which I think is all that will be required,
     /// however other expressions will not work as expected. The signature should either be changed
     /// or the behaviour corrected.
-    fn factor(&self, expr: &Expr<'a>) -> Option<Expr<'a>> {
+    fn factor(&self, x: Ident<'a>) -> Option<Expr<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
-
-        // x/x = 1
-        if self.simplify_eq(expr) {
-            return Some(ONE);
-        }
 
         match self {
             Sum(terms) => {
@@ -543,7 +536,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                 // Call factor on each term of the sum, return None if one of the terms cannot be
                 // factored.
                 for term in terms {
-                    factored_terms.push(term.factor(expr)?);
+                    factored_terms.push(term.factor(x)?);
                 }
                 Some(Sum(factored_terms))
             }
@@ -556,7 +549,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                 for idx in 0..terms.len() {
                     let term = &terms[idx];
                     // Try to factor this term.
-                    match term.factor(expr) {
+                    match term.factor(x) {
                         // If it didn't factor, we leave it as is.
                         None => factored_terms.push(term.clone()),
 
@@ -569,7 +562,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                             // These terms shouldn't contain expr though.
                             if remaining_terms
                                 .iter()
-                                .find(|term| term.contains(expr))
+                                .find(|term| term.contains(x))
                                 .is_some()
                             {
                                 return None;
@@ -585,16 +578,22 @@ impl<'b, 'a: 'b> Expr<'a> {
             }
 
             // We can take a factor directly out of a Neg
-            Neg(term) => Some(Neg(Box::new(term.factor(expr)?))),
+            Neg(term) => Some(Neg(Box::new(term.factor(x)?))),
 
             // We can take the Recip factor out of a Recip
-            Recip(term, rounding) => Some(Recip(
-                Box::new(term.factor(&Recip(Box::new(expr.clone()), *rounding))?),
-                *rounding,
-            )),
+            Recip(term, _rounding) => if term.contains(x) {
+                todo!()
+            } else {
+                Some(self.clone())
+            }
 
             // An Atom can't be factored. Note that if expr is this Atom then it would have been
             // handled earlier.
+            Expr::Atom(Atom::Named(y)) => if *y == x{
+                Some(ONE)
+            } else {
+                None
+            },
             Expr::Atom(_) => None,
         }
     }
@@ -602,31 +601,28 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// Returns an Expr equivilent to that of Expr, but with only a single occurence of `expr`.
     /// This is done primerily by factorisation.
     /// If expr cannot be rewritten with only a single occurence of `expr` then None is returned.
-    pub fn single_x(&self, expr: &Expr<'a>) -> Option<Expr<'a>> {
+    pub fn single_x(&self, x: Ident<'a>) -> Option<Expr<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
-        if self.simplify_eq(expr) {
-            return Some(expr.clone());
-        }
         match self {
             Sum(terms) => {
                 let mut x_terms = Vec::new();
                 let mut other_terms = Vec::new();
                 for term in terms {
-                    if term.contains(expr) {
+                    if term.contains(x) {
                         x_terms.push(term.clone());
                     } else {
                         other_terms.push(term.clone());
                     }
                 }
                 if x_terms.len() == 1 {
-                    Some(Sum(vec![x_terms[0].single_x(expr)?, Sum(other_terms)]))
+                    Some(Sum(vec![x_terms[0].single_x(x)?, Sum(other_terms)]))
                 } else {
                     // So self = (x_terms) + (other_terms)
                     // Let's now try to take a factor of x out of x_terms to get
                     //    self = x*(factored_terms) + (other_terms)
-                    let factored = Sum(x_terms).factor(expr)?;
+                    let factored = Sum(x_terms).factor(x)?;
                     Some(Sum(vec![
-                        Prod(vec![expr.clone(), factored]),
+                        Prod(vec![Expr::Atom(Atom::Named(x)), factored]),
                         Sum(other_terms),
                     ]))
                 }
@@ -636,21 +632,26 @@ impl<'b, 'a: 'b> Expr<'a> {
                 let mut new_terms = terms.clone();
                 let mut found_x = false;
                 for term in new_terms.iter_mut() {
-                    if term.contains(expr) {
+                    if term.contains(x) {
                         if found_x {
                             return None;
                         }
                         found_x = true;
-                        *term = term.single_x(expr)?;
+                        *term = term.single_x(x)?;
                     }
                 }
                 Some(Prod(new_terms))
             }
 
-            Neg(term) => Some(Neg(Box::new(term.single_x(expr)?))),
-            Recip(term, rounding) => Some(Recip(Box::new(term.single_x(expr)?), *rounding)),
+            Neg(term) => Some(Neg(Box::new(term.single_x(x)?))),
+            Recip(term, rounding) => Some(Recip(Box::new(term.single_x(x)?), *rounding)),
 
-            Expr::Atom(_) => None,
+            Expr::Atom(Atom::Named(y)) => if *y == x {
+                Some(self.clone())
+            } else {
+                None
+            },
+            Expr::Atom(Atom::Literal(_)) => None,
         }
     }
 

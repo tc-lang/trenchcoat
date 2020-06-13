@@ -109,7 +109,7 @@ fn budget(n: usize) -> usize {
     //8*(0_usize.leading_zeros()-(n+1).leading_zeros()) as usize + (n/8).min(16)
     //(0_usize.leading_zeros()-(n+1).saturating_pow(8).leading_zeros()) as usize + (n/8).min(16)
     //(0_usize.leading_zeros()-(n+1).saturating_pow(4).leading_zeros()) as usize + n
-    2*n
+    2 * n
 }
 
 #[test]
@@ -1056,9 +1056,73 @@ fn large_tree() {
     ], prover);
 
     make_prover!(prover, reqs, max_depth = budget(reqs.len()));
-    
+
     prove!("a <= n" => ProofResult::True);
     prove!("a <= an" => ProofResult::True);
+
+    cleanup!()
+}
+
+#[test]
+fn dont_get_greedy() {
+    let prover;
+
+    requirements!(let reqs = [
+        "a <= trap",
+        "b <= 0-a",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+
+    prove!("a + b <= 0" => ProofResult::True);
+
+    cleanup!()
+}
+
+#[test]
+fn dont_get_greedy_opposite_order() {
+    let prover;
+
+    requirements!(let reqs = [
+        "b <= 0-a",
+        "a <= trap",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+
+    prove!("a + b <= 0" => ProofResult::True);
+
+    cleanup!()
+}
+
+#[test]
+fn dont_get_greedy_opposite_names() {
+    let prover;
+
+    requirements!(let reqs = [
+        "b <= trap",
+        "a <= 0-b",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+
+    prove!("a + b <= 0" => ProofResult::True);
+
+    cleanup!()
+}
+
+#[test]
+fn dont_get_greedy_opposite_names_and_order() {
+    let prover;
+
+    requirements!(let reqs = [
+        "a <= 0-b",
+        "b <= trap",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+
+    prove!("a + b <= 0" => ProofResult::True);
 
     cleanup!()
 }
