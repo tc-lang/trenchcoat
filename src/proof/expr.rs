@@ -75,21 +75,19 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// - Terms in sums and products are sorted (as expressions, see the order of Expr and Atom).
     pub fn simplify(&self) -> Expr<'a> {
         let simplified = self.simplify_run();
-        if *self != simplified {
-            let simplified2 = simplified.simplify();
-            if simplified2 == ZERO {
-                //println!("{} -> 0", self);
-            }
-            if simplified != simplified2 {
-                // If simplifying again gives us a different result, we should log the error since
-                // we don't want this to happen.
-                // There are cases where this can happen - these need to be fixed. After fixing,
-                // this will be useful for debugging.
-                /*println!(
-                    "Dodgy simplification: {} -> {} -> {}",
-                    self, simplified, simplified2
-                );*/
-                return simplified2;
+        {
+            #[cfg(feature = "expr-simplify-debug")]
+            if *self != simplified {
+                let simplified2 = simplified.simplify();
+                if simplified != simplified2 {
+                    // If simplifying again gives us a different result, we should log the error
+                    // since we don't want this to happen.
+                    println!(
+                        "Dodgy simplification: {} -> {} -> {}",
+                        self, simplified, simplified2
+                    );
+                    return simplified2;
+                }
             }
         }
         simplified
