@@ -2,9 +2,11 @@
 
 use super::expr::Expr;
 use super::term::{Inequality, Term};
-use super::{ProofResult, Requirement, SimpleProver};
+use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
 use crate::ast::Ident;
 use std::mem;
+
+pub type FullProver<'a> = ScopedSimpleProver<'a, Prover>;
 
 #[derive(Clone, Debug)]
 pub struct Prover {

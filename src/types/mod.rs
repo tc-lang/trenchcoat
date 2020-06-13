@@ -33,7 +33,7 @@ pub enum Type<'a> {
     Int,
 
     /// An unsigned integer (architecture specific size)
-    Uint,
+    UInt,
 
     /// A struct consists of ordered fields.
     ///
@@ -64,7 +64,7 @@ pub struct StructField<'a> {
 
 impl<'a> PartialEq for Type<'a> {
     fn eq(&self, other: &Self) -> bool {
-        use Type::{Bool, Int, Named, Struct, Uint, Unknown};
+        use Type::{Bool, Int, Named, Struct, UInt, Unknown};
 
         // So struct fields are equal iff they have the same name and type.
         if let Named(_) = other {
@@ -81,8 +81,8 @@ impl<'a> PartialEq for Type<'a> {
                 Int => true,
                 _ => false,
             },
-            Uint => match other {
-                Uint => true,
+            UInt => match other {
+                UInt => true,
                 _ => false,
             },
             Struct(fields) => match other {

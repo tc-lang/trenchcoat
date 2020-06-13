@@ -90,11 +90,13 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
 
 #[derive(Debug, Clone)]
 pub enum Node<'a> {
-    Ident(&'a Ident<'a>),
+    Ident(Ident<'a>),
     Item(&'a Item<'a>),
     Stmt(&'a Stmt<'a>),
     Expr(&'a Expr<'a>),
     Args(&'a FnArgs<'a>),
+    /// A filler value corresponding to no Node actually being present.
+    Blank,
 }
 
 /// Most parsing functions return a ParseRet.
@@ -601,7 +603,7 @@ impl<'a> Block<'a> {
 impl<'a> Ident<'a> {
     /// Returns a `Node` containing `self`.
     pub fn node(&'a self) -> Node<'a> {
-        Node::Ident(self)
+        Node::Ident(*self)
     }
 
     fn parse(token: &'a Token<'a>) -> ParseRet<'a, Ident> {
@@ -638,7 +640,7 @@ impl<'a> Type<'a> {
     fn from_name(name: &'a str) -> Self {
         match name {
             "int" => Type::Int,
-            "uint" => Type::Uint,
+            "uint" => Type::UInt,
             "bool" => Type::Bool,
             _ => Type::Named(name),
         }

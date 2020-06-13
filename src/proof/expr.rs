@@ -835,6 +835,12 @@ impl<'a> From<&ast::proof::Expr<'a>> for Expr<'a> {
     }
 }
 
+impl<'a> From<Ident<'a>> for Expr<'a> {
+    fn from(ident: Ident<'a>) -> Self {
+        Expr::Atom(Atom::Named(ident))
+    }
+}
+
 impl<'a> fmt::Display for Expr<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
         use Expr::{Atom, Neg, Prod, Recip, Sum};

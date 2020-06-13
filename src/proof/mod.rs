@@ -6,21 +6,22 @@
 
 mod bound;
 mod bound_group;
-mod bound_method;
+pub mod bound_method;
 pub mod error;
-mod expr;
-mod graph;
-mod int;
+pub mod expr;
+pub mod graph;
+pub mod int;
 mod optimiser;
 mod term;
 
 #[cfg(test)]
 mod tests;
 
-use self::bound::{Bound, DescriptiveBound, Relation, RelationKind};
-use self::error::Error;
-use self::expr::{Atom, Expr, ONE, ZERO};
 use crate::ast::{self, proof::Condition as AstCondition, Ident};
+use bound::{Bound, DescriptiveBound, Relation, RelationKind};
+use error::Error;
+pub use expr::Expr;
+use expr::{Atom, ONE, ZERO};
 use std::fmt;
 use std::ops::Not;
 
@@ -191,7 +192,7 @@ pub trait Prover<'a> {
     /// ```
     /// Then you might do `let prover2 = prover1.define(x, x+2)`
     /// then expressions passed to prover2 will map `x` in `prover2` to `x+2` in `prover1`.
-    fn define(&'a self, x: Ident<'a>, expr: &'a Expr<'a>) -> Self;
+    fn define(&'a self, x: Ident<'a>, expr: Expr<'a>) -> Self;
 
     /// Create a new prover whereby `x` is treated as a new identifier even if `x` was an
     /// identifier in self.
@@ -209,7 +210,7 @@ pub enum ScopedSimpleProver<'a, P: SimpleProver<'a>> {
     Root(P),
     Defn {
         x: Ident<'a>,
-        expr: &'a Expr<'a>,
+        expr: Expr<'a>,
 
         parent: &'a ScopedSimpleProver<'a, P>,
     },
@@ -242,7 +243,7 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
         }
     }
 
-    fn define(&'a self, x: Ident<'a>, expr: &'a Expr<'a>) -> Self {
+    fn define(&'a self, x: Ident<'a>, expr: Expr<'a>) -> Self {
         Self::Defn {
             x,
             expr,
