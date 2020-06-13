@@ -15,7 +15,7 @@ macro_rules! make_prover {
     ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
         // Option A: Bounds method
         let mut bounds_prover = BoundsProver::new($reqs.clone());
-        bounds_prover.set_max_depth($depth);
+        //bounds_prover.set_max_depth($depth as isize);
         $name = FullProver::from(bounds_prover);
     };
 }
@@ -89,19 +89,27 @@ macro_rules! requirements {
         macro_rules! cleanup {
             () => {
                 if !errors.is_empty() {
-                    panic!("{}", errors.into_iter().fold(
-                        "\n\n".to_string(),
-                        |mut s, (is_contra, stmt, result, expected)| {
+                    panic!("\n\n{}\n", errors.into_iter().fold(
+                        String::new(),
+                        |s, (is_contra, stmt, result, expected)| {
                             s + &(match is_contra {
                                 false => format!("    {} \t gave: {}, expected: {}", stmt, result, expected),
-                                true => format!("  ¬({})\t gave: {}, expected: {}", stmt, result, expected),
+                                true  => format!("  ¬({})\t gave: {}, expected: {}", stmt, result, expected),
                             } + "\n")
                         },
-                    ) + "\n");
+                    ));
                 }
             }
         }
     };
+}
+
+fn budget(n: usize) -> usize {
+    //(2*n).min(n+16)//.min(n/8+32)
+    //8*(0_usize.leading_zeros()-(n+1).leading_zeros()) as usize + (n/8).min(16)
+    //(0_usize.leading_zeros()-(n+1).saturating_pow(8).leading_zeros()) as usize + (n/8).min(16)
+    //(0_usize.leading_zeros()-(n+1).saturating_pow(4).leading_zeros()) as usize + n
+    2*n
 }
 
 #[test]
@@ -145,7 +153,7 @@ fn example_test() {
     ], prover);
 
     // We can garentee that this will be worst case O(n^4)
-    make_prover!(prover, reqs, max_depth = 3);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     /*
     let tokens = tokenize("8 - y");
@@ -240,7 +248,7 @@ fn test_3_vars_different_coeffs() {
     ], prover);
 
     // We can garentee that this will be worst case O(n^3)
-    make_prover!(prover, reqs, max_depth = 3);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     prove!("x <= z+5" => ProofResult::True);
 
@@ -258,7 +266,7 @@ fn test_3_variables_different_coeffs_2() {
     ], prover);
 
     // We can garentee that this will be worst case O(n^3)
-    make_prover!(prover, reqs, max_depth = 3);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     prove!("x <= z+4" => ProofResult::True);
 
@@ -278,7 +286,7 @@ fn test_3_variables() {
         "z <= 3",
     ], prover);
 
-    make_prover!(prover, reqs, max_depth = 4);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     prove!("x <= 11" => ProofResult::True);
     prove!("x <= 10" => ProofResult::True);
@@ -329,7 +337,7 @@ fn test_3_variables_2() {
         "z <= x",
     ], prover);
 
-    make_prover!(prover, reqs, max_depth = 4);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     prove!("x <= 11" => ProofResult::True);
     prove!("x <= 10" => ProofResult::True);
@@ -395,7 +403,7 @@ fn test_lots_of_variables() {
         "y >= 0",
     ], prover);
 
-    make_prover!(prover, reqs, max_depth = 5);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     let tokens = tokenize("y-2*n");
     let expr = crate::ast::proof::Expr::parse(&tokens).unwrap();
@@ -510,8 +518,15 @@ fn new_tests<'a>() {
         "g >= 0",
         "l >= 0",
     ], prover);
+    // z <= y <= f + g + b/2 <= l
+    //
+    // 1) z <= y
+    // 2) y <= f + g + b/2
+    // 3) f <= l/4
+    // 4) g <= l/4
+    // 5) b <= l
 
-    make_prover!(prover, reqs, max_depth = 7);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
     // Note that l <= z <= y <= f + g + b/2 <= l/4 + l/4 + l/2 = l
     // Hence l = z = y = f + g + b/2
 
@@ -524,7 +539,7 @@ fn new_tests<'a>() {
     prove!("g + f <= l/2" => ProofResult::True);
     prove!("l <= y" => ProofResult::True);
     prove!("y <= l" => ProofResult::True);
-    // FIXME FIXME prove!("g + f <= l/4" => ProofResult::Undetermined);
+    prove!("g + f <= l/4" => ProofResult::Undetermined);
     prove!("g + f + b/2 <= l" => ProofResult::True);
     prove!("g + f + b/2 >= l" => ProofResult::True);
     // FIXME prove!("g + f + b <= l" => ProofResult::False);
@@ -532,7 +547,7 @@ fn new_tests<'a>() {
     prove!("l <= z" => ProofResult::True);
     prove!("z <= l" => ProofResult::True);
     prove!("z <= y" => ProofResult::True);
-    // FIXME prove!("y <= z" => ProofResult::True);
+    prove!("y <= z" => ProofResult::True);
     prove!("b <= f + b/2 + g" => ProofResult::True);
     prove!("b/2 <= f + g" => ProofResult::True);
     prove!("b <= 2*f + 2*g" => ProofResult::True);
@@ -542,7 +557,7 @@ fn new_tests<'a>() {
     prove!("c+d-2 <= 2*f + 2*g" => ProofResult::True);
     prove!("c+d+1 <= 2*f + 2*g" => ProofResult::Undetermined);
     prove!("c+d+2 <= 2*f + 2*g" => ProofResult::Undetermined);
-    // TODO Properly check this prove!("l >= 2*f + 2*g" => ProofResult::True);
+    prove!("l >= 2*f + 2*g" => ProofResult::True);
     prove!("l <= 2*f + 2*g" => ProofResult::True);
 
     prove!("5 >= 3*x" => ProofResult::Undetermined);
@@ -597,7 +612,7 @@ fn real_world_example() {
         "i2-1 <= end",
     ], prover);
 
-    make_prover!(prover, reqs, max_depth = 3);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     // So, we want to index with i and j!
     prove!("i >= 0" => ProofResult::True);
@@ -657,7 +672,7 @@ fn really_long_chain() {
         "y <= z",
     ], prover);
 
-    make_prover!(prover, reqs, max_depth = 26);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     prove!("a <= z" => ProofResult::True);
     prove!("a+1 <= z" => ProofResult::Undetermined);
@@ -710,7 +725,7 @@ fn really_long_cycle() {
         "z <= a",
     ], prover);
 
-    make_prover!(prover, reqs, max_depth = 30);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     prove!("a <= z" => ProofResult::True);
     prove!("z <= a" => ProofResult::True);
@@ -766,7 +781,7 @@ fn linked_cycles() {
         // a = b = ... = k <= l <= m <= n <= o <= p = q = ... = z
     ], prover);
 
-    make_prover!(prover, reqs, max_depth = 26);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     prove!("a <= z" => ProofResult::True);
     prove!("z <= a" => ProofResult::Undetermined);
@@ -838,7 +853,7 @@ fn linked_cycles_2() {
         // a = b = .. = m <= n <= o <= p = q = .. z
     ], prover);
 
-    make_prover!(prover, reqs, max_depth = 26);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     prove!("a <= z" => ProofResult::True);
     prove!("z <= a" => ProofResult::Undetermined);
@@ -916,7 +931,7 @@ fn linked_cycles_3() {
         // a = b = .. z
     ], prover);
 
-    make_prover!(prover, reqs, max_depth = 26);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     prove!("a <= z" => ProofResult::True);
     prove!("z <= a" => ProofResult::True);
@@ -946,7 +961,7 @@ fn sub_carry() {
         "d >= 0",
     ], prover);
 
-    make_prover!(prover, reqs, max_depth = 4);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
     prove!("0 <= a+c" => ProofResult::True);
     prove!("0 <= a+b" => ProofResult::Undetermined);
@@ -990,6 +1005,60 @@ fn sub_carry() {
     prove!("0-d <= a + b + 2*c" => ProofResult::True);
     prove!("0-c <= a+b+c+d" => ProofResult::True);
     prove!("0 <= a+b+c+d" => ProofResult::Undetermined);
+
+    cleanup!()
+}
+
+#[test]
+fn large_tree() {
+    let prover;
+
+    requirements!(let reqs = [
+        "a <= b",
+        "a <= c",
+        "a <= d",
+        "b <= e",
+        "b <= f",
+        "b <= g",
+        "c <= h",
+        "c <= i",
+        "c <= j",
+        "d <= k",
+        "d <= l",
+        "d <= m",
+        "e <= n",
+        "e <= o",
+        "e <= p",
+        "f <= q",
+        "f <= r",
+        "f <= s",
+        "g <= t",
+        "g <= u",
+        "g <= v",
+        "h <= w",
+        "h <= x",
+        "h <= y",
+        "i <= z",
+        "i <= aa",
+        "i <= ab",
+        "j <= ac",
+        "j <= ad",
+        "j <= ae",
+        "k <= af",
+        "k <= ag",
+        "k <= ah",
+        "l <= ai",
+        "l <= aj",
+        "l <= ak",
+        "m <= al",
+        "m <= am",
+        "m <= an",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+    
+    prove!("a <= n" => ProofResult::True);
+    prove!("a <= an" => ProofResult::True);
 
     cleanup!()
 }

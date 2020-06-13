@@ -124,10 +124,59 @@ impl<'a: 'b, 'b> BoundGroup<'a> {
         }
     }
 
+    fn permutation_group_id(&self, bound_id: usize) -> usize {
+        self.permutation_groups
+            .iter()
+            .position(|group| group.contains(&bound_id))
+            .unwrap()
+    }
+
+    fn permutation_group_of<'c>(&'c self, bound_id: usize) -> &'c BTreeSet<usize> {
+        &self.permutation_groups[self.permutation_group_id(bound_id)]
+    }
+
+    fn requirement_group_id(&self, bound_id: usize) -> Option<usize> {
+        self.requirements
+            .iter()
+            .position(|group| group.contains(&bound_id))
+    }
+
     /// Returns the maximum requirement ID.
     /// See RequirementRef.id() for more information.
     pub fn max_requirement_id(&self) -> usize {
         self.requirements.len()
+    }
+
+    /// Returns the maximum permutation group ID.
+    pub fn max_pg_id(&self) -> usize {
+        self.permutation_groups.len()
+    }
+
+    pub fn exclude(&self, rg_id: usize, pg_id: usize) -> BoundGroup<'a> {
+        let new_bounds = self
+            .bounds
+            .iter()
+            .enumerate()
+            .map(|(id, bound)| {
+                if bound.is_some()
+                    && self.permutation_group_id(id) != pg_id
+                    && self
+                        .requirement_group_id(id)
+                        .map(|this_rg_id| this_rg_id != rg_id)
+                        .unwrap_or(true)
+                {
+                    bound.clone()
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        BoundGroup {
+            bounds: new_bounds,
+            requirements: self.requirements.clone(),
+            permutation_groups: self.permutation_groups.clone(),
+        }
     }
 
     /// Subsitute `bound` in to all the bounds within self and return the result.
@@ -155,11 +204,7 @@ impl<'a: 'b, 'b> BoundRef<'a, 'b> {
     /// Returns the requirement containing self or None if it is not part of a requirement group.
     pub fn requirement(&self) -> Option<RequirementRef<'a, 'b>> {
         Some(RequirementRef {
-            id: self
-                .group
-                .requirements
-                .iter()
-                .position(|req_grp| req_grp.contains(&self.id))?,
+            id: self.group.requirement_group_id(self.id)?,
             group: self.group,
         })
     }
@@ -173,14 +218,7 @@ impl<'a: 'b, 'b> BoundRef<'a, 'b> {
 
     /// Returns a vector of all bounds which self must be permuted with.
     pub fn permutation_group(&self) -> Vec<BoundRef<'a, 'b>> {
-        self.group
-            .permutation_groups
-            .iter()
-            // Find the permutation group containing self.
-            // self must be in only 1 group, so we can stop when we find one and unwrap since we
-            // know one must exist.
-            .find(|pg| pg.contains(&self.id))
-            .unwrap()
+        self.group.permutation_group_of(self.id)
             .iter()
             // Filter out invalid bounds and create BoundRefs
             .filter_map(|id| {
@@ -194,6 +232,14 @@ impl<'a: 'b, 'b> BoundRef<'a, 'b> {
                 }
             })
             .collect()
+    }
+
+    pub fn permutation_group_id(&self) -> usize {
+        self.group
+            .permutation_groups
+            .iter()
+            .position(|pg| pg.contains(&self.id))
+            .unwrap()
     }
 }
 
