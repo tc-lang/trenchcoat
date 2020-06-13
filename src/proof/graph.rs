@@ -500,7 +500,14 @@ impl Prover {
 impl<'a> SimpleProver<'a> for Prover {
     fn new(reqs: Vec<Requirement<'a>>) -> Self {
         let mut prover = Prover {
-            nodes: Vec::new(),
+            // We add a single node for the empty value in order to ensure that we can still prove
+            // trivial things, like `3 <= 4`, for example. Without this, we can have cases where
+            // there aren't any proof statments given in a function, but there's still proof
+            // required, through definitions.
+            nodes: vec![Node {
+                expr: Vec::new(),
+                less_than: Vec::new(),
+            }],
             try_splits: DEFAULT_TRY_SPLITS,
         };
 
