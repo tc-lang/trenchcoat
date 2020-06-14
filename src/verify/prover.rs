@@ -6,7 +6,7 @@ use std::ops::Deref;
 use std::pin::Pin;
 
 #[cfg(feature = "bounds")]
-use crate::proof::bound_method::FullProver as InnerProver;
+use crate::proof::fast_bound_method::FullProver as InnerProver;
 #[cfg(feature = "graph")]
 use crate::proof::graph::FullProver as InnerProver;
 
