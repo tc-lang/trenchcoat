@@ -1,6 +1,6 @@
 use super::expr::Expr;
 use super::int::Int;
-use super::optimiser2::{Maximizer, Minimizer};
+use super::fast_optimiser::{Maximizer, Minimizer};
 use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
 
 pub type FullProver<'a> = ScopedSimpleProver<'a, Prover<'a>>;
