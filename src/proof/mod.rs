@@ -7,11 +7,13 @@
 mod bound;
 mod bound_group;
 mod bound_method;
+mod bound_method2;
 pub mod error;
 mod expr;
 mod graph;
 mod int;
 mod optimiser;
+mod optimiser2;
 mod term;
 
 #[cfg(test)]

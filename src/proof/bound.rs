@@ -357,12 +357,14 @@ impl<'a> DescriptiveBound<'a> {
     }
 }
 
-pub fn bounds_on_ge0<'a>(expr_ge0: Expr<'a>, subject: Ident<'a>) -> Option<Bound<'a>> {
-    Relation{
+/// Returns the bound on `subject` given by `0 <= expr_ge0`
+pub fn bounds_on_ge0<'a>(expr_ge0: &Expr<'a>, subject: Ident<'a>) -> Option<Bound<'a>> {
+    Relation {
         left: expr_ge0.single_x(subject)?,
         relation: RelationKind::Ge,
         right: ZERO,
-    }.bounds_on_unsafe(subject)
+    }
+    .bounds_on_unsafe(subject)
 }
 
 ///////////////////////////////////////////////////////////////////////////////

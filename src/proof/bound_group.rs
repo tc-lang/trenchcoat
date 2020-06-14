@@ -218,7 +218,8 @@ impl<'a: 'b, 'b> BoundRef<'a, 'b> {
 
     /// Returns a vector of all bounds which self must be permuted with.
     pub fn permutation_group(&self) -> Vec<BoundRef<'a, 'b>> {
-        self.group.permutation_group_of(self.id)
+        self.group
+            .permutation_group_of(self.id)
             .iter()
             // Filter out invalid bounds and create BoundRefs
             .filter_map(|id| {

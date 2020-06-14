@@ -581,19 +581,23 @@ impl<'b, 'a: 'b> Expr<'a> {
             Neg(term) => Some(Neg(Box::new(term.factor(x)?))),
 
             // We can take the Recip factor out of a Recip
-            Recip(term, _rounding) => if term.contains(x) {
-                todo!()
-            } else {
-                Some(self.clone())
+            Recip(term, _rounding) => {
+                if term.contains(x) {
+                    todo!()
+                } else {
+                    Some(self.clone())
+                }
             }
 
             // An Atom can't be factored. Note that if expr is this Atom then it would have been
             // handled earlier.
-            Expr::Atom(Atom::Named(y)) => if *y == x{
-                Some(ONE)
-            } else {
-                None
-            },
+            Expr::Atom(Atom::Named(y)) => {
+                if *y == x {
+                    Some(ONE)
+                } else {
+                    None
+                }
+            }
             Expr::Atom(_) => None,
         }
     }
@@ -605,8 +609,8 @@ impl<'b, 'a: 'b> Expr<'a> {
         use Expr::{Neg, Prod, Recip, Sum};
         match self {
             Sum(terms) => {
-                let mut x_terms = Vec::new();
-                let mut other_terms = Vec::new();
+                let mut x_terms = Vec::with_capacity(terms.len());
+                let mut other_terms = Vec::with_capacity(terms.len());
                 for term in terms {
                     if term.contains(x) {
                         x_terms.push(term.clone());
@@ -614,7 +618,9 @@ impl<'b, 'a: 'b> Expr<'a> {
                         other_terms.push(term.clone());
                     }
                 }
-                if x_terms.len() == 1 {
+                if x_terms.len() == 0 {
+                    None
+                } else if x_terms.len() == 1 {
                     Some(Sum(vec![x_terms[0].single_x(x)?, Sum(other_terms)]))
                 } else {
                     // So self = (x_terms) + (other_terms)
@@ -640,43 +646,47 @@ impl<'b, 'a: 'b> Expr<'a> {
                         *term = term.single_x(x)?;
                     }
                 }
-                Some(Prod(new_terms))
+                if found_x {
+                    Some(Prod(new_terms))
+                } else {
+                    None
+                }
             }
 
             Neg(term) => Some(Neg(Box::new(term.single_x(x)?))),
             Recip(term, rounding) => Some(Recip(Box::new(term.single_x(x)?), *rounding)),
 
-            Expr::Atom(Atom::Named(y)) => if *y == x {
-                Some(self.clone())
-            } else {
-                None
-            },
+            Expr::Atom(Atom::Named(y)) => {
+                if *y == x {
+                    Some(self.clone())
+                } else {
+                    None
+                }
+            }
             Expr::Atom(Atom::Literal(_)) => None,
         }
     }
 
-    /// Returns a vector of the atoms within the expression
-    /// This list will returns duplicated atoms
-    pub fn atoms(&'b self) -> Vec<&'b Atom<'a>> {
+    /// Calls cb with each of the variables in self.
+    /// This will include duplicates.
+    /// Use `self.variables` if you don't want duplicates.
+    pub fn variables_duped_cb(&self, cb: &mut impl FnMut(Ident<'a>) -> ()) {
         match self {
-            Expr::Neg(inner_expr) | Expr::Recip(inner_expr, _) => inner_expr.atoms(),
+            Expr::Neg(inner_expr) | Expr::Recip(inner_expr, _) => inner_expr.variables_duped_cb(cb),
             Expr::Sum(terms) | Expr::Prod(terms) => {
-                terms.iter().map(Self::atoms).flatten().collect()
+                for term in terms {
+                    term.variables_duped_cb(cb);
+                }
             }
-            Expr::Atom(atom) => vec![atom],
+            Expr::Atom(Atom::Named(x)) => cb(*x),
+            Expr::Atom(Atom::Literal(_)) => (),
         }
     }
 
     /// Returns a list of named atoms within self. Duplicates are removed.
-    pub fn variables(&'b self) -> Vec<Ident<'a>> {
-        let mut vars = self
-            .atoms()
-            .iter()
-            .filter_map(|atom| match atom {
-                Atom::Literal(_) => None,
-                Atom::Named(ident) => Some(*ident),
-            })
-            .collect::<Vec<Ident>>();
+    pub fn variables(&self) -> Vec<Ident<'a>> {
+        let mut vars = Vec::with_capacity(4);
+        self.variables_duped_cb(&mut |var| vars.push(var));
         vars.sort_unstable();
         vars.dedup();
         vars
