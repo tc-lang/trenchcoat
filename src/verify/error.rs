@@ -1,6 +1,7 @@
 //! Error definitions for ast parsing
 
 use crate::ast::{Item, Node};
+use crate::proof::{ProofResult, Requirement};
 use crate::types::Type;
 
 /// Errors each have a kind and a context in which it occured. These can be combined with the
@@ -31,12 +32,23 @@ pub enum Kind<'a> {
         expected: Vec<Type<'a>>,
         found: Type<'a>,
     },
+    /// Indicates that the return identifier "_" appeared somewhere it isn't allowed
+    MisplacedReturnIdent,
+    /// Indicates that a certain feature is currently not allowed (even though it may be
+    /// syntactically or otherwise valid)
+    FeatureNotAllowed {
+        description: &'static str,
+    },
+    /// A collection of proof requirements that didn't pass, along with their proof results.
+    /// Note: The requirements are in terms of the variables in the calling scope.
+    FailedProof(Vec<(ProofResult, Requirement<'a>)>),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Context {
     NoContext,
     TopLevel,
+    ProofStmt,
     FnBody,
     Expr,
     Assign,

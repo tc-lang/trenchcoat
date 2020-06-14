@@ -15,7 +15,6 @@ fn main() {
     //for _ in 0..100000 {
     //proof::examples::examples();
     //}
-    return;
 
     let s = include_str!("test_input.tc");
     // "fn f(x) {x + 2};  fn hi (x, y){x * y; 1 + 5\nf(x)+3}; fn main() { print hi(f(2), 1); }";
