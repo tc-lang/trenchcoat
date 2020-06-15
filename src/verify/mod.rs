@@ -296,7 +296,7 @@ impl<'a> TopLevelScope<'a> {
                     let mut lhs_errs =
                         check_expr(lhs, allowed_return_ident, params, required_return_int);
                     let rhs_errs =
-                        check_expr(lhs, allowed_return_ident, params, required_return_int);
+                        check_expr(rhs, allowed_return_ident, params, required_return_int);
 
                     lhs_errs.extend(rhs_errs);
                     lhs_errs
