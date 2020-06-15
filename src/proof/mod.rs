@@ -7,13 +7,12 @@
 mod bound;
 mod bound_group;
 pub mod bound_method;
-pub mod fast_bound_method;
-pub mod error;
 pub mod expr;
+pub mod fast_bound_method;
+mod fast_optimiser;
 pub mod graph;
 pub mod int;
 mod optimiser;
-mod fast_optimiser;
 mod term;
 
 #[cfg(test)]
@@ -21,17 +20,9 @@ mod tests;
 
 use crate::ast::{self, proof::Condition as AstCondition, Ident};
 use bound::{Bound, DescriptiveBound, Relation, RelationKind};
-use error::Error;
 pub use expr::Expr;
-use expr::{Atom, ONE, ZERO};
 use std::fmt;
 use std::ops::Not;
-
-/// Attempts to prove that the entire contents of the program is within the bounds specified by the
-/// proof rules.
-fn validate<'a>(top_level_items: &'a [ast::Item<'a>]) -> Vec<Error<'a>> {
-    todo!()
-}
 
 #[derive(Debug, Clone)]
 pub struct Requirement<'a> {

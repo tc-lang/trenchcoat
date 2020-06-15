@@ -1,6 +1,6 @@
 //! Parsing for proof statements
 
-use crate::ast::{Error, ErrorContext, ErrorKind, Ident, ParseRet};
+use crate::ast::{Error, ErrorContext, ErrorKind, Ident, Node, ParseRet};
 use crate::tokens::{self, Oper, Token, TokenKind};
 use std::convert::{TryFrom, TryInto};
 
@@ -242,6 +242,11 @@ impl TryFrom<Oper> for ArithOp {
 }
 
 impl<'a> Stmt<'a> {
+    /// Produces an AST node containing the proof statement
+    pub fn node(&'a self) -> Node<'a> {
+        Node::ProofStmt(self)
+    }
+
     /// Attempts to parse a single proof statment from the all of the tokens composing a proof line
     ///
     /// This function will return `None` if and only if the input set of tokens is empty; this

@@ -3,7 +3,7 @@ mod prover;
 
 use crate::ast::proof::Stmt as ProofStmt;
 use crate::ast::{
-    self, BinOp, Block, Expr, ExprKind, FnArgs, FnParams, Ident, Item, ItemKind, PrefixOp,
+    self, BinOp, Block, Expr, ExprKind, FnArgs, Ident, Item, ItemKind, PrefixOp,
     StmtKind, TypeExpr,
 };
 use crate::proof::{self, ProofResult, Requirement};
@@ -154,7 +154,7 @@ impl<'a> TopLevelScope<'a> {
 
             let params: Vec<_> = params.iter().map(|&(name, ref ty)| (name, ty)).collect();
 
-            let res = TopLevelScope::check_proof_stmts(proof_stmts, &params, return_type);
+            let res = TopLevelScope::check_proof_stmts(proof_stmts, &params, return_type, item);
             let (reqs, contracts) = match res {
                 Err(errs) => {
                     top.errors.extend(errs);
@@ -199,6 +199,7 @@ impl<'a> TopLevelScope<'a> {
         stmts: &'a [ProofStmt<'a>],
         params: &[(Ident<'a>, &Type<'a>)],
         ret_ty: &TypeExpr<'a>,
+        source_item: &'a Item<'a>,
     ) -> Result<
         (
             Vec<Requirement<'a>>,
@@ -276,6 +277,7 @@ impl<'a> TopLevelScope<'a> {
             allowed_return_ident: bool,
             params: &[(Ident<'b>, &Type<'b>)],
             required_return_int: &mut bool,
+            source: ast::Node<'b>,
         ) -> Vec<Error<'b>> {
             match &cond.kind {
                 ConditionKind::Compound { .. } => vec![Error {
@@ -284,7 +286,7 @@ impl<'a> TopLevelScope<'a> {
                             "Logical operators are currently not allowed in proof statements",
                     },
                     context: error::Context::ProofStmt,
-                    source: ast::Node::Blank,
+                    source,
                 }],
                 ConditionKind::Simple {
                     ref lhs, ref rhs, ..
@@ -317,13 +319,14 @@ impl<'a> TopLevelScope<'a> {
                         false,
                         params,
                         &mut required_return_int,
+                        stmt.node(),
                     ));
                     reqs.push(cond.into());
                 }
                 Contract { pre, ref post } => {
                     errors.extend(
                         pre.as_ref()
-                            .map(|c| check_condition(c, false, params, &mut required_return_int))
+                            .map(|c| check_condition(c, false, params, &mut required_return_int, stmt.node()))
                             .unwrap_or(vec![]),
                     );
                     errors.extend(check_condition(
@@ -331,6 +334,7 @@ impl<'a> TopLevelScope<'a> {
                         false,
                         params,
                         &mut required_return_int,
+                        stmt.node()
                     ));
                     contracts.push((pre.as_ref().map(Into::into), post.into()));
                 }
@@ -347,7 +351,7 @@ impl<'a> TopLevelScope<'a> {
                     found: ret_ty.typ.clone(),
                 },
                 context: error::Context::ProofStmt,
-                source: ast::Node::Blank,
+                source: ast::Node::Item(source_item),
             })
         }
 
@@ -710,6 +714,7 @@ impl<'a> Scope<'a> {
                     let prover = raw_prover.map(|p| unsafe { &mut *p });
                     let (expr_errors, typ, _tmp_ident, stop) = self.check_expr(prover, expr);
                     stop_proof = stop_proof || stop;
+                    errors.extend(expr_errors);
 
                     types::StructField { name: *name, typ }
                 }).collect();
@@ -981,13 +986,13 @@ impl<'a> Scope<'a> {
 
     fn check_block(
         &'a self,
-        mut prover: Option<&mut WrappedProver<'a>>,
+        prover: Option<&mut WrappedProver<'a>>,
         block: &'a Block,
         start: usize,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
         use StmtKind::{Assign, Eval, Let, Print};
 
-        let mut raw_prover = prover.map(|p| p as *mut WrappedProver<'a>);
+        let raw_prover = prover.map(|p| p as *mut WrappedProver<'a>);
 
         let mut errors: Vec<Error> = Vec::new();
         let mut stop_proof = false;

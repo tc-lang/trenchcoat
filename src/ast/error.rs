@@ -7,13 +7,13 @@ use crate::tokens::Token;
 /// The source may not be given in some error cases, for example when there's an unexpected EOF.
 #[derive(Debug, Clone)]
 pub struct Error<'a> {
-    pub kind: ErrorKind,
+    pub kind: Kind,
     pub context: Context,
     pub source: Option<&'a Token<'a>>,
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum ErrorKind {
+pub enum Kind {
     /// This error is generated when, during parsing, there are no more tokens when some are
     /// expected.
     EOF,

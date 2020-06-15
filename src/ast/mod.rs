@@ -5,6 +5,14 @@ use crate::types::{self, Type, EMPTY_STRUCT};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
 
+/// A helper macro for removing some of the boilerplate code that's present in the combinations of
+/// parsers that's used here.
+///
+/// The two inputs to this macro are a `ParseRet<T>` and a `mut Vec<Error>`. This macro collects
+/// any soft errors into the provided list, if they are present, and yields the inner value of type
+/// `T`. If there are hard errors instead, the calling function returns the complete set of errors.
+///
+/// As such, the caller of this macro must be a function with return type `Result<T, Vec<Error>>`.
 macro_rules! next {
     ($f:expr , $errors:expr) => {{
         use ParseRet::*;
@@ -22,6 +30,11 @@ macro_rules! next {
     }};
 }
 
+/// A helper macro for cleaning up boilerplate code.
+///
+/// This is nearly identical to `next!`, with the only difference being that this macro is for
+/// callers that return an `Option<Result<T, Vec<Error>>>`, with the distinction being used to
+/// signify whether the another AST node should be parsed instead.
 macro_rules! next_option {
     ($f:expr , $errors:expr) => {{
         use ParseRet::*;
@@ -43,7 +56,7 @@ mod error;
 pub mod proof;
 mod u8_to_str;
 
-pub use error::{Context as ErrorContext, Error, ErrorKind};
+pub use error::{Context as ErrorContext, Error, Kind as ErrorKind};
 use proof::consume_proof_lines;
 use u8_to_str::u8_to_str;
 
@@ -51,6 +64,7 @@ use u8_to_str::u8_to_str;
 // Top-level interface                                                        //
 ////////////////////////////////////////////////////////////////////////////////
 
+/// Attempts to parse the entire token tree into the AST
 pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error<'a>>> {
     let mut items = Vec::new();
     let mut errors = Vec::new();
@@ -88,6 +102,7 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
 // Type definitions                                                           //
 ////////////////////////////////////////////////////////////////////////////////
 
+/// A single AST type, given so that
 #[derive(Debug, Clone)]
 pub enum Node<'a> {
     Ident(Ident<'a>),
@@ -95,8 +110,7 @@ pub enum Node<'a> {
     Stmt(&'a Stmt<'a>),
     Expr(&'a Expr<'a>),
     Args(&'a FnArgs<'a>),
-    /// A filler value corresponding to no Node actually being present.
-    Blank,
+    ProofStmt(&'a proof::Stmt<'a>),
 }
 
 /// Most parsing functions return a ParseRet.

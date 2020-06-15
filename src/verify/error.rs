@@ -26,8 +26,6 @@ pub enum Kind<'a> {
     },
     VariableNotFound,
     AccessFieldOnNotStruct,
-
-    ReturnType,
     TypeMismatch {
         expected: Vec<Type<'a>>,
         found: Type<'a>,
@@ -46,23 +44,12 @@ pub enum Kind<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Context {
-    NoContext,
     TopLevel,
     ProofStmt,
-    FnBody,
     Expr,
     Assign,
     FnTail,
     FnArg,
     FieldAccess,
     BinOpTypeCheck,
-}
-
-impl<'a> Error<'a> {
-    pub fn with_context(self, ctx: Context) -> Self {
-        Self {
-            context: ctx,
-            ..self
-        }
-    }
 }

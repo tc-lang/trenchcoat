@@ -1,8 +1,6 @@
 use crate::ast::Ident;
-use crate::proof::expr::Atom;
 use crate::proof::{Expr, ProofResult, Prover, Requirement, ScopedSimpleProver, SimpleProver};
 use crate::tokens::FAKE_TOKEN;
-use std::ops::Deref;
 use std::pin::Pin;
 
 #[cfg(feature = "bounds")]
@@ -15,8 +13,6 @@ compile_error!("Either the 'graph' feature or the 'bounds' feature must be enabl
 
 #[cfg(not(any(feature = "bounds", feature = "graph")))]
 type InnerProver<'a> = ScopedSimpleProver<'a, Dummy>;
-
-const MIN_TMP_UNDERSCORES: usize = 2;
 
 pub struct WrappedProver<'a> {
     /// The inner prover
@@ -176,7 +172,7 @@ impl<'a> WrappedProver<'a> {
 
                     (new_deps, prover, new_reqs)
                 }
-                Root(p) => {
+                Root(_) => {
                     base.extend(with);
                     (Vec::new(), Prover::new(base.clone()), base)
                 }
