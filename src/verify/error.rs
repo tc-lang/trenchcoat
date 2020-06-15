@@ -44,6 +44,7 @@ pub enum Kind<'a> {
 
 #[derive(Debug, Clone, Copy)]
 pub enum Context {
+    NoContext,
     TopLevel,
     ProofStmt,
     Expr,
@@ -52,4 +53,14 @@ pub enum Context {
     FnArg,
     FieldAccess,
     BinOpTypeCheck,
+    PrefixOpTypeCheck,
+}
+
+impl<'a> Error<'a> {
+    pub fn with_context(self, ctx: Context) -> Self {
+        Self {
+            context: ctx,
+            ..self
+        }
+    }
 }
