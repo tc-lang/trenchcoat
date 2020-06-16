@@ -1,7 +1,8 @@
-use super::expr::{Atom, Expr, MINUS_ONE, ONE, ZERO};
+use super::expr::{minus_one, one, zero, Atom, Expr};
 use super::optimiser::bound_sub;
+use super::PrettyFormat;
 use crate::ast::Ident;
-use std::fmt;
+use std::fmt::{self, Display, Formatter};
 
 /// Represents a bound on something.
 /// For example `<= 2` or `>= x+y`
@@ -88,11 +89,11 @@ impl<'a> Relation<'a> {
     /// - `subject` only occurs exactly once in self.left.
     ///    This can be achieved by using `self.left = self.left.single_x(subject)?`
     /// - `subject` does not occur in self.right
-    pub fn rearrange_unsafe(&self, subject: Ident<'a>) -> Option<Relation<'a>> {
+    pub fn rearrange_unsafe(&self, subject: &Ident<'a>) -> Option<Relation<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
 
         // We are done if self.left = subject
-        if let Expr::Atom(Atom::Named(x)) = self.left {
+        if let Expr::Atom(Atom::Named(ref x)) = self.left {
             if x == subject {
                 return Some(self.clone());
             }
@@ -209,7 +210,7 @@ impl<'a> Relation<'a> {
 
     /// Returns the bounds on `target` given by self.
     /// This method makes the same assumptions as `rearrange_unsafe`
-    pub fn bounds_on_unsafe(&self, target: Ident<'a>) -> Option<Bound<'a>> {
+    pub fn bounds_on_unsafe(&self, target: &Ident<'a>) -> Option<Bound<'a>> {
         use RelationKind::{Ge, Le};
         Some(match self.rearrange_unsafe(target)? {
             Relation {
@@ -226,12 +227,12 @@ impl<'a> Relation<'a> {
     }
 
     /// Returns the bound on `name` given by self if it exists and can be computed.
-    pub fn bounds_on(&self, name: Ident<'a>) -> Option<Bound<'a>> {
+    pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
         // These will form the Relation that we will solve.
         // This must end up satisfying the preconditions on bounds_on_unsafe.
         let lhs;
         let relation;
-        let rhs;
+        let rhs: Expr<'a>;
 
         let left_contains = self.left.variables().contains(&name);
         let right_contains = self.right.variables().contains(&name);
@@ -244,7 +245,7 @@ impl<'a> Relation<'a> {
             .simplify()
             .single_x(name)?;
             relation = self.relation;
-            rhs = ZERO;
+            rhs = zero();
         } else if left_contains && !right_contains {
             lhs = self.left.simplify().single_x(name)?;
             relation = self.relation;
@@ -271,8 +272,8 @@ impl<'a> Relation<'a> {
             .iter()
             .filter_map(|x| {
                 Some(DescriptiveBound {
-                    subject: *x,
-                    bound: self.bounds_on(*x)?,
+                    subject: x.clone(),
+                    bound: self.bounds_on(x)?,
                 })
             })
             .collect()
@@ -287,9 +288,9 @@ impl<'a> Relation<'a> {
         //   ¬(lhs >= rhs)
         // ==> lhs < rhs
         // ==> lhs+1 <= rhs
-        let to_add = match self.relation {
-            RelationKind::Le => MINUS_ONE,
-            RelationKind::Ge => ONE,
+        let to_add: Expr<'a> = match self.relation {
+            RelationKind::Le => minus_one(),
+            RelationKind::Ge => one(),
         };
         Relation {
             left: Expr::Sum(vec![self.left.clone(), to_add]),
@@ -308,7 +309,7 @@ impl<'a> Relation<'a> {
     }
 
     /// Substitute `x` with `with` in self and return the result.
-    pub fn substitute(&self, x: Ident<'a>, with: &Expr<'a>) -> Relation<'a> {
+    pub fn substitute(&self, x: &Ident<'a>, with: &Expr<'a>) -> Relation<'a> {
         Relation {
             left: self.left.substitute(x, with),
             relation: self.relation,
@@ -318,7 +319,7 @@ impl<'a> Relation<'a> {
 
     /// Perform an atomic substitution of a group, replacing each occurence of the identifiers with
     /// the paired expression.
-    pub fn substitute_all(&self, subs: &[(Ident<'a>, &Expr<'a>)]) -> Relation<'a> {
+    pub fn substitute_all(&self, subs: &[(&Ident<'a>, &Expr<'a>)]) -> Relation<'a> {
         Relation {
             left: self.left.substitute_all(subs),
             relation: self.relation,
@@ -346,7 +347,7 @@ impl<'a> DescriptiveBound<'a> {
     /// Simplifies the bound expression and returns the result.
     pub fn simplify(&self) -> DescriptiveBound<'a> {
         DescriptiveBound {
-            subject: self.subject,
+            subject: self.subject.clone(),
             bound: self.bound.simplify(),
         }
     }
@@ -358,11 +359,11 @@ impl<'a> DescriptiveBound<'a> {
 }
 
 /// Returns the bound on `subject` given by `0 <= expr_ge0`
-pub fn bounds_on_ge0<'a>(expr_ge0: &Expr<'a>, subject: Ident<'a>) -> Option<Bound<'a>> {
+pub fn bounds_on_ge0<'a>(expr_ge0: &Expr<'a>, subject: &Ident<'a>) -> Option<Bound<'a>> {
     Relation {
         left: expr_ge0.single_x(subject)?,
         relation: RelationKind::Ge,
-        right: ZERO,
+        right: zero(),
     }
     .bounds_on_unsafe(subject)
 }
@@ -371,14 +372,26 @@ pub fn bounds_on_ge0<'a>(expr_ge0: &Expr<'a>, subject: Ident<'a>) -> Option<Boun
 ////////                      Display Implementations                  ////////
 ///////////////////////////////////////////////////////////////////////////////
 
-impl<'a> fmt::Display for Relation<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+impl<'a> Display for Relation<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{} {} {}", self.left, self.relation, self.right)
     }
 }
 
-impl fmt::Display for RelationKind {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+impl<'a> PrettyFormat<'a> for Relation<'a> {
+    fn pretty_format(&'a self, f: &mut Formatter, file_str: &'a str) -> fmt::Result {
+        write!(
+            f,
+            "{} {} {}",
+            self.left.pretty(file_str),
+            self.relation,
+            self.right.pretty(file_str)
+        )
+    }
+}
+
+impl Display for RelationKind {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(
             f,
             "{}",
@@ -390,8 +403,8 @@ impl fmt::Display for RelationKind {
     }
 }
 
-impl<'a> fmt::Display for Bound<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+impl<'a> Display for Bound<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let (sign, expr) = match self {
             Bound::Le(expr) => ("<=", expr),
             Bound::Ge(expr) => (">=", expr),
@@ -400,8 +413,8 @@ impl<'a> fmt::Display for Bound<'a> {
     }
 }
 
-impl<'a> fmt::Display for DescriptiveBound<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+impl<'a> Display for DescriptiveBound<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{} {}", self.subject, self.bound)
     }
 }

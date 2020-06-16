@@ -1,6 +1,6 @@
 use super::expr::Expr;
-use super::int::Int;
 use super::fast_optimiser::{Maximizer, Minimizer};
+use super::int::Int;
 use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
 
 pub type FullProver<'a> = ScopedSimpleProver<'a, Prover<'a>>;
@@ -29,7 +29,7 @@ impl<'a> SimpleProver<'a> for Prover<'a> {
         }
     }
 
-    fn prove(&self, req: &Requirement) -> ProofResult {
+    fn prove(&self, req: &Requirement<'a>) -> ProofResult {
         // req is true if and only if ge0 >= 0
         // So we will bound ge0 and see if we can prove that it's >= 0 or that it's < 0
         let ge0 = req.ge0().simplify();

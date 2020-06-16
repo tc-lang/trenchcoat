@@ -1,6 +1,7 @@
 //! Error definitions for ast parsing
 
 use crate::tokens::Token;
+use crate::PrettyError;
 
 /// Errors each have a kind and a context in which it occured. These can be combined with the
 /// source token to create a hopefully ok error message.
@@ -92,5 +93,11 @@ impl<'a> Error<'a> {
             context: ctx,
             ..self
         }
+    }
+}
+
+impl PrettyError for Error<'_> {
+    fn pretty_print(&self, file_str: &str, file_name: &str) -> String {
+        todo!()
     }
 }

@@ -1,4 +1,5 @@
 use crate::ast::Ident;
+use std::fmt::{self, Display, Formatter};
 
 /// The kind of type expression
 ///
@@ -44,6 +45,10 @@ pub enum Type<'a> {
     /// For some reason, probably an error, the type is unknown.
     /// Note that unknown types are not equal to other unknown types.
     Unknown,
+}
+
+pub fn empty_struct<'a>() -> Type<'a> {
+    Type::Struct(Vec::new())
 }
 
 pub fn field_type<'a, 'b: 'a>(fields: &'a [StructField<'b>], name: &str) -> Option<Type<'b>> {
@@ -106,4 +111,24 @@ impl<'a> PartialEq for StructField<'a> {
     }
 }
 
-pub static EMPTY_STRUCT: Type = Type::Struct(Vec::new());
+impl Display for Type<'_> {
+    fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
+        use Type::{Bool, Int, Named, Struct, UInt, Unknown};
+
+        match self {
+            Named(s) => write!(fmt, "{}", s),
+            Bool => write!(fmt, "bool"),
+            Int => write!(fmt, "int"),
+            UInt => write!(fmt, "uint"),
+            Unknown => write!(fmt, "<unknown>"),
+            Struct(fields) if fields.len() == 0 => write!(fmt, "{{}}"),
+            Struct(fields) => {
+                write!(fmt, "{{ {}: {}", fields[0].name, fields[0].typ)?;
+                for f in fields[1..].iter() {
+                    write!(fmt, ", {}: {}", f.name, f.typ)?;
+                }
+                write!(fmt, " }}")
+            }
+        }
+    }
+}

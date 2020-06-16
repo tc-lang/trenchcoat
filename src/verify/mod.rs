@@ -4,7 +4,7 @@ mod prover;
 use crate::ast::proof::Stmt as ProofStmt;
 use crate::ast::{
     self, BinOp, Block, Expr, ExprKind, FnArgs, Ident, Item, ItemKind, PrefixOp,
-    StmtKind, TypeExpr,
+    StmtKind, TypeExpr, IdentSource,
 };
 use crate::proof::{self, ProofResult, Requirement};
 use crate::types::{self, Type};
@@ -56,7 +56,7 @@ impl<'a> std::ops::Deref for TopLevelErrors<'a> {
 /// This is for storing information about the function so that calls to this function can be
 /// validated later. The name is not given here because the set of `Func`s is keyed by name.
 #[derive(Debug, Clone)]
-struct Func<'a> {
+pub struct Func<'a> {
     /// The requirements on the function, all of which must be true
     ///
     /// This value will be `None` if the requirements were malformed (or there was otherwise an
@@ -75,7 +75,7 @@ struct Func<'a> {
     /// The types of each parameter, along with their names
     ///
     /// The names are used for substitution into the requirements on the function.
-    params: Vec<(Ident<'a>, &'a Type<'a>)>,
+    params: Vec<(&'a Ident<'a>, &'a Type<'a>)>,
 
     /// The return type
     ret: &'a TypeExpr<'a>,
@@ -137,7 +137,7 @@ impl<'a> TopLevelScope<'a> {
     ///
     /// The only verification performed is on the proof statements given above functions - that
     /// they are (minimally) semantically valid.
-    fn build(items: &'a [Item]) -> Self {
+    fn build(items: &'a [Item<'a>]) -> Self {
         let mut top = TopLevelScope {
             items: HashMap::with_capacity(items.len()),
             errors: Vec::new(),
@@ -154,7 +154,7 @@ impl<'a> TopLevelScope<'a> {
                 body,
             } = &item.kind;
 
-            let params: Vec<_> = params.iter().map(|&(name, ref ty)| (name, ty)).collect();
+            let params: Vec<_> = params.iter().map(|&(ref name, ref ty)| (name, ty)).collect();
 
             let res = TopLevelScope::check_proof_stmts(proof_stmts, &params, return_type, item);
             let (reqs, contracts) = match res {
@@ -199,7 +199,7 @@ impl<'a> TopLevelScope<'a> {
     /// will be returned. If not, the list of errors will be instead.
     fn check_proof_stmts(
         stmts: &'a [ProofStmt<'a>],
-        params: &[(Ident<'a>, &Type<'a>)],
+        params: &[(&Ident<'a>, &Type<'a>)],
         ret_ty: &TypeExpr<'a>,
         source_item: &'a Item<'a>,
     ) -> Result<
@@ -218,7 +218,7 @@ impl<'a> TopLevelScope<'a> {
         fn check_expr<'b>(
             expr: &'b ProofExpr<'b>,
             allow_return_ident: bool,
-            params: &[(Ident<'b>, &Type<'b>)],
+            params: &[(&Ident<'b>, &Type<'b>)],
             required_return_int: &mut bool,
         ) -> Vec<Error<'b>> {
             match &expr.kind {
@@ -277,7 +277,7 @@ impl<'a> TopLevelScope<'a> {
         fn check_condition<'b>(
             cond: &'b Condition<'b>,
             allowed_return_ident: bool,
-            params: &[(Ident<'b>, &Type<'b>)],
+            params: &[(&Ident<'b>, &Type<'b>)],
             required_return_int: &mut bool,
             source: ast::Node<'b>,
         ) -> Vec<Error<'b>> {
@@ -333,7 +333,7 @@ impl<'a> TopLevelScope<'a> {
                     );
                     errors.extend(check_condition(
                         post,
-                        false,
+                        true,
                         params,
                         &mut required_return_int,
                         stmt.node()
@@ -488,7 +488,7 @@ macro_rules! split_prover {
 
 impl<'a> Scope<'a> {
     /// Creates a new scope, a child of `self`, containing `item`.
-    fn child(&self, item: ScopeItem<'a>) -> Scope {
+    fn child(&'a self, item: ScopeItem<'a>) -> Scope<'a> {
         Scope {
             item: Some(item),
             parent: Some(self),
@@ -497,7 +497,7 @@ impl<'a> Scope<'a> {
     }
 
     /// Finds a scope item with the given name. This bubbles up to parent scopes.
-    fn get(&self, name: &str) -> Option<&ScopeItem> {
+    fn get(&'a self, name: &str) -> Option<&'a ScopeItem> {
         match &self.item {
             Some(item) if item.name == name => return Some(item),
             _ => self.parent.and_then(|scope| scope.get(name)),
@@ -505,7 +505,7 @@ impl<'a> Scope<'a> {
     }
 
     /// Finds a function with the given name. This only checks the top level scope.
-    fn get_fn(&self, name: &str) -> Option<&Func> {
+    fn get_fn(&'a self, name: &str) -> Option<&'a Func<'a>> {
         self.top_level.get(name)
     }
 
@@ -547,7 +547,8 @@ impl<'a> Scope<'a> {
         prover: Option<&mut WrappedProver<'a>>,
         lhs: &'a Expr<'a>,
         op: BinOp,
-        rhs: &'a Expr<'a>
+        rhs: &'a Expr<'a>,
+        enclosing_expr: &'a Expr<'a>
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
         use BinOp::{Add, And, Div, Eq, Ge, Gt, Le, Lt, Mul, Or, Sub};
 
@@ -612,12 +613,12 @@ impl<'a> Scope<'a> {
         errors.extend(same_type_err);
 
         let out_tmp = if !has_type_errs && output_type == Type::Int || output_type == Type::UInt {
-            prover!().map(|p| unsafe { p.gen_new_tmp() })
+            prover!().map(|p| unsafe { p.gen_new_tmp(Some(enclosing_expr)) })
         } else { None };
 
         // Finally, if the types and operator are compatible with doing so, we'll add definitions
         // into the prover in order to account for the basic arithmetic operations.
-        if let (Some(p), Some(t), Some(lhs), Some(rhs)) = (prover!(), out_tmp, lhs_tmp_var, rhs_tmp_var) {
+        if let (Some(p), Some(t), Some(lhs), Some(rhs)) = (prover!(), out_tmp.clone(), lhs_tmp_var, rhs_tmp_var) {
             use crate::proof::Expr::{Neg, Recip, Sum, Prod};
 
             match op {
@@ -675,16 +676,16 @@ impl<'a> Scope<'a> {
     fn check_expr(
         &'a self,
         prover: Option<&mut WrappedProver<'a>>,
-        expr: &'a Expr,
+        expr: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
         use ExprKind::{
             BinOp, Bracket, Empty, FieldAccess, FnCall, Malformed, Named, Num, PrefixOp, Struct,
         };
 
         match &expr.kind {
-            BinOp(lhs, op, rhs) => self.check_bin_op_expr(prover, lhs, *op, rhs),
-            FnCall(fn_expr, args) => self.check_fn_call_expr(prover, fn_expr, args),
-            Empty => (Vec::new(), types::EMPTY_STRUCT.clone(), None, false),
+            BinOp(lhs, op, rhs) => self.check_bin_op_expr(prover, lhs, *op, rhs, expr),
+            FnCall(fn_expr, args) => self.check_fn_call_expr(prover, fn_expr, args, expr),
+            Empty => (Vec::new(), types::empty_struct(), None, false),
             Malformed => (Vec::new(), Type::Unknown, None, false), // the error will have already been raised
             Bracket(block) => self.check_block(prover, &block, 0),
             // (Overflows will be handled when the int is
@@ -695,9 +696,9 @@ impl<'a> Scope<'a> {
                 use crate::proof::{int::{Int, Rational}, expr::{Expr, Atom}};
 
                 let tmp = prover.map(|p| {
-                    let t = unsafe { p.gen_new_tmp() };
+                    let t = unsafe { p.gen_new_tmp(Some(expr)) };
                     p.define(
-                        t,
+                        t.clone(),
                         Expr::Atom(Atom::Literal(Rational {
                             numerator: (*n as i128).into(),
                             denominator: Int::ONE
@@ -710,7 +711,7 @@ impl<'a> Scope<'a> {
             }
             PrefixOp(op, inner_expr) => self.check_prefix_op_expr(prover, *op, inner_expr),
             Named(name) => match self.get(name.name) {
-                Some(item) => (Vec::new(), item.typ.clone(), Some(*name), false),
+                Some(item) => (Vec::new(), item.typ.clone(), Some(name.clone()), false),
                 None => (
                     vec![Error {
                         kind: error::Kind::VariableNotFound,
@@ -734,7 +735,7 @@ impl<'a> Scope<'a> {
                     stop_proof = stop_proof || stop;
                     errors.extend(expr_errors);
 
-                    types::StructField { name: *name, typ }
+                    types::StructField { name: name.clone(), typ }
                 }).collect();
 
                 (errors, Type::Struct(field_types), None, stop_proof)
@@ -777,11 +778,12 @@ impl<'a> Scope<'a> {
     fn check_fn_call_expr(
         &'a self,
         prover: Option<&mut WrappedProver<'a>>,
-        fn_expr: &'a Expr,
+        fn_expr: &'a Expr<'a>,
         args: &'a FnArgs<'a>,
+        enclosing_expr: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
         use error::Context::{Expr as ExprCtx, FnArg as FnArgCtx};
-        use error::Kind::{FunctionMustBeName, FunctionNotFound, IncorrectNumberOfArgs, FailedProof, TypeMismatch};
+        use error::Kind::{FunctionMustBeName, FunctionNotFound, IncorrectNumberOfArgs, FailedProofs, TypeMismatch};
 
         // The source for the first few errors. This is here so that we can slightly reduce the
         // visual noise from error handling
@@ -864,7 +866,7 @@ impl<'a> Scope<'a> {
         // We only generate an output variable if the return type is an integer
         let output_tmp_var = if let Some(p) = prover!() {
             match func.ret.typ {
-                Type::Int | Type::UInt => Some(unsafe { p.gen_new_tmp() }),
+                Type::Int | Type::UInt => Some(unsafe { p.gen_new_tmp(None) }),
                 _ => None,
             }
         } else { None };
@@ -875,17 +877,17 @@ impl<'a> Scope<'a> {
         }
 
         let mut subs = func.params.iter().zip(cons_args.iter()).filter_map(|((x, _), (with, _))| {
-            with.map(|with| (*x, proof::Expr::from(with)))
+            with.clone().map(|with| (Ident::clone(x), proof::Expr::from(with)))
         }).collect::<Vec<(Ident, proof::Expr)>>();
 
-        if let Some(v) = output_tmp_var {
+        if let Some(v) = output_tmp_var.clone() {
             // FIXME: This shouldn't just be a random string; it should be defined as a constant
             // somewhere.
-            let x = Ident { name: "_", source: &FAKE_TOKEN };
+            let x = Ident { name: "_", source: IdentSource::Token(&FAKE_TOKEN) };
             subs.push((x, proof::Expr::from(v)));
         };
 
-        let subs = subs.iter().map(|(x, with)| (*x, with)).collect::<Vec<_>>();
+        let subs = subs.iter().map(|(x, with)| (x, with)).collect::<Vec<_>>();
 
         let mut failed_reqs: Vec<(ProofResult, Requirement)> = Vec::new();
         if let (false, Some(p), Some(reqs)) = (stop_proof, prover!(), func.reqs.as_ref()) {
@@ -901,9 +903,13 @@ impl<'a> Scope<'a> {
 
         if !failed_reqs.is_empty() {
             errors.push(Error {
-                kind: FailedProof(failed_reqs),
+                kind: FailedProofs {
+                    failed: failed_reqs,
+                    fn_name: name,
+                    func_info: func,
+                },
                 context: FnArgCtx,
-                source: ast::Node::Args(&args),
+                source: enclosing_expr.node(),
             })
         }
 
@@ -943,7 +949,7 @@ impl<'a> Scope<'a> {
         &'a self,
         prover: Option<&mut WrappedProver<'a>>,
         ident: &'a Ident<'a>,
-        expr: &'a Expr,
+        expr: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, bool) {
         split_prover!(prover);
 
@@ -963,13 +969,13 @@ impl<'a> Scope<'a> {
             }
             Some(_) => match (prover!(), tmp_ident) {
                 (Some(p), Some(id)) => {
-                    p.define(*ident, id.into());
+                    p.define(ident.clone(), id.into());
                     false
                 }
                 // If we aren't given anything to reference due to the assignment, we want to be
                 // sure that this value *is* properly overwritten, so we shadow it.
                 (Some(p), None) => {
-                    p.shadow(*ident);
+                    p.shadow(ident.clone());
                     false
                 }
                 _ => false,
@@ -991,7 +997,7 @@ impl<'a> Scope<'a> {
     fn check_block(
         &'a self,
         prover: Option<&mut WrappedProver<'a>>,
-        block: &'a Block,
+        block: &'a Block<'a>,
         start: usize,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
         use StmtKind::{Assign, Eval, Let, Print};
@@ -1029,9 +1035,9 @@ impl<'a> Scope<'a> {
 
                     if let (Some(p), false) = (prover(), stop_proof) {
                         if let (Some(t), true) = (tmp_var, typ == Type::Int || typ == Type::UInt) {
-                            p.define(*name, t.into());
+                            p.define(name.clone(), t.into());
                         } else {
-                            p.shadow(*name);
+                            p.shadow(name.clone());
                         };
                     };
 

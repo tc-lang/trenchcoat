@@ -1,9 +1,10 @@
 //! The production of the abstract syntax tree for a source file
 
 use crate::tokens::{self, Keyword, Oper, Punc, Token, TokenKind};
-use crate::types::{self, Type, EMPTY_STRUCT};
+use crate::types::{self, Type};
 use std::convert::{TryFrom, TryInto};
 use std::fmt;
+use std::ops::{Deref, Range};
 
 /// A helper macro for removing some of the boilerplate code that's present in the combinations of
 /// parsers that's used here.
@@ -105,7 +106,7 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
 /// A single AST type, given so that
 #[derive(Debug, Clone)]
 pub enum Node<'a> {
-    Ident(Ident<'a>),
+    Ident(&'a Ident<'a>),
     Item(&'a Item<'a>),
     Stmt(&'a Stmt<'a>),
     Expr(&'a Expr<'a>),
@@ -171,7 +172,7 @@ pub struct TypeExpr<'a> {
 /// Used in places such as when a function doesn't specify it's return type.
 pub fn empty_struct<'a>() -> TypeExpr<'a> {
     TypeExpr {
-        typ: EMPTY_STRUCT.clone(),
+        typ: types::empty_struct(),
         source: &[],
     }
 }
@@ -191,10 +192,22 @@ pub enum ItemKind<'a> {
     },
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Ident<'a> {
     pub name: &'a str,
-    pub source: &'a Token<'a>,
+    /// The source of the identifier
+    ///
+    /// This is allowed to be an expression in order to account for temporary variables, which are
+    /// always the result of an expression. In normal cases, however, the single token is a
+    /// `NameIdent` token.
+    pub source: IdentSource<'a>,
+}
+
+#[derive(Debug, Clone)]
+pub enum IdentSource<'a> {
+    Token(&'a Token<'a>),
+    RefExpr(&'a Expr<'a>),
+    Expr(Box<Expr<'a>>),
 }
 
 impl<'a> PartialEq for Ident<'a> {
@@ -221,8 +234,35 @@ impl<'a> fmt::Display for Ident<'a> {
     }
 }
 
-pub type FnArgs<'a> = Vec<Expr<'a>>;
-pub type FnParams<'a> = Vec<(Ident<'a>, Type<'a>)>;
+#[derive(Debug, Clone)]
+pub struct FnArgs<'a> {
+    pub args: Vec<Expr<'a>>,
+    /// The single `Parens` token containing the arguments to the function
+    pub source: &'a Token<'a>,
+}
+
+#[derive(Debug, Clone)]
+pub struct FnParams<'a> {
+    pub params: Vec<(Ident<'a>, Type<'a>)>,
+    /// The single `Parens` token containing the function parameters
+    pub source: &'a Token<'a>,
+}
+
+impl<'a> Deref for FnArgs<'a> {
+    type Target = Vec<Expr<'a>>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.args
+    }
+}
+
+impl<'a> Deref for FnParams<'a> {
+    type Target = Vec<(Ident<'a>, Type<'a>)>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.params
+    }
+}
 
 /// A statement
 #[derive(Debug, Clone)]
@@ -415,6 +455,46 @@ impl<'a, T> ParseRet<'a, T> {
             Ok(v) => v,
             SoftErr(_, errs) => panic!(format!("{:?}", errs)),
             Err(errs) => panic!(format!("{:?}", errs)),
+        }
+    }
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// Error-tracking functions                                                   //
+////////////////////////////////////////////////////////////////////////////////
+
+impl<'a> Node<'a> {
+    /// Returns the byte range in the source file corresponding to the entire text of the AST Node
+    pub fn byte_range(&self) -> Range<usize> {
+        fn join(lower: Range<usize>, upper: Range<usize>) -> Range<usize> {
+            lower.start..upper.end
+        }
+
+        use Node::{Args, Expr, Ident, Item, ProofStmt, Stmt};
+
+        match self {
+            Ident(id) => match &id.source {
+                IdentSource::Token(t) => t.byte_range().unwrap(),
+                IdentSource::RefExpr(ex) => ex.node().byte_range(),
+                IdentSource::Expr(ex) => ex.node().byte_range(),
+            },
+            Args(args) => args.source.byte_range().unwrap(),
+            Item(it) => join(
+                it.source[0].byte_range().unwrap(),
+                it.source.last().unwrap().byte_range().unwrap(),
+            ),
+            Stmt(st) => join(
+                st.source[0].byte_range().unwrap(),
+                st.source.last().unwrap().byte_range().unwrap(),
+            ),
+            Expr(ex) => join(
+                ex.source[0].byte_range().unwrap(),
+                ex.source.last().unwrap().byte_range().unwrap(),
+            ),
+            ProofStmt(st) => join(
+                st.source[0].byte_range().unwrap(),
+                st.source.last().unwrap().byte_range().unwrap(),
+            ),
         }
     }
 }
@@ -617,19 +697,19 @@ impl<'a> Block<'a> {
 impl<'a> Ident<'a> {
     /// Returns a `Node` containing `self`.
     pub fn node(&'a self) -> Node<'a> {
-        Node::Ident(*self)
+        Node::Ident(self)
     }
 
     fn parse(token: &'a Token<'a>) -> ParseRet<'a, Ident> {
         match token.kind {
             TokenKind::NameIdent(name) => ParseRet::Ok(Ident {
                 name,
-                source: token,
+                source: IdentSource::Token(token),
             }),
             TokenKind::TypeIdent(name) => ParseRet::single_soft_err(
                 Ident {
                     name,
-                    source: token,
+                    source: IdentSource::Token(token),
                 },
                 Error {
                     kind: ErrorKind::TypeIdent,
@@ -812,7 +892,13 @@ fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a
         params.push(param);
     }
 
-    ParseRet::with_soft_errs(params, errors)
+    ParseRet::with_soft_errs(
+        FnParams {
+            params,
+            source: token.unwrap(),
+        },
+        errors,
+    )
 }
 
 /// Attempts to parse a set of tokens as a single function parameter, including name, colon, and
@@ -1135,7 +1221,7 @@ impl<'a> Expr<'a> {
         } else if let TokenKind::NameIdent(name) = tokens[0].kind {
             Some(ExprKind::Named(Ident {
                 name,
-                source: &tokens[0],
+                source: IdentSource::Token(&tokens[0]),
             }))
         } else {
             None
@@ -1230,7 +1316,13 @@ impl<'a> Expr<'a> {
 
         Some(ParseRet::with_soft_errs(
             Expr {
-                kind: ExprKind::FnCall(Box::new(callee), args),
+                kind: ExprKind::FnCall(
+                    Box::new(callee),
+                    FnArgs {
+                        args,
+                        source: tokens.last().unwrap(),
+                    },
+                ),
                 source: tokens,
             },
             errors,
@@ -1423,7 +1515,7 @@ impl<'a> Expr<'a> {
                     // Generate a name based on the index
                     let name = Ident {
                         name: u8_to_str(unnamed_idx),
-                        source: &tokens::FAKE_TOKEN,
+                        source: IdentSource::Expr(Box::new(expr.clone())),
                     };
                     unnamed_idx += 1;
                     (name, expr)

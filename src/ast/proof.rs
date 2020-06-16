@@ -1,6 +1,6 @@
 //! Parsing for proof statements
 
-use crate::ast::{Error, ErrorContext, ErrorKind, Ident, Node, ParseRet};
+use crate::ast::{Error, ErrorContext, ErrorKind, Ident, IdentSource, Node, ParseRet};
 use crate::tokens::{self, Oper, Token, TokenKind};
 use std::convert::{TryFrom, TryInto};
 
@@ -48,7 +48,7 @@ pub struct Stmt<'a> {
 
     /// The source of the proof statement. These will always exactly use a single line, so the
     /// source token has kind `TokenKind::ProofLine`.
-    source: &'a [Token<'a>],
+    pub source: &'a [Token<'a>],
 }
 
 #[derive(Debug, Clone)]
@@ -479,7 +479,10 @@ impl<'a> Expr<'a> {
         match tokens {
             [ref t] => match t.kind {
                 TokenKind::NameIdent(name) => Some(ParseRet::Ok(Expr {
-                    kind: ExprKind::Named(Ident { name, source: t }),
+                    kind: ExprKind::Named(Ident {
+                        name,
+                        source: IdentSource::Token(t),
+                    }),
                     source: tokens,
                 })),
                 _ => None,
