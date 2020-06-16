@@ -1,6 +1,5 @@
 use crate::ast::{self, Ident, IdentSource};
 use crate::proof::{Expr, ProofResult, Prover, Requirement, ScopedSimpleProver, SimpleProver};
-use crate::tokens::FAKE_TOKEN;
 use std::pin::Pin;
 
 #[cfg(feature = "bounds")]
@@ -124,7 +123,7 @@ impl<'a> WrappedProver<'a> {
     /// onto the returned `Ident` under those conditions *will* produce exceptionally rare
     /// segfaults.
     #[allow(unused_unsafe)]
-    pub unsafe fn gen_new_tmp(&mut self, expr: Option<&'a ast::Expr<'a>>) -> Ident<'a> {
+    pub unsafe fn gen_new_tmp(&mut self, expr: &'a ast::Expr<'a>) -> Ident<'a> {
         self.temp_vars
             .push(Pin::new(format!("<{}>", self.next_temp_id)));
         self.next_temp_id += 1;
@@ -136,9 +135,7 @@ impl<'a> WrappedProver<'a> {
 
         Ident {
             name,
-            source: expr
-                .map(|ex| IdentSource::RefExpr(ex))
-                .unwrap_or_else(|| IdentSource::Token(&FAKE_TOKEN)),
+            source: IdentSource::RefExpr(expr),
         }
     }
 

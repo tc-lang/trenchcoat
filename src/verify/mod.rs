@@ -613,7 +613,7 @@ impl<'a> Scope<'a> {
         errors.extend(same_type_err);
 
         let out_tmp = if !has_type_errs && output_type == Type::Int || output_type == Type::UInt {
-            prover!().map(|p| unsafe { p.gen_new_tmp(Some(enclosing_expr)) })
+            prover!().map(|p| unsafe { p.gen_new_tmp(enclosing_expr) })
         } else { None };
 
         // Finally, if the types and operator are compatible with doing so, we'll add definitions
@@ -696,7 +696,7 @@ impl<'a> Scope<'a> {
                 use crate::proof::{int::{Int, Rational}, expr::{Expr, Atom}};
 
                 let tmp = prover.map(|p| {
-                    let t = unsafe { p.gen_new_tmp(Some(expr)) };
+                    let t = unsafe { p.gen_new_tmp(expr) };
                     p.define(
                         t.clone(),
                         Expr::Atom(Atom::Literal(Rational {
@@ -866,7 +866,7 @@ impl<'a> Scope<'a> {
         // We only generate an output variable if the return type is an integer
         let output_tmp_var = if let Some(p) = prover!() {
             match func.ret.typ {
-                Type::Int | Type::UInt => Some(unsafe { p.gen_new_tmp(None) }),
+                Type::Int | Type::UInt => Some(unsafe { p.gen_new_tmp(enclosing_expr) }),
                 _ => None,
             }
         } else { None };
