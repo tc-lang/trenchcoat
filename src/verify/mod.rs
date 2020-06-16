@@ -93,7 +93,11 @@ pub struct Func<'a> {
 /// transitioned out of here as they can be placed in local scopes until everything is under
 /// the `Scope` type. It exists now for simplicity.
 struct TopLevelScope<'a> {
-    items: HashMap<&'a str, Func<'a>>,
+    // A map of function names to information about them
+    //
+    // The information about a function will be an `Err` if there are duplicate definitions. The
+    // error case provides the source of the first definition of the function.
+    items: HashMap<&'a str, Result<Func<'a>, &'a Item<'a>>>,
     errors: Vec<Error<'a>>,
 
     // A set of provers that's stored so that the errors can reference the strings stored in the
@@ -121,7 +125,7 @@ impl<'a> Drop for TopLevelScope<'a> {
 struct Scope<'a> {
     item: Option<ScopeItem<'a>>,
     parent: Option<&'a Scope<'a>>,
-    top_level: &'a HashMap<&'a str, Func<'a>>,
+    top_level: &'a HashMap<&'a str, Result<Func<'a>, &'a Item<'a>>>,
 }
 
 /// A single scope item; a variable and its type
@@ -174,9 +178,12 @@ impl<'a> TopLevelScope<'a> {
                 source: item,
             };
 
-            if let Some(conflict) = top.items.insert(name.name, func) {
+            if let Some(conflict) = top.items.insert(name.name, Ok(func)) {
+                let fst_source = conflict.map(|c| c.source).unwrap_or_else(|source| source);
+                top.items.insert(name.name, Err(fst_source));
+
                 top.errors.push(Error {
-                    kind: error::Kind::ItemConflict(conflict.source, item),
+                    kind: error::Kind::ItemConflict(fst_source, item),
                     context: error::Context::TopLevel,
                     source: item.node(),
                 })
@@ -346,15 +353,20 @@ impl<'a> TopLevelScope<'a> {
 
         // If we require that the return type is an integer, but it isn't, we'll add that to the
         // list of errors.
-        if required_return_int && &ret_ty.typ != &Type::Int && &ret_ty.typ != &Type::UInt {
-            errors.push(Error {
-                kind: error::Kind::TypeMismatch {
-                    expected: vec![Type::Int, Type::UInt],
-                    found: ret_ty.typ.clone(),
-                },
-                context: error::Context::ProofStmt,
-                source: ast::Node::Item(source_item),
-            })
+        if required_return_int {
+            match &ret_ty.typ {
+                Type::Int | Type::UInt | Type::Poisoned => (),
+                _ => {
+                    errors.push(Error {
+                        kind: error::Kind::TypeMismatch {
+                            expected: vec![Type::Int, Type::UInt],
+                            found: ret_ty.typ.clone(),
+                        },
+                        context: error::Context::ProofStmt,
+                        source: ast::Node::Item(source_item),
+                    })
+                }
+            }
         }
 
         match errors.is_empty() {
@@ -366,9 +378,11 @@ impl<'a> TopLevelScope<'a> {
     /// Verify that each individual item (read: currently only functions) is valid.
     fn check_items(&'a mut self) {
         for func in self.items.values() {
-            let (prover, errs) = TopLevelScope::check_fn(func, &self.items);
-            self.errors.extend(errs);
-            self.provers.push(prover);
+            if let Ok(func) = func {
+                let (prover, errs) = TopLevelScope::check_fn(func, &self.items);
+                self.errors.extend(errs);
+                self.provers.push(prover);
+            }
         }
     }
 
@@ -377,7 +391,7 @@ impl<'a> TopLevelScope<'a> {
     ///
     /// Note that the returned errors may reference the provers given. As such, it should be
     /// guaranteed by the caller that the errors are dropped first.
-    fn check_fn(func: &'a Func<'a>, items: &'a HashMap<&'a str, Func<'a>>) -> (Option<WrappedProver<'a>>, Vec<Error<'a>>) {
+    fn check_fn(func: &'a Func<'a>, items: &'a HashMap<&'a str, Result<Func<'a>, &'a Item<'a>>>) -> (Option<WrappedProver<'a>>, Vec<Error<'a>>) {
         let mut base_prover = func.reqs.as_ref().cloned().map(WrappedProver::new);
 
         // Create a scope containing all the function arguments
@@ -442,7 +456,7 @@ impl<'a> TopLevelScope<'a> {
 
         // And now `scopes` shouldn't be borrowed anymore
 
-        if tail_type != func.ret.typ {
+        if !tail_type.is_poisoned() && tail_type != func.ret.typ {
             errors.push(Error {
                 kind: error::Kind::TypeMismatch {
                     expected: vec![func.ret.typ.clone()],
@@ -505,14 +519,16 @@ impl<'a> Scope<'a> {
     }
 
     /// Finds a function with the given name. This only checks the top level scope.
-    fn get_fn(&'a self, name: &str) -> Option<&'a Func<'a>> {
+    fn get_fn(&'a self, name: &str) -> Option<&'a Result<Func<'a>, &'a Item<'a>>> {
         self.top_level.get(name)
     }
 
     /// Checks that the given type is an integer type (either `Int` or `UInt`), and returns a
     /// `TypeMismatch` error with no context if not.
     fn integer_check(t: &Type<'a>, source: ast::Node<'a>) -> Option<Error<'a>> {
-        if t == &Type::Int || t == &Type::UInt {
+        // If the type was already poisoned, we won't return any error here - that would distract
+        // from the *actual* error.
+        if t == &Type::Int || t == &Type::UInt || t == &Type::Poisoned {
             return None;
         }
 
@@ -529,8 +545,10 @@ impl<'a> Scope<'a> {
     /// Checks that the given type is a boolean, returning a `TypeMismatch` error with no context
     /// if it is not.
     fn bool_check(t: &Type<'a>, source: ast::Node<'a>) -> Option<Error<'a>> {
+        // If the type was already poisoned, we won't return any error here - that would distract
+        // from the *actual* error.
         match t {
-            Type::Bool => None,
+            Type::Bool | Type::Poisoned => None,
             _ => Some(Error {
                 kind: error::Kind::TypeMismatch {
                     expected: vec![Type::Bool],
@@ -561,8 +579,14 @@ impl<'a> Scope<'a> {
         errors.extend(rhs_errs);
 
         // And now we check the types, adding on any errors that we find
-        let mut has_type_errs = false;
-        let output_type = match op {
+        let mut has_type_errs = match (&lhs_ty, &rhs_ty) {
+            (Type::Poisoned, _) | (_, Type::Poisoned) => true,
+            _ => false,
+        };
+
+        let output_type = match has_type_errs {
+            true => Type::Poisoned,
+            false => match op {
             // Boolean to Boolean operators
             Or | And => {
                 if let Some(err) = Scope::bool_check(&lhs_ty, lhs.node()) {
@@ -589,12 +613,13 @@ impl<'a> Scope<'a> {
                 }
                 Type::Bool
             }
+            }
         };
 
         let same_type_err = match has_type_errs {
             true => None,
             // We only want to check that the right-hand side has the same type as the left if the
-            // left's type is actually valid.
+            // types are actually valid
             false => match lhs_ty == rhs_ty {
                 // Success! No type errors
                 true => None,
@@ -686,7 +711,7 @@ impl<'a> Scope<'a> {
             BinOp(lhs, op, rhs) => self.check_bin_op_expr(prover, lhs, *op, rhs, expr),
             FnCall(fn_expr, args) => self.check_fn_call_expr(prover, fn_expr, args, expr),
             Empty => (Vec::new(), types::empty_struct(), None, false),
-            Malformed => (Vec::new(), Type::Unknown, None, false), // the error will have already been raised
+            Malformed => (Vec::new(), Type::Poisoned, None, false), // the error will have already been raised
             Bracket(block) => self.check_block(prover, &block, 0),
             // (Overflows will be handled when the int is
             //  parsed? If the interpreter is going to parse
@@ -718,7 +743,7 @@ impl<'a> Scope<'a> {
                         context: error::Context::Expr,
                         source: expr.node(),
                     }],
-                    Type::Unknown,
+                    Type::Poisoned,
                     None,
                     true,
                 )
@@ -750,7 +775,7 @@ impl<'a> Scope<'a> {
                             context: error::Context::FieldAccess,
                             source: expr.node(),
                         });
-                        return (errors, Type::Unknown, None, stop_proof);
+                        return (errors, Type::Poisoned, None, stop_proof);
                     }
                 };
                 let field_type = match types::field_type(fields, field_ident.name) {
@@ -761,7 +786,7 @@ impl<'a> Scope<'a> {
                             context: error::Context::FieldAccess,
                             source: expr.node(),
                         });
-                        Type::Unknown
+                        Type::Poisoned
                     }
                 };
                 (errors, field_type, None, stop_proof)
@@ -794,7 +819,7 @@ impl<'a> Scope<'a> {
             ExprKind::Named(name) => name.name,
             _ => return (
                 vec![Error { kind: FunctionMustBeName, context: ExprCtx, source }],
-                Type::Unknown,
+                Type::Poisoned,
                 None,
                 true,
             )
@@ -802,10 +827,12 @@ impl<'a> Scope<'a> {
 
         // 2. Check that the the name is actually a function
         let func = match self.get_fn(name) {
-            Some(f) => f,
+            Some(Ok(f)) => f,
+            // If there's a conflict, we'll simply return - we can't make meaningful errors here
+            Some(Err(_)) => return (Vec::new(), Type::Poisoned, None, true),
             None => return (
                 vec![Error { kind: FunctionNotFound, context: ExprCtx, source }],
-                Type::Unknown,
+                Type::Poisoned,
                 None,
                 true,
             )
@@ -822,7 +849,7 @@ impl<'a> Scope<'a> {
                     context: ExprCtx,
                     source: ast::Node::Args(&args),
                 }],
-                Type::Unknown,
+                Type::Poisoned,
                 None,
                 true,
             );
@@ -834,6 +861,8 @@ impl<'a> Scope<'a> {
 
         // 4. Produce a list of the current name + type for each argument, along with checking that
         //    they produce the correct types
+        //    
+        //    If there are any type errors, we won't do any proof
         let cons_args: Vec<(Option<Ident>, Type)> = args
             .iter()
             .enumerate()
@@ -842,7 +871,10 @@ impl<'a> Scope<'a> {
                 errors.extend(arg_errs);
                 stop_proof = stop_proof || stop;
 
-                if &arg_type != func.params[i].1 {
+                if arg_type.is_poisoned() {
+                    // There's a type error in something that produced this expression, so we'll
+                    stop_proof = true;
+                } else if &arg_type != func.params[i].1 {
                     // If there's a type error, we can't guarantee anything about proof beyond this
                     // point in the function
                     stop_proof = true;

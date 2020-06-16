@@ -160,7 +160,7 @@ impl Error<'_> {
         //    |
         // 17 | fn bar() {
         //    |    ^^^
-        //    = note: Originally defined here, at src/test_input.tc:13:3:
+        //    = note: First defined here, at src/test_input.tc:13:3:
         //    |
         // 13 | fn bar(x: int, y: int, z: int) -> int {
         //    |    ^^^
@@ -235,7 +235,7 @@ impl Error<'_> {
             Red.paint(Error::underline(snd_line, snd_line_range))
         );
         let note = format!(
-            "{} {} note: Originally defined here, at {}:{}:{}:",
+            "{} {} note: First defined here, at {}:{}:{}:",
             spacing,
             Blue.paint("="),
             file_name,

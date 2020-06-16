@@ -42,9 +42,9 @@ pub enum Type<'a> {
     /// TODO Much later on, struct ordering will probably be done differently.
     Struct(Vec<StructField<'a>>),
 
-    /// For some reason, probably an error, the type is unknown.
-    /// Note that unknown types are not equal to other unknown types.
-    Unknown,
+    /// The type cannot be determined, due to an error. Note that poisoned types are not equal to
+    /// other poisoned types.
+    Poisoned,
 }
 
 pub fn empty_struct<'a>() -> Type<'a> {
@@ -60,6 +60,20 @@ pub fn field_type<'a, 'b: 'a>(fields: &'a [StructField<'b>], name: &str) -> Opti
     None
 }
 
+impl Type<'_> {
+    /// Returns whether any component of the type has been poisoned
+    ///
+    /// For primitives and named types, this is always false. For structs, the definition is
+    /// recursive; they are poisoned if any field is poisoned.
+    pub fn is_poisoned(&self) -> bool {
+        match self {
+            Type::Poisoned => true,
+            Type::Struct(fields) => fields.iter().any(|f| f.typ.is_poisoned()),
+            _ => false,
+        }
+    }
+}
+
 /// Represents a field of a struct.
 #[derive(Debug, Clone)]
 pub struct StructField<'a> {
@@ -69,7 +83,7 @@ pub struct StructField<'a> {
 
 impl<'a> PartialEq for Type<'a> {
     fn eq(&self, other: &Self) -> bool {
-        use Type::{Bool, Int, Named, Struct, UInt, Unknown};
+        use Type::{Bool, Int, Named, Poisoned, Struct, UInt};
 
         // So struct fields are equal iff they have the same name and type.
         if let Named(_) = other {
@@ -98,8 +112,8 @@ impl<'a> PartialEq for Type<'a> {
                 Struct(other_fields) => other_fields == fields,
                 _ => false,
             },
-            // Unknown types aren't equal to other unknown types.
-            Unknown => false,
+            // Poisoned types aren't equal to other poisoned types.
+            Poisoned => false,
         }
     }
 }
@@ -113,14 +127,16 @@ impl<'a> PartialEq for StructField<'a> {
 
 impl Display for Type<'_> {
     fn fmt(&self, fmt: &mut Formatter) -> fmt::Result {
-        use Type::{Bool, Int, Named, Struct, UInt, Unknown};
+        use Type::{Bool, Int, Named, Poisoned, Struct, UInt};
 
         match self {
             Named(s) => write!(fmt, "{}", s),
             Bool => write!(fmt, "bool"),
             Int => write!(fmt, "int"),
             UInt => write!(fmt, "uint"),
-            Unknown => write!(fmt, "<unknown>"),
+            // It's easiest to display poisoned types as unknown - that conveys more meaning to the
+            // user than "<poisoned>".
+            Poisoned => write!(fmt, "<unknown>"),
             Struct(fields) if fields.len() == 0 => write!(fmt, "{{}}"),
             Struct(fields) => {
                 write!(fmt, "{{ {}: {}", fields[0].name, fields[0].typ)?;
