@@ -184,7 +184,7 @@ impl<'a> GlobalScope<'a> {
     /// [`Value::Unit`]: enum.Value.html#variant.Unit
     /// [`contains`]: #method.contains
     /// [`num_args`]: #method.num_args
-    pub fn exec(&self, fn_name: &str, args: Vec<Value>) -> Value {
+    pub fn exec(&'a self, fn_name: &str, args: Vec<Value>) -> Value {
         let func = self.funcs.get(fn_name).unwrap_or_else(|| {
             panic!("no function {:?} in the global scope", fn_name);
         });
@@ -211,7 +211,7 @@ impl<'a> Func<'a> {
     /// This will panic if the given number of arguments does not match what is expected
     ///
     /// [`Value::Unit`]: enum.Value.html#variant.Unit
-    fn exec(&self, global: &GlobalScope, args: Vec<Value>) -> Value {
+    fn exec(&self, global: &'a GlobalScope<'a>, args: Vec<Value>) -> Value {
         if args.len() != self.params.len() {
             panic!(
                 "wrong number of arguments; expected {} but found {}",

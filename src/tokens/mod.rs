@@ -1,7 +1,9 @@
+use std::ops::Range;
+
 pub mod auto_sep;
 
-pub fn tokenize(s: &str) -> Vec<Token> {
-    Token::parse(|_| false, s).0
+pub fn tokenize(input: &str) -> Vec<Token> {
+    Token::parse(|_| false, input).0
 }
 
 /// Produces all of the invalid tokens from a list, recursively
@@ -47,6 +49,46 @@ pub struct Token<'a> {
     pub kind: TokenKind<'a>,
 }
 
+impl Token<'_> {
+    /// Returns the range of bytes in the original source file corresponding to this token
+    ///
+    /// The return value will be None iff the token is fake.
+    ///
+    /// It should be noted that this function is currently not perfect; there isn't any way to
+    /// track the end of parentheticals, so we just guess - it's usually correct, but will be off
+    /// sometimes. That's left up to improvement down the road.
+    pub fn byte_range(&self) -> Option<Range<usize>> {
+        use TokenKind::{
+            Curlys, Fake, InvalidChar, Keyword, NameIdent, Num, Oper, Parens, ProofLine, Punc,
+            Squares, TypeIdent,
+        };
+
+        let start = self.byte_idx;
+
+        match &self.kind {
+            Keyword(kwd) => Some(start..start + kwd.len()),
+            TypeIdent(s) | NameIdent(s) | Num(s) => Some(start..start + s.len()),
+            Oper(op) => Some(start..start + op.len()),
+            Punc(p) => Some(start..start + p.len()),
+            Parens(ts) | Curlys(ts) | Squares(ts) | ProofLine(ts) => {
+                let end = match ts.as_ref() as &[_] {
+                    [] => start + 1,
+                    [.., last] => (last as &Token).byte_range()?.end,
+                };
+
+                match self.kind {
+                    ProofLine(_) => Some(start..end),
+                    // We add 1 on everything else because they have closing delimeters not
+                    // captured here - it's part of a best-effort attempt to span the correct
+                    // amount
+                    _ => Some(start..end + 1),
+                }
+            }
+            InvalidChar(_) | Fake => None,
+        }
+    }
+}
+
 pub static FAKE_TOKEN: Token = Token {
     byte_idx: 0,
     kind: TokenKind::Fake,
@@ -68,32 +110,39 @@ pub enum TokenKind<'a> {
     Fake,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum Keyword {
-    Fn,
-    If,
-    Let,
-    Type,
-    Return,
-    Print,
-    /// The `require` keyword, used for parsing proof statments
-    Require,
-}
+macro_rules! kwd {
+    ($($lit:expr => $variant:ident,)+) => {
+        #[derive(Debug, Copy, Clone, PartialEq)]
+        pub enum Keyword {
+            $($variant,)+
+        }
 
-impl Keyword {
-    fn parse(keyword: &str) -> Option<Keyword> {
-        use Keyword::*;
-        match keyword {
-            "fn" => Some(Fn),
-            "if" => Some(If),
-            "let" => Some(Let),
-            "type" => Some(Type),
-            "print" => Some(Print),
-            "return" => Some(Return),
-            "require" => Some(Require),
-            _ => None,
+        impl Keyword {
+            fn parse(keyword: &str) -> Option<Keyword> {
+                match keyword {
+                    $($lit => Some(Keyword::$variant),)+
+                    _ => None,
+                }
+            }
+
+            /// Returns the length of the keyword, in bytes/chars
+            fn len(&self) -> usize {
+                match self {
+                    $(Keyword::$variant => $lit.len(),)+
+                }
+            }
         }
     }
+}
+
+kwd! {
+    "fn" => Fn,
+    "if" => If,
+    "let" => Let,
+    "type" => Type,
+    "print" => Print,
+    "return" => Return,
+    "require" => Require,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -149,10 +198,19 @@ impl Oper {
             _ => false,
         }
     }
+
     /// returns true if newlines are allowed after this operator
     fn newline_postfix_allowed(self) -> bool {
         // right now, this is all of them
         true
+    }
+
+    fn len(&self) -> usize {
+        use Oper::*;
+        match self {
+            Add | Sub | Star | Div | Ref | Assign | Lt | Gt | Not => 1,
+            Equals | LtOrEqual | GtOrEqual | RightArrow | Implies | Or | And => 2,
+        }
     }
 }
 
@@ -199,6 +257,11 @@ impl Punc {
             "\n" => Some(Newline),
             _ => None,
         }
+    }
+
+    fn len(&self) -> usize {
+        // All punctuation has the smae length
+        1
     }
 }
 
@@ -322,26 +385,31 @@ impl TokenKind<'_> {
         // a `#` and is not used outside of distinguishing this line as for proof.
         //
         // We also exclude the final character, because it is always guaranteed to be a newline.
-        let (tokens, _) = Token::parse(|_| false, &proof_line[1..proof_line.len() - 1]);
+        let (mut tokens, _) = Token::parse(|_| false, &proof_line[1..proof_line.len() - 1]);
+        // Shift them all by one to account for the leading '#'.
+        tokens.iter_mut().for_each(|t| t.shift_idx(1));
         Some((TokenKind::ProofLine(tokens), i))
     }
 
     /// parses a `Token::Bracketed` or a `Token::Curlied`
     fn block(s: &str) -> Option<(TokenKind, usize)> {
         let (c, i) = first_char_from(s, 0)?;
-        // We always return i + 1 because we need to account for the trailing close delimeter
+        // We always return j + 1 because we need to account for the trailing close delimeter
         match c {
             '(' => {
-                let (blk, i) = Token::parse(|c| c == ')', s.get(i..)?);
-                Some((TokenKind::Parens(blk), i + 1))
+                let (mut blk, j) = Token::parse(|c| c == ')', s.get(i..)?);
+                blk.iter_mut().for_each(|t| t.shift_idx(i));
+                Some((TokenKind::Parens(blk), j + 1))
             }
             '{' => {
-                let (blk, i) = Token::parse(|c| c == '}', s.get(i..)?);
-                Some((TokenKind::Curlys(blk), i + 1))
+                let (mut blk, j) = Token::parse(|c| c == '}', s.get(i..)?);
+                blk.iter_mut().for_each(|t| t.shift_idx(i));
+                Some((TokenKind::Curlys(blk), j + 1))
             }
             '[' => {
-                let (blk, i) = Token::parse(|c| c == ']', s.get(i..)?);
-                Some((TokenKind::Squares(blk), i + 1))
+                let (mut blk, j) = Token::parse(|c| c == ']', s.get(i..)?);
+                blk.iter_mut().for_each(|t| t.shift_idx(i));
+                Some((TokenKind::Squares(blk), j + 1))
             }
             _ => None,
         }
@@ -412,8 +480,10 @@ impl Token<'_> {
             s.get(idx..).map(|s| TokenKind::parse_next(&stop, s))
         {
             if let Some((byte_idx, kind)) = parse_result {
-                let mut token = Token { byte_idx, kind };
-                token.shift_idx(idx);
+                let mut token = Token { byte_idx: 0, kind };
+                token.shift_idx(byte_idx + idx);
+                // let mut token = Token { byte_idx, kind };
+                // token.shift_idx(idx);
                 out.push(token);
 
                 idx += offset;
@@ -431,11 +501,11 @@ impl Token<'_> {
     /// This is so that the indices given by the token may be absolute in their location within the
     /// file
     fn shift_idx(&mut self, amount: usize) {
-        use TokenKind::{Curlys, Parens, Squares};
+        use TokenKind::{Curlys, Parens, ProofLine, Squares};
 
         self.byte_idx += amount;
         match &mut self.kind {
-            Parens(ts) | Curlys(ts) | Squares(ts) => {
+            Parens(ts) | Curlys(ts) | Squares(ts) | ProofLine(ts) => {
                 for token in ts.iter_mut() {
                     token.shift_idx(amount);
                 }

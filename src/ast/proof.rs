@@ -1,6 +1,6 @@
 //! Parsing for proof statements
 
-use crate::ast::{Error, ErrorContext, ErrorKind, Ident, ParseRet};
+use crate::ast::{Error, ErrorContext, ErrorKind, Ident, IdentSource, Node, ParseRet};
 use crate::tokens::{self, Oper, Token, TokenKind};
 use std::convert::{TryFrom, TryInto};
 
@@ -48,7 +48,7 @@ pub struct Stmt<'a> {
 
     /// The source of the proof statement. These will always exactly use a single line, so the
     /// source token has kind `TokenKind::ProofLine`.
-    source: &'a [Token<'a>],
+    pub source: &'a [Token<'a>],
 }
 
 #[derive(Debug, Clone)]
@@ -242,6 +242,11 @@ impl TryFrom<Oper> for ArithOp {
 }
 
 impl<'a> Stmt<'a> {
+    /// Produces an AST node containing the proof statement
+    pub fn node(&'a self) -> Node<'a> {
+        Node::ProofStmt(self)
+    }
+
     /// Attempts to parse a single proof statment from the all of the tokens composing a proof line
     ///
     /// This function will return `None` if and only if the input set of tokens is empty; this
@@ -474,7 +479,10 @@ impl<'a> Expr<'a> {
         match tokens {
             [ref t] => match t.kind {
                 TokenKind::NameIdent(name) => Some(ParseRet::Ok(Expr {
-                    kind: ExprKind::Named(Ident { name, source: t }),
+                    kind: ExprKind::Named(Ident {
+                        name,
+                        source: IdentSource::Token(t),
+                    }),
                     source: tokens,
                 })),
                 _ => None,

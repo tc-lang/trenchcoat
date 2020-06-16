@@ -254,16 +254,16 @@ macro_rules! find_pg_group_fn {
                         .enumerate()
                         .map(move |(idx, expr)| (idx, expr, var))
                         .filter_map(|(given_idx, expr, var)| {
-                            Some((given_idx, bounds_on_ge0(expr, *var)?.simplify(), var))
+                            Some((given_idx, bounds_on_ge0(expr, var)?.simplify(), var))
                         })
                         .filter_map(|(given_idx, bound, var)| {
                             Some((
-                                *var,
+                                var.clone(),
                                 bound.clone(),
                                 Self::sub_bound(
                                     &self.solving,
                                     &DescriptiveBound {
-                                        subject: *var,
+                                        subject: var.clone(),
                                         bound,
                                     },
                                 )?
@@ -275,7 +275,7 @@ macro_rules! find_pg_group_fn {
                 .next()
                 .map(|(var, top_bound, top_expr, top_given_idx)| {
                     (
-                        var,
+                        var.clone(),
                         self.given_ge0
                             .iter()
                             .enumerate()
@@ -283,17 +283,17 @@ macro_rules! find_pg_group_fn {
                                 if given_idx == top_given_idx {
                                     Some((top_bound.clone(), top_expr.clone(), given_idx))
                                 } else {
-                                    if !ge0.contains(var) {
+                                    if !ge0.contains(&var) {
                                         return None;
                                     }
-                                    let bound = bounds_on_ge0(ge0, var)?.simplify();
+                                    let bound = bounds_on_ge0(ge0, &var)?.simplify();
                                     if bound.relation_kind() == top_bound.relation_kind() {
                                         Some((
                                             bound.clone(),
                                             Self::sub_bound(
                                                 &self.solving,
                                                 &DescriptiveBound {
-                                                    subject: var,
+                                                    subject: var.clone(),
                                                     bound,
                                                 },
                                             )?
@@ -369,9 +369,8 @@ macro_rules! find_pg_group_fn {
                             &self.given_ge0,
                             *req_id,
                             &DescriptiveBound {
-                                subject: *var,
+                                subject: var.clone(),
                                 bound: bound.clone(),
-                                //bound: *bound,
                             },
                         ),
                         self.child_budget,
@@ -416,7 +415,7 @@ macro_rules! find_pg_group_fn {
                     &self.given_ge0,
                     *req_id,
                     &DescriptiveBound {
-                        subject: *var,
+                        subject: var.clone(),
                         bound: bound.clone(),
                     },
                 ),
@@ -551,7 +550,7 @@ pub fn bound_sub<'a>(
         None => return Some(bound.clone()),
     };
 
-    let x = Expr::Atom(Atom::Named(bound.subject));
+    let x = Expr::Atom(Atom::Named(bound.subject.clone()));
     let lhs = Expr::Sum(vec![x.clone(), Expr::Neg(Box::new(new_bound_expr))]).simplify();
     if lhs
         .variables()
@@ -563,13 +562,13 @@ pub fn bound_sub<'a>(
     }
 
     Some(DescriptiveBound {
-        subject: bound.subject,
+        subject: bound.subject.clone(),
         bound: Relation {
-            left: lhs.single_x(bound.subject)?,
+            left: lhs.single_x(&bound.subject)?,
             kind: relation_kind,
-            right: expr::ZERO,
+            right: expr::zero(),
         }
-        .bounds_on_unsafe(bound.subject)?
+        .bounds_on_unsafe(&bound.subject)?
         .simplify(),
     })
 }
@@ -700,7 +699,7 @@ impl<'a: 'b, 'b> Minimizer<'a> {
     /// Note that the outputted expression isn't garenteed to be simplified.
     pub fn sub_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Option<Expr<'a>> {
         // If the expression is x, then an upper bound is given directly.
-        if *expr == Expr::Atom(Atom::Named(bound.subject)) {
+        if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
             return match &bound.bound {
                 Bound::Ge(bound_expr) => Some(bound_expr.clone()),
                 Bound::Le(_) => None,
@@ -715,7 +714,7 @@ impl<'a: 'b, 'b> Maximizer<'a> {
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
     pub fn sub_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Option<Expr<'a>> {
-        if *expr == Expr::Atom(Atom::Named(bound.subject)) {
+        if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
             return match &bound.bound {
                 Bound::Le(bound_expr) => Some(bound_expr.clone()),
                 Bound::Ge(_) => None,

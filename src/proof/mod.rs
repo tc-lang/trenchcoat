@@ -7,7 +7,6 @@
 mod bound;
 mod bound_group;
 pub mod bound_method;
-pub mod error;
 pub mod expr;
 pub mod fast_bound_method;
 mod fast_optimiser;
@@ -21,17 +20,9 @@ mod tests;
 
 use crate::ast::{self, proof::Condition as AstCondition, Ident};
 use bound::{Bound, DescriptiveBound, Relation, RelationKind};
-use error::Error;
 pub use expr::Expr;
-use expr::{Atom, ONE, ZERO};
-use std::fmt;
+use std::fmt::{self, Display, Formatter};
 use std::ops::Not;
-
-/// Attempts to prove that the entire contents of the program is within the bounds specified by the
-/// proof rules.
-fn validate<'a>(top_level_items: &'a [ast::Item<'a>]) -> Vec<Error<'a>> {
-    todo!()
-}
 
 #[derive(Debug, Clone)]
 pub struct Requirement<'a> {
@@ -54,7 +45,7 @@ impl<'a> Requirement<'a> {
     }
 
     /// Substitute `x` with `with` in self and return the result.
-    pub fn substitute(&self, x: Ident<'a>, with: &Expr<'a>) -> Requirement<'a> {
+    pub fn substitute(&self, x: &Ident<'a>, with: &Expr<'a>) -> Requirement<'a> {
         Requirement {
             relation: self.relation.substitute(x, with),
         }
@@ -62,7 +53,7 @@ impl<'a> Requirement<'a> {
 
     /// Perform an atomic substitution of a group, replacing each occurence of the identifiers with
     /// the paired expression.
-    pub fn substitute_all(&self, subs: &[(Ident<'a>, &Expr<'a>)]) -> Requirement<'a> {
+    pub fn substitute_all(&self, subs: &[(&Ident<'a>, &Expr<'a>)]) -> Requirement<'a> {
         Requirement {
             relation: self.relation.substitute_all(subs),
         }
@@ -75,7 +66,7 @@ impl<'a> Requirement<'a> {
 
     /// Returns the bounds on `name` given by self.
     /// If no bounds are given or if they cannot be computed, None is returned.
-    pub fn bounds_on(&self, name: Ident<'a>) -> Option<Bound<'a>> {
+    pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
         self.relation.bounds_on(name)
     }
 
@@ -171,7 +162,7 @@ pub trait SimpleProver<'a> {
     fn new(reqs: Vec<Requirement<'a>>) -> Self;
 
     /// Try to prove `req`. This will assume that the requirements passed to `new` are true.
-    fn prove(&self, req: &Requirement) -> ProofResult;
+    fn prove(&self, req: &Requirement<'a>) -> ProofResult;
 }
 
 pub trait Prover<'a> {
@@ -179,7 +170,7 @@ pub trait Prover<'a> {
     fn new(reqs: Vec<Requirement<'a>>) -> Self;
 
     /// Try to prove `req`. This will assume that the requirements passed to `new` are true.
-    fn prove(&self, req: &Requirement) -> ProofResult;
+    fn prove(&self, req: &Requirement<'a>) -> ProofResult;
 
     /// Return a new prover whereby `x` is substituted for `expr` before proofs are made.
     /// `x` may refer to an identity which already exists, in which case the new `x` will be mapped
@@ -208,6 +199,7 @@ pub trait Prover<'a> {
 /// definition before handing the proof on to their parent.
 ///
 /// It does not yet implement the shadow method.
+#[derive(Debug)]
 pub enum ScopedSimpleProver<'a, P: SimpleProver<'a>> {
     Root(P),
     Defn {
@@ -227,12 +219,16 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
         Self::Root(P::new(reqs))
     }
 
-    fn prove(&self, req: &Requirement) -> ProofResult {
+    fn prove(&self, req: &Requirement<'a>) -> ProofResult {
         use ScopedSimpleProver::{Defn, Root, Shadow};
         match self {
             Root(prover) => prover.prove(req),
-            Defn { x, expr, parent } => parent.prove(&req.substitute(*x, expr)),
-            Shadow { x, parent } => {
+            Defn {
+                ref x,
+                expr,
+                parent,
+            } => parent.prove(&req.substitute(x, expr)),
+            Shadow { ref x, parent } => {
                 // If the requirement to be proven requires something of x, then we can't prove it
                 // since we know nothing about x!
                 // Otherwise, hand it up.
@@ -264,14 +260,45 @@ impl<'a, P: SimpleProver<'a>> ScopedSimpleProver<'a, P> {
     }
 }
 
-impl<'a> fmt::Display for Requirement<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{}", self.relation)
+impl<'a> Display for Requirement<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        Display::fmt(&self.relation, f)
     }
 }
 
-impl fmt::Display for ProofResult {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+struct PrettyFormatter<'a, T: 'a> {
+    fmt: &'a T,
+    file_str: &'a str,
+}
+
+impl<'a, T: PrettyFormat<'a> + Sized> Display for PrettyFormatter<'a, T> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        self.fmt.pretty_format(f, self.file_str)
+    }
+}
+
+trait PrettyFormat<'a>: Sized {
+    fn pretty_format(&'a self, f: &mut Formatter, file_str: &'a str) -> fmt::Result;
+
+    fn pretty(&'a self, file_str: &'a str) -> PrettyFormatter<'a, Self> {
+        PrettyFormatter {
+            fmt: self,
+            file_str,
+        }
+    }
+}
+
+impl<'a> Requirement<'a> {
+    pub fn pretty(&'a self, file_str: &'a str) -> impl 'a + Display {
+        PrettyFormatter {
+            fmt: &self.relation,
+            file_str,
+        }
+    }
+}
+
+impl Display for ProofResult {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         use ProofResult::{False, True, Undetermined};
         write!(
             f,

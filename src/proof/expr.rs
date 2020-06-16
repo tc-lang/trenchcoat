@@ -1,6 +1,7 @@
 use super::int::{EvalInt, Int, Rational};
+use super::PrettyFormat;
 use crate::ast::{self, Ident};
-use std::fmt;
+use std::fmt::{self, Display, Formatter};
 
 /// An expression
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -41,12 +42,29 @@ pub enum Atom<'a> {
     Literal(Rational),
 }
 
-/// An expression with the literal value 0
-pub const ZERO: Expr = Expr::Atom(Atom::Literal(Rational::ZERO));
-/// An expression with the literal value 1
-pub const ONE: Expr = Expr::Atom(Atom::Literal(Rational::ONE));
-/// An expression with the literal value -1
-pub const MINUS_ONE: Expr = Expr::Atom(Atom::Literal(Rational::MINUS_ONE));
+/// Produces an expression with the literal value 0
+///
+/// This should have nearly no actual cost. It exists as a separate function because expressions
+/// are invariant on `'a`, which means that `Expr<'static>` can't be used in place of `Expr<'a>`.
+pub fn zero<'a>() -> Expr<'a> {
+    Expr::Atom(Atom::Literal(Rational::ZERO))
+}
+
+/// Produces an expression with the literal value 1
+///
+/// This should have nearly no actual cost. It exists as a separate function because expressions
+/// are invariant on `'a`, which means that `Expr<'static>` can't be used in place of `Expr<'a>`.
+pub fn one<'a>() -> Expr<'a> {
+    Expr::Atom(Atom::Literal(Rational::ONE))
+}
+
+/// Produces an expression with the literal value -1
+///
+/// This should have nearly no actual cost. It exists as a separate function because expressions
+/// are invariant on `'a`, which means that `Expr<'static>` can't be used in place of `Expr<'a>`.
+pub fn minus_one<'a>() -> Expr<'a> {
+    Expr::Atom(Atom::Literal(Rational::MINUS_ONE))
+}
 
 impl<'b, 'a: 'b> Expr<'a> {
     /// Returns true if the expressions are equal or if their simplified values are equal.
@@ -127,8 +145,8 @@ impl<'b, 'a: 'b> Expr<'a> {
                 // terms though. This is inefficient but ok for now.
                 new_expr => {
                     // -0 = 0
-                    if new_expr == ZERO {
-                        ZERO
+                    if new_expr == zero() {
+                        zero()
                     } else {
                         Neg(Box::new(new_expr))
                     }
@@ -141,7 +159,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                     // Simplify the terms
                     .map(|term| term.simplify())
                     // Remove 0s from the sum
-                    .filter(|term| *term != ZERO)
+                    .filter(|term| *term != zero())
                     // Flatten
                     .flat_map(|term| match term {
                         Sum(terms) => terms,
@@ -153,7 +171,7 @@ impl<'b, 'a: 'b> Expr<'a> {
 
                 // Unwrap the sum if possible
                 let res = match new_terms.len() {
-                    0 => ZERO,                 // empty sum = 0
+                    0 => zero(),               // empty sum = 0
                     1 => new_terms[0].clone(), // a sum of just x = x
                     _ => Sum(new_terms),
                 };
@@ -187,7 +205,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                         }
                     })
                     // Remove 1s from the product
-                    .filter(|term| *term != ONE)
+                    .filter(|term| *term != one())
                     // Flatten
                     .flat_map(|term| match term {
                         Prod(terms) => terms,
@@ -246,13 +264,14 @@ impl<'b, 'a: 'b> Expr<'a> {
 
                 // Unwrap the product if possible
                 let new_expr = match new_terms.len() {
-                    0 => ONE,                  // An empty product = 1
+                    0 => one(),                // An empty product = 1
                     1 => new_terms[0].clone(), // A product of just x = x
                     _ => {
                         // A product containing a 0 = 0
-                        if new_terms.contains(&ZERO) {
+                        let zero = zero();
+                        if new_terms.contains(&zero) {
                             // We return now since there's no point wrapping 0 in Neg
-                            return ZERO;
+                            return zero;
                         } else {
                             Prod(new_terms)
                         }
@@ -463,7 +482,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                 // -x + x = 0
                 expr => {
                     if *other == *expr {
-                        Some(ZERO)
+                        Some(zero())
                     } else {
                         None
                     }
@@ -492,7 +511,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                 // I think we shouldn't allow a possibly 0 value in a denominator but we must make
                 // sure of that.
                 if *other == **expr {
-                    Some(ONE)
+                    Some(one())
                 } else {
                     None
                 }
@@ -509,7 +528,7 @@ impl<'b, 'a: 'b> Expr<'a> {
     }
 
     /// Returns true iff self contains `x`
-    pub(super) fn contains(&self, x: Ident<'a>) -> bool {
+    pub(super) fn contains(&self, x: &Ident<'a>) -> bool {
         use Expr::{Neg, Prod, Recip, Sum};
         match self {
             Sum(terms) | Prod(terms) => terms.iter().find(|term| term.contains(x)).is_some(),
@@ -527,7 +546,7 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// FIXME This will work perfectly well with Atoms, which I think is all that will be required,
     /// however other expressions will not work as expected. The signature should either be changed
     /// or the behaviour corrected.
-    fn factor(&self, x: Ident<'a>) -> Option<Expr<'a>> {
+    fn factor(&self, x: &Ident<'a>) -> Option<Expr<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
 
         match self {
@@ -592,8 +611,8 @@ impl<'b, 'a: 'b> Expr<'a> {
             // An Atom can't be factored. Note that if expr is this Atom then it would have been
             // handled earlier.
             Expr::Atom(Atom::Named(y)) => {
-                if *y == x {
-                    Some(ONE)
+                if y == x {
+                    Some(one())
                 } else {
                     None
                 }
@@ -605,7 +624,7 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// Returns an Expr equivilent to that of Expr, but with only a single occurence of `expr`.
     /// This is done primerily by factorisation.
     /// If expr cannot be rewritten with only a single occurence of `expr` then None is returned.
-    pub fn single_x(&self, x: Ident<'a>) -> Option<Expr<'a>> {
+    pub fn single_x(&self, x: &Ident<'a>) -> Option<Expr<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
         match self {
             Sum(terms) => {
@@ -628,7 +647,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                     //    self = x*(factored_terms) + (other_terms)
                     let factored = Sum(x_terms).factor(x)?;
                     Some(Sum(vec![
-                        Prod(vec![Expr::Atom(Atom::Named(x)), factored]),
+                        Prod(vec![Expr::Atom(Atom::Named(x.clone())), factored]),
                         Sum(other_terms),
                     ]))
                 }
@@ -657,7 +676,7 @@ impl<'b, 'a: 'b> Expr<'a> {
             Recip(term, rounding) => Some(Recip(Box::new(term.single_x(x)?), *rounding)),
 
             Expr::Atom(Atom::Named(y)) => {
-                if *y == x {
+                if y == x {
                     Some(self.clone())
                 } else {
                     None
@@ -678,7 +697,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                     term.variables_duped_cb(cb);
                 }
             }
-            Expr::Atom(Atom::Named(x)) => cb(*x),
+            Expr::Atom(Atom::Named(x)) => cb(x.clone()),
             Expr::Atom(Atom::Literal(_)) => (),
         }
     }
@@ -693,10 +712,10 @@ impl<'b, 'a: 'b> Expr<'a> {
     }
 
     /// Substitute `x` with `with` in self and return the result.
-    pub fn substitute(&self, x: Ident<'a>, with: &Expr<'a>) -> Expr<'a> {
+    pub fn substitute(&self, x: &Ident<'a>, with: &Expr<'a>) -> Expr<'a> {
         match self {
             Expr::Atom(Atom::Named(y)) => {
-                if x == *y {
+                if x == y {
                     with.clone()
                 } else {
                     self.clone()
@@ -721,9 +740,9 @@ impl<'b, 'a: 'b> Expr<'a> {
 
     /// Perform an atomic substitution of a group, replacing each occurence of the identifiers with
     /// the paired expression.
-    pub fn substitute_all(&self, subs: &[(Ident<'a>, &Expr<'a>)]) -> Expr<'a> {
+    pub fn substitute_all(&self, subs: &[(&Ident<'a>, &Expr<'a>)]) -> Expr<'a> {
         match self {
-            Expr::Atom(Atom::Named(x)) => match subs.iter().find(|(id, _)| id == x) {
+            Expr::Atom(Atom::Named(x)) => match subs.iter().find(|(id, _)| id == &x) {
                 Some((_, expr)) => <Expr as Clone>::clone(expr),
                 None => self.clone(),
             },
@@ -809,7 +828,7 @@ impl<'a> From<&ast::proof::Expr<'a>> for Expr<'a> {
         use ast::proof::ArithOp as Op;
         use ast::proof::ExprKind::{Compound, Literal, Malformed, Named};
         match &ast_expr.kind {
-            Named(ident) => Expr::Atom(Atom::Named(*ident)),
+            Named(ident) => Expr::Atom(Atom::Named(ident.clone())),
             Literal(x) => Expr::Atom(Atom::Literal(Rational::from(Int::from(*x as i128)))),
 
             Compound {
@@ -853,8 +872,8 @@ impl<'a> From<Ident<'a>> for Expr<'a> {
     }
 }
 
-impl<'a> fmt::Display for Expr<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+impl<'a> Display for Expr<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         use Expr::{Atom, Neg, Prod, Recip, Sum};
         match self {
             Atom(atom) => write!(f, "{}", atom),
@@ -883,10 +902,62 @@ impl<'a> fmt::Display for Expr<'a> {
     }
 }
 
-impl<'a> fmt::Display for Atom<'a> {
-    fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
+impl<'a> PrettyFormat<'a> for Expr<'a> {
+    fn pretty_format(&'a self, f: &mut Formatter, file_str: &'a str) -> fmt::Result {
+        use Expr::{Atom, Neg, Prod, Recip, Sum};
+        match self {
+            Atom(atom) => atom.pretty_format(f, file_str),
+            Neg(expr) => write!(f, "-({})", expr.pretty(file_str)),
+            Recip(expr, _) => write!(f, "1/({})", expr.pretty(file_str)),
+            Sum(terms) => write!(
+                f,
+                "{}",
+                terms
+                    .iter()
+                    .map(|term| format!("{}", term.pretty(file_str)))
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            ),
+            Prod(terms) => write!(
+                f,
+                "{}",
+                terms
+                    .iter()
+                    .map(|term| format!("{}", term.pretty(file_str)))
+                    .collect::<Vec<_>>()
+                    .join(" * ")
+            ),
+        }
+    }
+}
+
+impl<'a> Display for Atom<'a> {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         match self {
             Atom::Named(ident) => write!(f, "{}", ident.name),
+            Atom::Literal(x) => write!(f, "{}", x),
+        }
+    }
+}
+
+impl<'a> PrettyFormat<'a> for Atom<'a> {
+    fn pretty_format(&'a self, f: &mut Formatter, file_str: &'a str) -> fmt::Result {
+        use crate::ast::{ExprKind, IdentSource};
+        match self {
+            Atom::Named(ident) => {
+                let ex_kind = match &ident.source {
+                    IdentSource::Token(_) => None,
+                    IdentSource::RefExpr(ex) => Some(&ex.kind),
+                    IdentSource::Expr(ex) => Some(&ex.kind),
+                };
+
+                match ex_kind {
+                    None | Some(ExprKind::Named(_)) | Some(ExprKind::Num(_)) => {
+                        write!(f, "{}", &file_str[ident.node().byte_range()])
+                    }
+                    _ => write!(f, "({})", &file_str[ident.node().byte_range()]),
+                }
+            }
             Atom::Literal(x) => write!(f, "{}", x),
         }
     }

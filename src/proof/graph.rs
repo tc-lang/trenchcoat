@@ -1,9 +1,7 @@
 //! The graph-based prover
 
-use super::expr::Expr;
 use super::term::{Inequality, Term};
 use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
-use crate::ast::Ident;
 use std::mem;
 
 pub type FullProver<'a> = ScopedSimpleProver<'a, Prover>;
@@ -521,7 +519,7 @@ impl<'a> SimpleProver<'a> for Prover {
         // element is the requirement we'd like to add; the second is `stack`, and the third is
         // `negated`.
 
-        'add_reqs: for req in reqs {
+        for req in reqs {
             // There's something rather annoying that we need to deal with here.
             //
             // When simplifying the original expression into an `Inequality`, we might have needed

@@ -498,7 +498,7 @@ pub fn bound_sub<'a>(
         None => return Some(bound.clone()),
     };
 
-    let x = Expr::Atom(Atom::Named(bound.subject));
+    let x = Expr::Atom(Atom::Named(bound.subject.clone()));
     let lhs = Expr::Sum(vec![x, Expr::Neg(Box::new(new_bound_expr))]).simplify();
     if lhs
         .variables()
@@ -510,13 +510,13 @@ pub fn bound_sub<'a>(
     }
 
     Some(DescriptiveBound {
-        subject: bound.subject,
+        subject: bound.subject.clone(),
         bound: Relation {
-            left: lhs.single_x(bound.subject)?,
+            left: lhs.single_x(&bound.subject)?,
             kind: relation_kind,
-            right: expr::ZERO,
+            right: expr::zero(),
         }
-        .bounds_on_unsafe(bound.subject)?
+        .bounds_on_unsafe(&bound.subject)?
         .simplify(),
     })
 }
@@ -647,7 +647,7 @@ impl<'a: 'b, 'b> Minimizer<'a> {
     /// Note that the outputted expression isn't garenteed to be simplified.
     pub fn sub_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Option<Expr<'a>> {
         // If the expression is x, then an upper bound is given directly.
-        if *expr == Expr::Atom(Atom::Named(bound.subject)) {
+        if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
             return match &bound.bound {
                 Bound::Ge(bound_expr) => Some(bound_expr.clone()),
                 Bound::Le(_) => None,
@@ -662,7 +662,7 @@ impl<'a: 'b, 'b> Maximizer<'a> {
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
     pub fn sub_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Option<Expr<'a>> {
-        if *expr == Expr::Atom(Atom::Named(bound.subject)) {
+        if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
             return match &bound.bound {
                 Bound::Le(bound_expr) => Some(bound_expr.clone()),
                 Bound::Ge(_) => None,

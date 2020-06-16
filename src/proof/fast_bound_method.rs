@@ -29,7 +29,7 @@ impl<'a> SimpleProver<'a> for Prover<'a> {
         }
     }
 
-    fn prove(&self, prop: &Requirement) -> ProofResult {
+    fn prove(&self, prop: &Requirement<'a>) -> ProofResult {
         // prop is true if and only if ge0 >= 0
         // So we will bound ge0 and see if we can prove that it's >= 0 or that it's < 0
         let ge0 = prop.ge0().simplify();

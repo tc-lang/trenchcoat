@@ -1,8 +1,5 @@
-use crate::ast::Ident;
-use crate::proof::expr::Atom;
+use crate::ast::{self, Ident, IdentSource};
 use crate::proof::{Expr, ProofResult, Prover, Requirement, ScopedSimpleProver, SimpleProver};
-use crate::tokens::FAKE_TOKEN;
-use std::ops::Deref;
 use std::pin::Pin;
 
 #[cfg(feature = "bounds")]
@@ -15,8 +12,6 @@ compile_error!("Either the 'graph' feature or the 'bounds' feature must be enabl
 
 #[cfg(not(any(feature = "bounds", feature = "graph")))]
 type InnerProver<'a> = ScopedSimpleProver<'a, Dummy>;
-
-const MIN_TMP_UNDERSCORES: usize = 2;
 
 pub struct WrappedProver<'a> {
     /// The inner prover
@@ -81,29 +76,41 @@ impl<'a> WrappedProver<'a> {
         }
     }
 
-    pub fn prove(&self, req: &Requirement) -> ProofResult {
+    pub fn prove(&self, req: &'a Requirement<'a>) -> ProofResult {
         self.prover.as_ref().unwrap().prove(req)
     }
 
     pub fn define(&mut self, x: Ident<'a>, expr: Expr<'a>) {
         self.dependent_provers
             .push(Pin::new(Box::new(self.prover.take().unwrap())));
-        let new_prover: InnerProver = self.dependent_provers.last().unwrap().define(x, expr);
 
-        // We now know that this the data stored here will be valid later, so we're free to extend
-        // the lifetime of `new_prover` via transmute.
-        let new_prover: InnerProver = unsafe { std::mem::transmute(new_prover) };
+        // We extend the lifetime of `last_prover` because the data we know the data we're storing
+        // will be valid later
+        //
+        // Should you, oh foolish adventurer, think to abbreviate your incanatations by transmuting
+        // before hinting, know that only danger lies down that road. Alas! Those who follow never
+        // listen! So go ahead - see it for yourself. And watch it crash and burn in front of your
+        // disbelieving eyes.
+        //
+        // For good fun, merge the following two lines into one. All the types are known, so it
+        // should be fine, right?
+        let last_prover: &InnerProver = self.dependent_provers.last().unwrap();
+        let last_prover: &InnerProver = unsafe { std::mem::transmute(last_prover) };
+        let new_prover: InnerProver = last_prover.define(x, expr);
+
         self.prover = Some(new_prover);
     }
 
     pub fn shadow(&mut self, x: Ident<'a>) {
         self.dependent_provers
             .push(Pin::new(Box::new(self.prover.take().unwrap())));
-        let new_prover: InnerProver = self.dependent_provers.last().unwrap().shadow(x);
 
-        // We now know that this the data stored here will be valid later, so we're free to extend
-        // the lifetime of `new_prover` via transmute.
-        let new_prover: InnerProver = unsafe { std::mem::transmute(new_prover) };
+        // We extend the lifetime of `last_prover` because the data we know the data we're storing
+        // will be valid later
+        let last_prover: &InnerProver =
+            unsafe { std::mem::transmute(self.dependent_provers.last().unwrap()) };
+        let new_prover: InnerProver = last_prover.shadow(x);
+
         self.prover = Some(new_prover);
     }
 
@@ -116,7 +123,7 @@ impl<'a> WrappedProver<'a> {
     /// onto the returned `Ident` under those conditions *will* produce exceptionally rare
     /// segfaults.
     #[allow(unused_unsafe)]
-    pub unsafe fn gen_new_tmp(&mut self) -> Ident<'a> {
+    pub unsafe fn gen_new_tmp(&mut self, expr: &'a ast::Expr<'a>) -> Ident<'a> {
         self.temp_vars
             .push(Pin::new(format!("<{}>", self.next_temp_id)));
         self.next_temp_id += 1;
@@ -128,7 +135,7 @@ impl<'a> WrappedProver<'a> {
 
         Ident {
             name,
-            source: &FAKE_TOKEN,
+            source: IdentSource::RefExpr(expr),
         }
     }
 
@@ -155,11 +162,12 @@ impl<'a> WrappedProver<'a> {
                 Defn { x, expr, parent } => {
                     let with = with
                         .into_iter()
-                        .map(|req| req.substitute(*x, expr))
+                        .map(|req| req.substitute(x, expr))
                         .collect::<Vec<_>>();
                     let (mut new_deps, new_prover, new_reqs) = remake(parent, base, with);
                     new_deps.push(Pin::new(Box::new(new_prover)));
-                    let prover: InnerProver = new_deps.last().unwrap().define(*x, expr.clone());
+                    let prover: InnerProver =
+                        new_deps.last().unwrap().define(x.clone(), expr.clone());
                     let prover: InnerProver = unsafe { transmute(prover) };
 
                     (new_deps, prover, new_reqs)
@@ -171,12 +179,12 @@ impl<'a> WrappedProver<'a> {
                         .collect::<Vec<_>>();
                     let (mut new_deps, new_prover, new_reqs) = remake(parent, base, with);
                     new_deps.push(Pin::new(Box::new(new_prover)));
-                    let prover: InnerProver = new_deps.last().unwrap().shadow(*x);
+                    let prover: InnerProver = new_deps.last().unwrap().shadow(x.clone());
                     let prover: InnerProver = unsafe { transmute(prover) };
 
                     (new_deps, prover, new_reqs)
                 }
-                Root(p) => {
+                Root(_) => {
                     base.extend(with);
                     (Vec::new(), Prover::new(base.clone()), base)
                 }
