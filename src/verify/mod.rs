@@ -861,7 +861,7 @@ impl<'a> Scope<'a> {
             // If there's a conflict, we'll simply return - we can't make meaningful errors here
             Some(Err(_)) => return (Vec::new(), Type::Poisoned, None, true),
             None => return (
-                vec![Error { kind: FunctionNotFound, context: ExprCtx, source }],
+                vec![Error { kind: FunctionNotFound { name }, context: ExprCtx, source }],
                 Type::Poisoned,
                 None,
                 true,
@@ -873,8 +873,8 @@ impl<'a> Scope<'a> {
             return (
                 vec![Error {
                     kind: IncorrectNumberOfArgs {
-                        n_given: args.len(),
-                        n_expected: func.params.len(),
+                        given: args.len(),
+                        func,
                     },
                     context: ExprCtx,
                     source: ast::Node::Args(&args),

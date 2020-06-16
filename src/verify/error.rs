@@ -22,11 +22,13 @@ pub struct Error<'a> {
 #[derive(Debug, Clone)]
 pub enum Kind<'a> {
     ItemConflict(&'a Item<'a>, &'a Item<'a>),
-    FunctionNotFound,
+    FunctionNotFound {
+        name: &'a str,
+    },
     FunctionMustBeName,
     IncorrectNumberOfArgs {
-        n_given: usize,
-        n_expected: usize,
+        given: usize,
+        func: &'a Func<'a>,
     },
     VariableNotFound,
     AccessFieldOnNotStruct,
@@ -79,9 +81,18 @@ impl<'a> Error<'a> {
 
 impl PrettyError for Error<'_> {
     fn pretty_print(&self, file_str: &str, file_name: &str) -> String {
-        use Kind::{FailedProofs, ItemConflict, TypeMismatch};
+        use Kind::{
+            FailedProofs, FunctionMustBeName, FunctionNotFound, ItemConflict, TypeMismatch,
+        };
 
         match &self.kind {
+            ItemConflict(fst, snd) => Error::format_item_conflict(fst, snd, file_str, file_name),
+            FunctionNotFound { name } => {
+                Error::format_function_not_found(name, &self.source, file_str, file_name)
+            }
+            FunctionMustBeName => {
+                Error::format_function_must_be_name(&self.source, file_str, file_name)
+            }
             TypeMismatch { expected, found } => {
                 Error::format_type_mismatch(expected, found, &self.source, file_str, file_name)
             }
@@ -97,7 +108,6 @@ impl PrettyError for Error<'_> {
                 file_str,
                 file_name,
             ),
-            ItemConflict(fst, snd) => Error::format_item_conflict(fst, snd, file_str, file_name),
             _ => format!("{:?}\n", self),
         }
     }
@@ -152,8 +162,116 @@ impl Error<'_> {
         pre
     }
 
+    /// Produces the standard portion of many error messages. This contains the "context line" and
+    /// selection + highlighting of the source. The returned string has a trailing - but no leading
+    /// - newline.
+    ///
+    /// For more information, see the comments inside the function.
+    fn context_lines(source: &Node, file_str: &str, file_name: &str) -> String {
+        Error::context_lines_and_spacing(source, file_str, file_name).0
+    }
+
+    /// The same function `context_lines`, except there is the added (second) return value of the
+    /// spacing used to prefix certain lines
+    ///
+    /// This function is useful in cases where additional information must be displayed after the
+    /// context lines - that additional info needs to be aligned in the same manner.
+    fn context_lines_and_spacing(
+        source: &Node,
+        file_str: &str,
+        file_name: &str,
+    ) -> (String, String) {
+        // The standard portion of the error message primarily consists of contextual information
+        // for the user, without regard to what the error message actually is.
+        //
+        // Here's an example of what it might look like:
+        // ```
+        //   --> src/test_input.tc:18:10
+        //    |
+        // 18 |     print bar();
+        //    |           ^^^
+        // ```
+        //
+        // We'll use this particular example to demonstrate what each component supplies to the
+        // total set of lines.
+
+        let byte_range = source.byte_range();
+        let (line_no, col_no, line_offset, _, line) = Error::line_info(file_str, byte_range.start);
+
+        let line_no_str = (line_no + 1).to_string();
+        let spacing = " ".repeat(line_no_str.len());
+
+        // The range of bytes that the source takes up on its initial line.
+        //
+        // In a future version, we might allow displaying regions that span multiple lines, but
+        // this will do for now - realistically, it should be fine.
+        let line_range = {
+            let start = byte_range.start - line_offset;
+            let end = (byte_range.end - line_offset).min(line.len());
+            start..end
+        };
+
+        // First, we'll put in the context line. This will tend to look something like:
+        // ```
+        //   --> src/test_input.tc:18:10
+        // ```
+        // It provides a little bit of color and the location that the error occured. The newline
+        // is at the end so we can start the next line without one.
+        let mut msg = format!(
+            "{}{} {}:{}:{}\n",
+            spacing,
+            Blue.paint("-->"),
+            file_name,
+            line_no + 1,
+            col_no + 1
+        );
+
+        // The next line is the "filler" line - this simply adds a little bit of space, and sets us
+        // up for the selected text and highlight. We mostly just want this to align properly.
+        //
+        // We save it so that we can use it later in constructing the highlight line.
+        // The filler line from above is simply:
+        // ```
+        //    |
+        // ```
+        // The only important piece here is that it lines up wit the middle character of the arrow
+        // above it and evenly with the pipes below it.
+        let filler_line = format!("{} {}", spacing, Blue.paint("|"));
+        writeln!(msg, "{}", filler_line).unwrap();
+
+        // And now we have some fun stuff. The selection line has two things on it: (1) The full
+        // line that the node started on and (2) the line number once more, which is off to the
+        // left.
+        //
+        // The selection line from the example is:
+        // ```
+        // 18 |     print bar();
+        // ```
+        writeln!(msg, "{} {}", Blue.paint(line_no_str + " |"), line).unwrap();
+
+        // The final line here is the "highlight" line - though this is really more like an
+        // underline. It serves to draw extra focus by giving a bright red set of "^^^^" underneath
+        // the actual selected region.
+        //
+        // The highlight line from the example above is:
+        // ```
+        //    |           ^^^
+        // ```
+        writeln!(
+            msg,
+            "{} {}",
+            filler_line,
+            Red.paint(Error::underline(line, line_range))
+        )
+        .unwrap();
+
+        (msg, spacing)
+    }
+}
+
+impl Error<'_> {
     fn format_item_conflict(fst: &Item, snd: &Item, file_str: &str, file_name: &str) -> String {
-        // This error message will look something like:
+        // This error message looks something like:
         // ```
         // error: duplicate definitions of function `bar`
         //   --> src/test_input.tc:17:3
@@ -261,6 +379,46 @@ impl Error<'_> {
         msg
     }
 
+    fn format_function_not_found(
+        name: &str,
+        source: &Node,
+        file_str: &str,
+        file_name: &str,
+    ) -> String {
+        // This error message looks something like:
+        // ```
+        // error: cannot find function `bar`
+        //   --> src/test_input.tc:18:10
+        //    |
+        // 18 |     print bar();
+        //    |           ^^^
+        // ```
+
+        format!(
+            "{}: cannot find function `{}`\n{}",
+            Red.paint("error"),
+            name,
+            Error::context_lines(source, file_str, file_name)
+        )
+    }
+
+    fn format_function_must_be_name(source: &Node, file_str: &str, file_name: &str) -> String {
+        // This error looks something like:
+        // ```
+        // error: function calls must be direct by name
+        //   --> src/test_input.tc:18:10
+        //    |
+        // 18 |     print (foo)(1, 2);
+        //    |           ^^^^^
+        // ```
+
+        format!(
+            "{}: function calls must be direct by name\n{}",
+            Red.paint("error"),
+            Error::context_lines(source, file_str, file_name)
+        )
+    }
+
     fn format_type_mismatch(
         expected: &[Type],
         found: &Type,
@@ -307,50 +465,13 @@ impl Error<'_> {
             }
         };
 
-        let mut msg = format!(
-            "{}: type mismatch: expected {}, found `{}`\n",
+        format!(
+            "{}: type mismatch: expected {}, found `{}`\n{}",
             Red.paint("error"),
             expected_types,
-            found
-        );
-
-        let byte_range = source.byte_range();
-        let (line_no, col_no, line_offset, _, line) = Error::line_info(file_str, byte_range.start);
-
-        let line_no_str = (line_no + 1).to_string();
-        let spacing = " ".repeat(line_no_str.len());
-
-        let context_line = format!(
-            "{}{} {}:{}:{}\n",
-            spacing,
-            Blue.paint("-->"),
-            file_name,
-            line_no + 1,
-            col_no + 1
-        );
-
-        // The range on the actual line that the source bytes start on
-        let line_range = {
-            let start = byte_range.start - line_offset;
-            let end = byte_range.end - line_offset;
-            start..end
-        };
-
-        let filler_line = format!("{} {}", spacing, Blue.paint("|"));
-        let selection = format!("{} {}\n", Blue.paint(line_no_str + " |"), line);
-        let highlight = format!(
-            "{} {}",
-            &filler_line,
-            Red.paint(Error::underline(line, line_range))
-        );
-
-        write!(
-            msg,
-            "{}{}\n{}{}\n",
-            context_line, filler_line, selection, highlight
+            found,
+            Error::context_lines(source, file_str, file_name),
         )
-        .unwrap();
-        msg
     }
 
     fn format_failed_proofs(
@@ -411,42 +532,13 @@ impl Error<'_> {
             )
         };
 
-        // The second part we'll do is to determine where in the input file the error occured. This
-        // includes the underlining
-        let byte_range = source.byte_range();
-        let (line_no, col_no, line_offset, _, line) = Error::line_info(file_str, byte_range.start);
-
-        let line_no_str = (line_no + 1).to_string();
-        let spacing = " ".repeat(line_no_str.len());
-
-        // The range on the actual line that the source bytes start on
-        let line_range = {
-            let start = byte_range.start - line_offset;
-            let end = byte_range.end - line_offset;
-            start..end
-        };
-
-        let context_line = format!(
-            "{}{} {}:{}:{}",
-            spacing,
-            Blue.paint("-->"),
-            file_name,
-            line_no + 1,
-            col_no + 1
-        );
-
-        let filler_line = format!("{} {}", spacing, Blue.paint("|"));
-        let selection = format!("{} {}", Blue.paint(line_no_str + " |"), line);
-        let highlight = format!(
-            "{} {}",
-            &filler_line,
-            Red.paint(Error::underline(line, line_range))
-        );
-
-        writeln!(msg, "{}", context_line).unwrap();
-        writeln!(msg, "{}", filler_line).unwrap();
-        writeln!(msg, "{}", selection).unwrap();
-        writeln!(msg, "{}", highlight).unwrap();
+        // Generic contextual information - this is the main body of the error message
+        //
+        // There's already a trailing newline from `context_lines`, so we only use write!, not
+        // writeln!
+        let (context_lines, spacing) =
+            Error::context_lines_and_spacing(source, file_str, file_name);
+        write!(msg, "{}", context_lines);
 
         // The line that says:
         // ```

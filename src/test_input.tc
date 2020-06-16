@@ -14,13 +14,8 @@ fn bar(x: int, y: int, z: int) -> int {
     x * (y + z) + y
 }
 
-fn bar() {
-    let oops = 3;
-    print oops;
-}
-
 fn main() {
-    print foo(1 + 1, 2);
+    print foo(1, 2);
 }
 
 fn t(my_struct: { hello: int, world: {x: int, y: int, z: bool} }) -> {a: int, b: bool, c: int} {
