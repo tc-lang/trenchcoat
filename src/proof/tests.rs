@@ -971,6 +971,8 @@ fn sub_carry() {
 
     // Let's do some trivial cases!
     prove!("0 <= 0" => ProofResult::True);
+    prove!("0 <= 1" => ProofResult::True);
+    prove!("0-3 <= 7" => ProofResult::True);
     prove!("a <= a" => ProofResult::True);
     prove!("a <= a+1" => ProofResult::True);
     prove!("a+1 <= a+1" => ProofResult::True);
@@ -1068,13 +1070,54 @@ fn dont_get_greedy() {
     let prover;
 
     requirements!(let reqs = [
-        "a <= trap",
-        "b <= 0-a",
+        "0 <= a",
+        "a <= b",
+        "c <= b",
     ], prover);
 
     make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
-    prove!("a + b <= 0" => ProofResult::True);
+    prove!("a-c+b >= 0" => ProofResult::True);
+    prove!("a-c+b+1 >= 0" => ProofResult::True);
+    prove!("a-c+b-1 >= 0" => ProofResult::Undetermined);
+
+    cleanup!()
+}
+
+#[test]
+fn dont_get_greedy2() {
+    let prover;
+
+    requirements!(let reqs = [
+        "0 <= c",
+        "c <= b",
+        "a <= b",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+
+    prove!("c-a+b >= 0" => ProofResult::True);
+    prove!("c-a+b+1 >= 0" => ProofResult::True);
+    prove!("c-a+b-1 >= 0" => ProofResult::Undetermined);
+
+    cleanup!()
+}
+
+#[test]
+fn dont_get_greedy3() {
+    let prover;
+
+    requirements!(let reqs = [
+        "c <= a",
+        "0 <= c",
+        "b <= a",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+
+    prove!("c-b+a >= 0" => ProofResult::True);
+    prove!("c-b+a+1 >= 0" => ProofResult::True);
+    prove!("c-b+a-1 >= 0" => ProofResult::Undetermined);
 
     cleanup!()
 }

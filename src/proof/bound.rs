@@ -29,7 +29,7 @@ pub struct DescriptiveBound<'a> {
 #[derive(Debug, Clone)]
 pub struct Relation<'a> {
     pub left: Expr<'a>,
-    pub relation: RelationKind,
+    pub kind: RelationKind,
     pub right: Expr<'a>,
 }
 
@@ -119,7 +119,7 @@ impl<'a> Relation<'a> {
 
                 Relation {
                     left: new_left,
-                    relation: self.relation,
+                    kind: self.kind,
                     right: new_right,
                 }
                 .rearrange_unsafe(subject)
@@ -142,9 +142,9 @@ impl<'a> Relation<'a> {
                 let other_terms = Sum(other_terms);
                 // We're going to divide by other_terms so we must check it's sign.
                 // If it's negative, we should flip the relation.
-                let new_relation = match other_terms.sign() {
-                    Some(1) => self.relation,
-                    Some(-1) => self.relation.opposite(),
+                let new_kind = match other_terms.sign() {
+                    Some(1) => self.kind,
+                    Some(-1) => self.kind.opposite(),
 
                     // We can't determine the sign so we can't safely divide by it.
                     None => {
@@ -168,7 +168,7 @@ impl<'a> Relation<'a> {
                     self.right.clone(),
                     Recip(Box::new(other_terms), {
                         // TODO Decide and document rounding directions
-                        match new_relation {
+                        match new_kind {
                             RelationKind::Le => true,
                             RelationKind::Ge => false,
                         }
@@ -177,7 +177,7 @@ impl<'a> Relation<'a> {
 
                 Relation {
                     left: new_left,
-                    relation: new_relation,
+                    kind: new_kind,
                     right: new_right,
                 }
                 .rearrange_unsafe(subject)
@@ -186,7 +186,7 @@ impl<'a> Relation<'a> {
             // Negate both sides to unwrap the Neg
             Neg(term) => Relation {
                 left: *term.clone(),
-                relation: self.relation.opposite(),
+                kind: self.kind.opposite(),
                 right: Neg(Box::new(self.right.clone())),
             }
             .rearrange_unsafe(subject),
@@ -194,7 +194,7 @@ impl<'a> Relation<'a> {
             // Recip both sides to unwrap this Recip
             Recip(term, _rounding) => Relation {
                 left: *term.clone(),
-                relation: self.relation.opposite(),
+                kind: self.kind.opposite(),
                 // When you implement this todo, make sure you check the sign!
                 // See Prod case for how it should be done.
                 right: Recip(Box::new(self.right.clone()), todo!()),
@@ -214,12 +214,12 @@ impl<'a> Relation<'a> {
         Some(match self.rearrange_unsafe(target)? {
             Relation {
                 left: _,
-                relation: Le,
+                kind: Le,
                 right,
             } => Bound::Le(right),
             Relation {
                 left: _,
-                relation: Ge,
+                kind: Ge,
                 right,
             } => Bound::Ge(right),
         })
@@ -230,7 +230,7 @@ impl<'a> Relation<'a> {
         // These will form the Relation that we will solve.
         // This must end up satisfying the preconditions on bounds_on_unsafe.
         let lhs;
-        let relation;
+        let kind;
         let rhs;
 
         let left_contains = self.left.variables().contains(&name);
@@ -243,15 +243,15 @@ impl<'a> Relation<'a> {
             ])
             .simplify()
             .single_x(name)?;
-            relation = self.relation;
+            kind = self.kind;
             rhs = ZERO;
         } else if left_contains && !right_contains {
             lhs = self.left.simplify().single_x(name)?;
-            relation = self.relation;
+            kind = self.kind;
             rhs = self.right.clone();
         } else if !left_contains && right_contains {
             lhs = self.right.simplify().single_x(name)?;
-            relation = self.relation.opposite();
+            kind = self.kind.opposite();
             rhs = self.left.clone();
         } else {
             return None;
@@ -259,7 +259,7 @@ impl<'a> Relation<'a> {
 
         Relation {
             left: lhs,
-            relation,
+            kind,
             right: rhs,
         }
         .bounds_on_unsafe(name)
@@ -287,13 +287,13 @@ impl<'a> Relation<'a> {
         //   ¬(lhs >= rhs)
         // ==> lhs < rhs
         // ==> lhs+1 <= rhs
-        let to_add = match self.relation {
+        let to_add = match self.kind {
             RelationKind::Le => MINUS_ONE,
             RelationKind::Ge => ONE,
         };
         Relation {
             left: Expr::Sum(vec![self.left.clone(), to_add]),
-            relation: self.relation.opposite(),
+            kind: self.kind.opposite(),
             right: self.right.clone(),
         }
     }
@@ -302,7 +302,7 @@ impl<'a> Relation<'a> {
     pub fn simplify(&self) -> Relation<'a> {
         Relation {
             left: self.left.simplify(),
-            relation: self.relation,
+            kind: self.kind,
             right: self.right.simplify(),
         }
     }
@@ -311,7 +311,7 @@ impl<'a> Relation<'a> {
     pub fn substitute(&self, x: Ident<'a>, with: &Expr<'a>) -> Relation<'a> {
         Relation {
             left: self.left.substitute(x, with),
-            relation: self.relation,
+            kind: self.kind,
             right: self.right.substitute(x, with),
         }
     }
@@ -321,7 +321,7 @@ impl<'a> Relation<'a> {
     pub fn substitute_all(&self, subs: &[(Ident<'a>, &Expr<'a>)]) -> Relation<'a> {
         Relation {
             left: self.left.substitute_all(subs),
-            relation: self.relation,
+            kind: self.kind,
             right: self.right.substitute_all(subs),
         }
     }
@@ -361,7 +361,7 @@ impl<'a> DescriptiveBound<'a> {
 pub fn bounds_on_ge0<'a>(expr_ge0: &Expr<'a>, subject: Ident<'a>) -> Option<Bound<'a>> {
     Relation {
         left: expr_ge0.single_x(subject)?,
-        relation: RelationKind::Ge,
+        kind: RelationKind::Ge,
         right: ZERO,
     }
     .bounds_on_unsafe(subject)
@@ -373,7 +373,7 @@ pub fn bounds_on_ge0<'a>(expr_ge0: &Expr<'a>, subject: Ident<'a>) -> Option<Boun
 
 impl<'a> fmt::Display for Relation<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {
-        write!(f, "{} {} {}", self.left, self.relation, self.right)
+        write!(f, "{} {} {}", self.left, self.kind, self.right)
     }
 }
 

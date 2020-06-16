@@ -220,7 +220,18 @@ impl<'a> Maximizer<'a> {
     budget_impl!();
 }
 
-fn ooo_yeah<'a>(ge0s: &[Expr<'a>], exclude: usize, sub: &DescriptiveBound<'a>) -> Vec<Expr<'a>> {
+/// Substitutes `sub` to find an upper bound on all `ge0` entries except for `exclude` and return
+/// the result.
+///
+/// The order of the result it ge0s[exclude+1..] ++ ge0s[..<excludes]
+/// This is so that if this is passed to a child optimiser, the next requirement checked will be
+/// the one after the one that has just been substituted (possibly reducing the number of failed
+/// rearrangements).
+fn ge0_sub_and_exclude<'a>(
+    ge0s: &[Expr<'a>],
+    exclude: usize,
+    sub: &DescriptiveBound<'a>,
+) -> Vec<Expr<'a>> {
     ge0s[exclude + 1..]
         .iter()
         .chain(ge0s[..exclude].iter())
@@ -354,7 +365,7 @@ macro_rules! find_pg_group_fn {
                     //Child::Node(Box::new(Self::new(
                     Self::new(
                         to_solve.clone(),
-                        ooo_yeah(
+                        ge0_sub_and_exclude(
                             &self.given_ge0,
                             *req_id,
                             &DescriptiveBound {
@@ -401,7 +412,7 @@ macro_rules! find_pg_group_fn {
 
             self.children.push(Self::new(
                 to_solve.clone(),
-                ooo_yeah(
+                ge0_sub_and_exclude(
                     &self.given_ge0,
                     *req_id,
                     &DescriptiveBound {
@@ -555,7 +566,7 @@ pub fn bound_sub<'a>(
         subject: bound.subject,
         bound: Relation {
             left: lhs.single_x(bound.subject)?,
-            relation: relation_kind,
+            kind: relation_kind,
             right: expr::ZERO,
         }
         .bounds_on_unsafe(bound.subject)?

@@ -513,7 +513,7 @@ pub fn bound_sub<'a>(
         subject: bound.subject,
         bound: Relation {
             left: lhs.single_x(bound.subject)?,
-            relation: relation_kind,
+            kind: relation_kind,
             right: expr::ZERO,
         }
         .bounds_on_unsafe(bound.subject)?

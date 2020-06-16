@@ -7,13 +7,13 @@
 mod bound;
 mod bound_group;
 pub mod bound_method;
-pub mod fast_bound_method;
 pub mod error;
 pub mod expr;
+pub mod fast_bound_method;
+mod fast_optimiser;
 pub mod graph;
 pub mod int;
 mod optimiser;
-mod fast_optimiser;
 mod term;
 
 #[cfg(test)]
@@ -92,7 +92,7 @@ impl<'a> Requirement<'a> {
 
     /// Returns an expression that is >= 0 if and only if self is true.
     pub fn ge0(&self) -> Expr<'a> {
-        match self.relation.relation {
+        match self.relation.kind {
             // left <= right
             // ==> 0 <= right-left
             RelationKind::Le => Expr::Sum(vec![
@@ -118,7 +118,7 @@ impl<'a> From<&AstCondition<'a>> for Requirement<'a> {
             Simple { lhs, op: Le, rhs } => Requirement {
                 relation: Relation {
                     left: Expr::from(lhs),
-                    relation: RelationKind::Le,
+                    kind: RelationKind::Le,
                     right: Expr::from(rhs),
                 },
             },
@@ -127,7 +127,7 @@ impl<'a> From<&AstCondition<'a>> for Requirement<'a> {
             Simple { lhs, op: Ge, rhs } => Requirement {
                 relation: Relation {
                     left: Expr::from(lhs),
-                    relation: RelationKind::Ge,
+                    kind: RelationKind::Ge,
                     right: Expr::from(rhs),
                 },
             },

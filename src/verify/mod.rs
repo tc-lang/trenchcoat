@@ -7,12 +7,12 @@ use crate::ast::{
     StmtKind, TypeExpr,
 };
 use crate::proof::{self, ProofResult, Requirement};
+use crate::tokens::FAKE_TOKEN;
 use crate::types::{self, Type};
 use error::Error;
 use prover::WrappedProver;
 use std::collections::HashMap;
 use std::mem::transmute; // :)
-use crate::tokens::FAKE_TOKEN;
 
 // Here, I'm using "item" to refer to things that exist in the language, for example variables,
 // function and soon types. Please change the name item to something better.
@@ -370,7 +370,10 @@ impl<'a> TopLevelScope<'a> {
     ///
     /// Note that the returned errors may reference the provers given. As such, it should be
     /// guaranteed by the caller that the errors are dropped first.
-    fn check_fn(func: &'a Func<'a>, items: &'a HashMap<&'a str, Func<'a>>) -> (Option<WrappedProver<'a>>, Vec<Error<'a>>) {
+    fn check_fn(
+        func: &'a Func<'a>,
+        items: &'a HashMap<&'a str, Func<'a>>,
+    ) -> (Option<WrappedProver<'a>>, Vec<Error<'a>>) {
         let mut base_prover = func.reqs.as_ref().cloned().map(WrappedProver::new);
 
         // Create a scope containing all the function arguments
@@ -425,7 +428,7 @@ impl<'a> TopLevelScope<'a> {
                 scopes[i].parent = parent;
             }
             ///// !!!!!!!!!!!!!!! DO NOT CHANGE `scopes` AFTER THIS UNSAFE !!!!!!!!!!!!!!! /////
-            
+
             // Intentional lifetime shrinking so that the prover doesn't require the scope to have
             // a longer lifetime
             let prover = unsafe { transmute(prover) };
@@ -534,13 +537,13 @@ impl<'a> Scope<'a> {
         prover: Option<&mut WrappedProver<'a>>,
         lhs: &'a Expr<'a>,
         op: BinOp,
-        rhs: &'a Expr<'a>
+        rhs: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
         use BinOp::{Add, And, Div, Eq, Ge, Gt, Le, Lt, Mul, Or, Sub};
 
         let raw_prover = prover.map(|p| p as *mut WrappedProver<'a>);
         let prover = move || raw_prover.map(|p| unsafe { &mut *p });
-    
+
         // The first thing we'll do is to check both sides of the expression
 
         let (mut errors, lhs_ty, lhs_tmp_var, lhs_stop) = self.check_expr(prover(), lhs);
@@ -581,23 +584,22 @@ impl<'a> Scope<'a> {
             }
         };
 
-        let type_errs = Scope::same_type_check(
-            &lhs_ty,
-            lhs.node(),
-            &rhs_ty,
-            rhs.node(),
-        );
+        let type_errs = Scope::same_type_check(&lhs_ty, lhs.node(), &rhs_ty, rhs.node());
         let has_type_errs = has_type_errs || !type_errs.is_empty();
         errors.extend(type_errs);
 
         let out_tmp = if !has_type_errs && output_type == Type::Int || output_type == Type::UInt {
             prover().map(|p| unsafe { p.gen_new_tmp() })
-        } else { None };
+        } else {
+            None
+        };
 
         // Finally, if the types and operator are compatible with doing so, we'll add definitions
         // into the prover in order to account for the basic arithmetic operations.
-        if let (Some(p), Some(t), Some(lhs), Some(rhs)) = (prover(), out_tmp, lhs_tmp_var, rhs_tmp_var) {
-            use crate::proof::Expr::{Neg, Recip, Sum, Prod};
+        if let (Some(p), Some(t), Some(lhs), Some(rhs)) =
+            (prover(), out_tmp, lhs_tmp_var, rhs_tmp_var)
+        {
+            use crate::proof::Expr::{Neg, Prod, Recip, Sum};
 
             match op {
                 Add => {
@@ -607,21 +609,26 @@ impl<'a> Scope<'a> {
                 Sub => {
                     let expr = Sum(vec![lhs.into(), Neg(Box::new(rhs.into()))]);
                     p.define(t, expr);
-                },
+                }
                 Mul => {
                     let expr = Prod(vec![lhs.into(), rhs.into()]);
                     p.define(t, expr);
-                },
+                }
                 Div => {
                     // FIXME: @Jacob - Is the boolean value in `Recip` correct here?
                     let expr = Prod(vec![lhs.into(), Recip(Box::new(rhs.into()), false)]);
                     p.define(t, expr);
-                },
+                }
                 _ => (),
             }
         }
 
-        (errors, output_type, out_tmp, lhs_stop || rhs_stop || has_type_errs)
+        (
+            errors,
+            output_type,
+            out_tmp,
+            lhs_stop || rhs_stop || has_type_errs,
+        )
     }
 
     fn check_prefix_op_expr(
@@ -669,7 +676,10 @@ impl<'a> Scope<'a> {
             //  from the AST then we can validate here for
             //  now.)
             Num(n) => {
-                use crate::proof::{int::{Int, Rational}, expr::{Expr, Atom}};
+                use crate::proof::{
+                    expr::{Atom, Expr},
+                    int::{Int, Rational},
+                };
 
                 let tmp = prover.map(|p| {
                     let t = unsafe { p.gen_new_tmp() };
@@ -677,8 +687,8 @@ impl<'a> Scope<'a> {
                         t,
                         Expr::Atom(Atom::Literal(Rational {
                             numerator: (*n as i128).into(),
-                            denominator: Int::ONE
-                        }))
+                            denominator: Int::ONE,
+                        })),
                     );
                     t
                 });
@@ -697,22 +707,25 @@ impl<'a> Scope<'a> {
                     Type::Unknown,
                     None,
                     true,
-                )
-            }
+                ),
+            },
             // Note: Currently proof doesn't carry through struct fields
             Struct(fields) => {
                 let raw_prover = prover.map(|p| p as *mut WrappedProver<'a>);
-                
+
                 let mut errors = Vec::new();
                 let mut stop_proof = false;
 
-                let field_types = fields.iter().map(|(name, expr)| {
-                    let prover = raw_prover.map(|p| unsafe { &mut *p });
-                    let (expr_errors, typ, _tmp_ident, stop) = self.check_expr(prover, expr);
-                    stop_proof = stop_proof || stop;
+                let field_types = fields
+                    .iter()
+                    .map(|(name, expr)| {
+                        let prover = raw_prover.map(|p| unsafe { &mut *p });
+                        let (expr_errors, typ, _tmp_ident, stop) = self.check_expr(prover, expr);
+                        stop_proof = stop_proof || stop;
 
-                    types::StructField { name: *name, typ }
-                }).collect();
+                        types::StructField { name: *name, typ }
+                    })
+                    .collect();
 
                 (errors, Type::Struct(field_types), None, stop_proof)
             }
@@ -891,7 +904,7 @@ impl<'a> Scope<'a> {
         // 6. Final steps:
         //   (a) Get our temp variable to use for the result of this function call
         //   (b) Check all contracts, and apply them if they are valid
-        
+
         if func.contracts.is_none() {
             stop_proof = true;
         }
@@ -1000,7 +1013,7 @@ impl<'a> Scope<'a> {
                 true => None,
                 false => raw_prover.map(|p| unsafe { &mut *p }),
             };
-            
+
             match &stmt.kind {
                 Eval(expr) | Print(expr) => {
                     let (errs, _typ, _tmp_var, stop) = self.check_expr(prover(), expr);
@@ -1011,7 +1024,7 @@ impl<'a> Scope<'a> {
                     let (errs, stop) = self.check_assign(prover(), name, expr);
                     errors.extend(errs);
                     stop_proof = stop || stop_proof;
-                },
+                }
 
                 Let(name, expr) => {
                     let (errs, typ, tmp_var, stop) = self.check_expr(prover(), expr);
@@ -1051,7 +1064,7 @@ impl<'a> Scope<'a> {
                     let errs: Vec<Error<'a>> = unsafe { transmute(errs) };
                     let end_type: Type<'a> = unsafe { transmute(end_type) };
                     let end_tmp_var: Option<Ident<'a>> = unsafe { transmute(end_tmp_var) };
-                    
+
                     return (errs, end_type, end_tmp_var, stop || stop_proof);
                 }
             }

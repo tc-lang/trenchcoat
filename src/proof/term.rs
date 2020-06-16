@@ -340,7 +340,7 @@ impl Inequality {
         //
         // The shift amount is the value added to the constant term in the inequality to adjust for
         // the conversion between `<` and `<=`.
-        let (lhs, rhs, shift) = match req.relation {
+        let (lhs, rhs, shift) = match req.kind {
             RelationKind::Le => (req.left, req.right, 0),
             RelationKind::Ge => (req.right, req.left, 0),
         };
