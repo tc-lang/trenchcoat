@@ -1,7 +1,7 @@
-//! Error definitions for ast parsing
+//! Error definitions for verification
 
 use super::Func;
-use crate::ast::{Item, Node};
+use crate::ast::{Item, ItemKind::FnDecl, Node};
 use crate::proof::{ProofResult, Requirement};
 use crate::types::Type;
 use crate::PrettyError;
@@ -10,8 +10,7 @@ use std::fmt::Write;
 use std::ops::{Deref, Range};
 
 /// Errors each have a kind and a context in which it occured. These can be combined with the
-/// source AST node to create a hopefully ok error message.
-/// The source may not be given in some error cases, for example when there's an unexpected EOF.
+/// source AST node to create an error message.
 #[derive(Debug, Clone)]
 pub struct Error<'a> {
     pub kind: Kind<'a>,
@@ -80,7 +79,7 @@ impl<'a> Error<'a> {
 
 impl PrettyError for Error<'_> {
     fn pretty_print(&self, file_str: &str, file_name: &str) -> String {
-        use Kind::{FailedProofs, TypeMismatch};
+        use Kind::{FailedProofs, ItemConflict, TypeMismatch};
 
         match &self.kind {
             TypeMismatch { expected, found } => {
@@ -98,7 +97,8 @@ impl PrettyError for Error<'_> {
                 file_str,
                 file_name,
             ),
-            _ => todo!(),
+            ItemConflict(fst, snd) => Error::format_item_conflict(fst, snd, file_str, file_name),
+            _ => format!("{:?}\n", self),
         }
     }
 }
@@ -148,8 +148,117 @@ impl Error<'_> {
         let mid = "^".repeat(range.end - range.start);
         let post = " ".repeat(line.len() - range.end);
 
-        write!(pre, "{}{}", mid, post);
+        write!(pre, "{}{}", mid, post).unwrap();
         pre
+    }
+
+    fn format_item_conflict(fst: &Item, snd: &Item, file_str: &str, file_name: &str) -> String {
+        // This error message will look something like:
+        // ```
+        // error: duplicate definitions of function `bar`
+        //   --> src/test_input.tc:17:3
+        //    |
+        // 17 | fn bar() {
+        //    |    ^^^
+        //    = note: Originally defined here, at src/test_input.tc:13:3:
+        //    |
+        // 13 | fn bar(x: int, y: int, z: int) -> int {
+        //    |    ^^^
+        // ```
+
+        // We extract the names from the items so that we can specifically point to those as part
+        // of the error message.
+        let FnDecl { name: fst_name, .. } = &fst.kind;
+        let FnDecl { name: snd_name, .. } = &snd.kind;
+
+        // The first line of error message. We'll use this point to build the rest of it with
+        // repeated `writeln!` macro usages.
+        let mut msg = format!(
+            "{}: duplicate definitions of function `{}`\n",
+            Red.paint("error"),
+            fst_name.name
+        );
+
+        let (fst_line_no, fst_col_no, fst_line, fst_line_range) = {
+            let byte_range = fst_name.node().byte_range();
+            let (line_no, col_no, line_offset, _, line) =
+                Error::line_info(file_str, byte_range.start);
+
+            let line_range = {
+                let start = byte_range.start - line_offset;
+                let end = byte_range.end - line_offset;
+                start..end
+            };
+
+            (line_no, col_no, line, line_range)
+        };
+
+        let (snd_line_no, snd_col_no, snd_line, snd_line_range) = {
+            let byte_range = snd_name.node().byte_range();
+            let (line_no, col_no, line_offset, _, line) =
+                Error::line_info(file_str, byte_range.start);
+
+            let line_range = {
+                let start = byte_range.start - line_offset;
+                let end = byte_range.end - line_offset;
+                start..end
+            };
+
+            (line_no, col_no, line, line_range)
+        };
+
+        let (fst_line_no_str, snd_line_no_str, spacing) = {
+            let fst = (fst_line_no + 1).to_string();
+            let snd = (snd_line_no + 1).to_string();
+
+            let n_space = fst.len().max(snd.len());
+            let spacing = " ".repeat(n_space);
+            let fst = format!("{:>width$}", fst, width = n_space);
+            let snd = format!("{:>width$}", snd, width = n_space);
+
+            (fst, snd, spacing)
+        };
+
+        let context_line = format!(
+            "{}{} {}:{}:{}",
+            spacing,
+            Blue.paint("-->"),
+            file_name,
+            snd_line_no + 1,
+            snd_col_no + 1
+        );
+        let filler_line = format!("{} {}", spacing, Blue.paint("|"));
+        let selection = format!("{} {}", Blue.paint(snd_line_no_str + " |"), snd_line);
+        let highlight = format!(
+            "{} {}",
+            filler_line,
+            Red.paint(Error::underline(snd_line, snd_line_range))
+        );
+        let note = format!(
+            "{} {} note: Originally defined here, at {}:{}:{}:",
+            spacing,
+            Blue.paint("="),
+            file_name,
+            fst_line_no + 1,
+            fst_col_no + 1,
+        );
+        let snd_selection = format!("{} {}", Blue.paint(fst_line_no_str + " |"), fst_line);
+        let snd_highlight = format!(
+            "{} {}",
+            filler_line,
+            Blue.paint(Error::underline(fst_line, fst_line_range))
+        );
+
+        writeln!(msg, "{}", context_line).unwrap();
+        writeln!(msg, "{}", filler_line).unwrap();
+        writeln!(msg, "{}", selection).unwrap();
+        writeln!(msg, "{}", highlight).unwrap();
+        writeln!(msg, "{}", note).unwrap();
+        writeln!(msg, "{}", filler_line).unwrap();
+        writeln!(msg, "{}", snd_selection).unwrap();
+        writeln!(msg, "{}", snd_highlight).unwrap();
+
+        msg
     }
 
     fn format_type_mismatch(
@@ -239,7 +348,8 @@ impl Error<'_> {
             msg,
             "{}{}\n{}{}\n",
             context_line, filler_line, selection, highlight
-        );
+        )
+        .unwrap();
         msg
     }
 
@@ -284,7 +394,7 @@ impl Error<'_> {
         assert!(func.reqs.as_ref().unwrap().len() >= 1);
 
         // The first line of error message. We'll use this point to build the rest of it with
-        // repeated `write!` macro usages.
+        // repeated `writeln!` macro usages.
         let mut msg = {
             let (arg, is) = match func.params.len() {
                 0 => panic!("failed requirement on function with no arguments"),
@@ -415,7 +525,7 @@ impl Error<'_> {
         };
 
         // We don't use `writeln!` because `notes` ends in a newline
-        write!(msg, "{}", notes);
+        write!(msg, "{}", notes).unwrap();
 
         msg
     }

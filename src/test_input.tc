@@ -14,6 +14,11 @@ fn bar(x: int, y: int, z: int) -> int {
     x * (y + z) + y
 }
 
+fn bar() {
+    let oops = 3;
+    print oops;
+}
+
 fn main() {
     print foo(1 + 1, 2);
 }
