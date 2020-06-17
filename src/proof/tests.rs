@@ -1,4 +1,4 @@
-use super::fast_bound_method::{FullProver, Prover as BoundsProver};
+use super::fast_bound_method::{DefaultProver as FullProver, Prover as BoundsProver};
 use super::graph::Prover as GraphProver;
 use super::{ProofResult, Prover, Requirement, SimpleProver};
 use crate::ast::proof::Condition;

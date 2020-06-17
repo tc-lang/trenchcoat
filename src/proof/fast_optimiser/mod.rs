@@ -1,3 +1,6 @@
+pub mod options;
+
+use self::options::Options;
 use super::ast::Ident;
 use super::bound::{bounds_on_ge0, Bound, DescriptiveBound, Relation, RelationKind};
 use super::expr::{self, Atom, Expr};
@@ -34,7 +37,7 @@ const TRY_NO_SUB: bool = NO_SUB_FIRST || NO_SUB_LAST;
 /// Rounding down will not lead to incorrect behaviour but can lead to loose bounds.
 /// This is the behaviur of the int_bounds() method.
 #[derive(Clone)]
-pub struct Minimizer<'a> {
+pub struct Minimizer<'a, Opt: Options> {
     /// The expression to find bounds on
     /// This must be simplified.
     solving: Expr<'a>,
@@ -53,7 +56,7 @@ pub struct Minimizer<'a> {
     budget: isize,
 
     /// The currently generated direct children.
-    children: Vec<Minimizer<'a>>,
+    children: Vec<Minimizer<'a, Opt>>,
     /// The index in self.children that we should next iterate on.
     child_idx: usize,
     /// The budget to be given to new children. This is used when they are lazily generated.
@@ -64,6 +67,9 @@ pub struct Minimizer<'a> {
     /// Current state tracker
     state: BudgetState,
     is_final: bool,
+    yielded_self: bool,
+
+    options: Opt,
     //indent: String,
 }
 
@@ -73,18 +79,20 @@ pub struct Minimizer<'a> {
 /// Note that lower bounds should be down up when evaluated.
 /// This is the behaviur of the int_bounds() method.
 #[derive(Clone)]
-pub struct Maximizer<'a> {
+pub struct Maximizer<'a, Opt: Options> {
     solving: Expr<'a>,
     given_ge0: Vec<Expr<'a>>,
     permutation_group: Option<(Ident<'a>, Vec<(Bound<'a>, Expr<'a>, usize)>)>,
     group_idx: usize,
     budget: isize,
     child_idx: usize,
-    children: Vec<Maximizer<'a>>,
+    children: Vec<Maximizer<'a, Opt>>,
     state: BudgetState,
     child_budget: isize,
     generated: bool,
     is_final: bool,
+    yielded_self: bool,
+    options: Opt,
     //indent: String,
 }
 
@@ -99,7 +107,7 @@ enum BudgetState {
     Stalved,
 }
 
-impl<'a: 'b, 'b> Minimizer<'a> {
+impl<'a, Opt: Options> Minimizer<'a, Opt> {
     /// Returns a minimizer for `solve`.
     /// This minimizer will, using the known bounds given by `given`, iterate through expressions
     /// such that `solve` >= `expr` for any valid values of named atoms.
@@ -113,8 +121,9 @@ impl<'a: 'b, 'b> Minimizer<'a> {
         solve: Expr<'a>,
         given_ge0: Vec<Expr<'a>>,
         budget: isize,
+        options: Opt,
         //indent: String,
-    ) -> Minimizer<'a> {
+    ) -> Minimizer<'a, Opt> {
         // This combination of settings isn't allowed
         assert!(!(BFS && LAZY_GENERATE_CHILDREN));
 
@@ -130,6 +139,8 @@ impl<'a: 'b, 'b> Minimizer<'a> {
             child_budget: 0,
             generated: false,
             is_final: false,
+            yielded_self: false,
+            options,
             //indent,
         }
     }
@@ -143,7 +154,7 @@ impl<'a: 'b, 'b> Minimizer<'a> {
     }
 }
 
-impl<'a: 'b, 'b> Maximizer<'a> {
+impl<'a, Opt: Options> Maximizer<'a, Opt> {
     /// Returns a maximizer for `solve`.
     /// This maximizer will, using the known bounds given by `given`, iterate through expressions
     /// such that `solve` <= `expr` for any valid values of named atoms.
@@ -157,8 +168,9 @@ impl<'a: 'b, 'b> Maximizer<'a> {
         solve: Expr<'a>,
         given_ge0: Vec<Expr<'a>>,
         budget: isize,
+        options: Opt,
         //indent: String,
-    ) -> Maximizer<'a> {
+    ) -> Maximizer<'a, Opt> {
         // This combination of settings isn't allowed
         assert!(!(BFS && LAZY_GENERATE_CHILDREN));
 
@@ -174,6 +186,8 @@ impl<'a: 'b, 'b> Maximizer<'a> {
             child_budget: 0,
             generated: false,
             is_final: false,
+            yielded_self: false,
+            options,
             //indent,
         }
     }
@@ -212,11 +226,11 @@ macro_rules! budget_impl {
     };
 }
 
-impl<'a> Minimizer<'a> {
+impl<'a, Opt: Options> Minimizer<'a, Opt> {
     budget_impl!();
 }
 
-impl<'a> Maximizer<'a> {
+impl<'a, Opt: Options> Maximizer<'a, Opt> {
     budget_impl!();
 }
 
@@ -227,7 +241,7 @@ impl<'a> Maximizer<'a> {
 /// This is so that if this is passed to a child optimiser, the next requirement checked will be
 /// the one after the one that has just been substituted (possibly reducing the number of failed
 /// rearrangements).
-fn ge0_sub_and_exclude<'a>(
+fn ge0_sub_and_exclude<'a, Opt: Options>(
     ge0s: &[Expr<'a>],
     exclude: usize,
     sub: &DescriptiveBound<'a>,
@@ -235,7 +249,7 @@ fn ge0_sub_and_exclude<'a>(
     ge0s[exclude + 1..]
         .iter()
         .chain(ge0s[..exclude].iter())
-        .map(|expr| Maximizer::sub_bound(expr, sub).unwrap_or_else(|| expr.clone()))
+        .map(|expr| Maximizer::<Opt>::sub_bound(expr, sub).unwrap_or_else(|| expr.clone()))
         .map(|expr| expr.simplify())
         .collect()
 }
@@ -356,6 +370,7 @@ macro_rules! find_pg_group_fn {
                     //self.given.exclude(100000, self.pg_id),
                     todo!(),
                     self.child_budget,
+                    self.options.clone(),
                 ));
             }
 
@@ -365,7 +380,7 @@ macro_rules! find_pg_group_fn {
                     //Child::Node(Box::new(Self::new(
                     Self::new(
                         to_solve.clone(),
-                        ge0_sub_and_exclude(
+                        ge0_sub_and_exclude::<Opt>(
                             &self.given_ge0,
                             *req_id,
                             &DescriptiveBound {
@@ -374,6 +389,7 @@ macro_rules! find_pg_group_fn {
                             },
                         ),
                         self.child_budget,
+                        self.options.clone(),
                     )
                 }));
             }
@@ -411,7 +427,7 @@ macro_rules! find_pg_group_fn {
 
             self.children.push(Self::new(
                 to_solve.clone(),
-                ge0_sub_and_exclude(
+                ge0_sub_and_exclude::<Opt>(
                     &self.given_ge0,
                     *req_id,
                     &DescriptiveBound {
@@ -420,6 +436,7 @@ macro_rules! find_pg_group_fn {
                     },
                 ),
                 self.child_budget,
+                self.options.clone(),
             ));
 
             true
@@ -427,11 +444,11 @@ macro_rules! find_pg_group_fn {
     };
 }
 
-impl<'a: 'b, 'b> Minimizer<'a> {
+impl<'a, Opt: Options> Minimizer<'a, Opt> {
     find_pg_group_fn!();
 }
 
-impl<'a: 'b, 'b> Maximizer<'a> {
+impl<'a, Opt: Options> Maximizer<'a, Opt> {
     find_pg_group_fn!();
 }
 
@@ -445,10 +462,18 @@ macro_rules! optimizer_next_body {
                 return None;
             }
 
+            if $self.options.yield_all() && !$self.yielded_self {
+                $self.yielded_self = true;
+                return Some($self.solving.clone());
+            }
+
             // If we are in final mode (see self.generate_children for how we get in this mode)
             // Then we should yield self.solving and then finish.
             if $self.is_final {
                 $self.state = BudgetState::Finished;
+                if $self.options.yield_all() {
+                    return None;
+                }
                 return Some($self.solving.clone());
             }
 
@@ -535,13 +560,19 @@ macro_rules! optimizer_next_body {
 
 /// Substitutes sub_bound in to bound and returns the result.
 /// This uses {Minimizer, Maximizer}::sub_bound
-pub fn bound_sub<'a>(
+pub fn bound_sub<'a, Opt: Options>(
     bound: &DescriptiveBound<'a>,
     sub_bound: &DescriptiveBound<'a>,
 ) -> Option<DescriptiveBound<'a>> {
     let (relation_kind, new_bound_expr) = match &bound.bound {
-        Bound::Le(expr) => (RelationKind::Le, Maximizer::sub_bound(expr, sub_bound)),
-        Bound::Ge(expr) => (RelationKind::Ge, Minimizer::sub_bound(expr, sub_bound)),
+        Bound::Le(expr) => (
+            RelationKind::Le,
+            Maximizer::<Opt>::sub_bound(expr, sub_bound),
+        ),
+        Bound::Ge(expr) => (
+            RelationKind::Ge,
+            Minimizer::<Opt>::sub_bound(expr, sub_bound),
+        ),
     };
     // Unwrap new_bound_expr
     // If no substitution was made, just clone the existing bound.
@@ -573,13 +604,13 @@ pub fn bound_sub<'a>(
     })
 }
 
-impl<'a: 'b, 'b> Iterator for Minimizer<'a> {
+impl<'a, Opt: Options> Iterator for Minimizer<'a, Opt> {
     type Item = Expr<'a>;
     fn next(&mut self) -> Option<Expr<'a>> {
         optimizer_next_body!(self)
     }
 }
-impl<'a: 'b, 'b> Iterator for Maximizer<'a> {
+impl<'a, Opt: Options> Iterator for Maximizer<'a, Opt> {
     type Item = Expr<'a>;
     fn next(&mut self) -> Option<Expr<'a>> {
         optimizer_next_body!(self)
@@ -693,7 +724,7 @@ fn sub_bound_into<'a>(
     }
 }
 
-impl<'a: 'b, 'b> Minimizer<'a> {
+impl<'a, Opt: Options> Minimizer<'a, Opt> {
     /// Returns an upper bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
@@ -705,11 +736,16 @@ impl<'a: 'b, 'b> Minimizer<'a> {
                 Bound::Le(_) => None,
             };
         }
-        sub_bound_into(expr, bound, Minimizer::sub_bound, Maximizer::sub_bound)
+        sub_bound_into(
+            expr,
+            bound,
+            Minimizer::<Opt>::sub_bound,
+            Maximizer::<Opt>::sub_bound,
+        )
     }
 }
 
-impl<'a: 'b, 'b> Maximizer<'a> {
+impl<'a, Opt: Options> Maximizer<'a, Opt> {
     /// Returns a lower bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
@@ -720,6 +756,11 @@ impl<'a: 'b, 'b> Maximizer<'a> {
                 Bound::Ge(_) => None,
             };
         }
-        sub_bound_into(expr, bound, Maximizer::sub_bound, Minimizer::sub_bound)
+        sub_bound_into(
+            expr,
+            bound,
+            Maximizer::<Opt>::sub_bound,
+            Minimizer::<Opt>::sub_bound,
+        )
     }
 }

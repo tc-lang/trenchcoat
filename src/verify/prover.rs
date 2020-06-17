@@ -3,7 +3,7 @@ use crate::proof::{Expr, ProofResult, Prover, Requirement, ScopedSimpleProver, S
 use std::pin::Pin;
 
 #[cfg(feature = "bounds")]
-use crate::proof::fast_bound_method::FullProver as InnerProver;
+use crate::proof::fast_bound_method::DefaultProver as InnerProver;
 #[cfg(feature = "graph")]
 use crate::proof::graph::FullProver as InnerProver;
 

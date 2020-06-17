@@ -1,8 +1,17 @@
 use super::expr::{minus_one, one, zero, Atom, Expr};
-use super::optimiser::bound_sub;
+use super::fast_optimiser::{
+    bound_sub as _bound_sub, options::DefaultOptions as DefaultOptimiserOptions,
+};
 use super::PrettyFormat;
 use crate::ast::Ident;
 use std::fmt::{self, Display, Formatter};
+
+fn bound_sub<'a>(
+    bound: &DescriptiveBound<'a>,
+    sub_bound: &DescriptiveBound<'a>,
+) -> Option<DescriptiveBound<'a>> {
+    _bound_sub::<DefaultOptimiserOptions>(bound, sub_bound)
+}
 
 /// Represents a bound on something.
 /// For example `<= 2` or `>= x+y`
