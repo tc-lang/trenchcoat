@@ -22,7 +22,7 @@ use crate::ast::{self, proof::Condition as AstCondition, Ident};
 use bound::{Bound, DescriptiveBound, Relation, RelationKind};
 pub use expr::Expr;
 use std::fmt::{self, Display, Formatter};
-use std::ops::Not;
+use std::ops::{Deref, Not};
 
 #[derive(Debug, Clone)]
 pub struct Requirement<'a> {
@@ -100,36 +100,41 @@ impl<'a> Requirement<'a> {
     }
 }
 
-impl<'a> From<&AstCondition<'a>> for Requirement<'a> {
-    fn from(cond: &AstCondition<'a>) -> Requirement<'a> {
-        use ast::proof::CompareOp::{Ge, Le};
-        use ast::proof::ConditionKind::{Compound, Malformed, Simple};
+/// The implementation of `From` here provides an intersection of requirements - i.e. one
+/// "compound" requirement that requires each requirement individually.
+///
+/// This will panic if the ast condition has a `Compound { op: Or }` condition (those are difficult
+/// to represent) or if there is a malformed condition.
+impl<'a> From<&AstCondition<'a>> for Vec<Requirement<'a>> {
+    fn from(cond: &AstCondition<'a>) -> Vec<Requirement<'a>> {
+        use ast::proof::{
+            CompareOp::{Ge, Le},
+            ConditionKind::{Compound, Malformed, Simple},
+            LogicOp::{And, Or},
+        };
+
         match &cond.kind {
-            // lhs <= rhs => 0 <= rhs-lhs
-            Simple { lhs, op: Le, rhs } => Requirement {
-                relation: Relation {
-                    left: Expr::from(lhs),
-                    kind: RelationKind::Le,
-                    right: Expr::from(rhs),
-                },
-            },
+            Simple { lhs, op, rhs } => {
+                let kind = match op {
+                    Le => RelationKind::Le,
+                    Ge => RelationKind::Ge,
+                };
 
-            // lhs >= rhs => lhs-rhs >= 0
-            Simple { lhs, op: Ge, rhs } => Requirement {
-                relation: Relation {
-                    left: Expr::from(lhs),
-                    kind: RelationKind::Ge,
-                    right: Expr::from(rhs),
-                },
-            },
-
-            Compound {
-                lhs: _,
-                op: _,
-                rhs: _,
-            } => todo!(),
-
-            Malformed => panic!("cannot create requirement from malformed condition"),
+                vec![Requirement {
+                    relation: Relation {
+                        left: lhs.into(),
+                        kind,
+                        right: rhs.into(),
+                    },
+                }]
+            }
+            Compound { op: Or, .. } => unimplemented!(),
+            Compound { lhs, op: And, rhs } => {
+                let mut reqs = Vec::from(lhs.deref());
+                reqs.extend(Vec::from(rhs.deref()));
+                reqs
+            }
+            Malformed => panic!("cannot create requirements from malformed condition"),
         }
     }
 }

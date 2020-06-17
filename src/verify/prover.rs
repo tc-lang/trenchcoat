@@ -1,5 +1,6 @@
-use crate::ast::{self, Ident, IdentSource};
+use crate::ast::{self, Ident, IdentSource, Node};
 use crate::proof::{Expr, ProofResult, Prover, Requirement, ScopedSimpleProver, SimpleProver};
+use std::ops::{BitOr, BitOrAssign, Deref, DerefMut};
 use std::pin::Pin;
 
 #[cfg(feature = "bounds")]
@@ -41,6 +42,45 @@ pub struct WrappedProver<'a> {
     /// The next id to use for a temp variable. For example, if this value is 4, the next temp
     /// variable generated will be '<4>'
     next_temp_id: usize,
+}
+
+/// A wrapper type for maintaining multiple different sets of proofs at the same time
+pub struct Provers<'a> {
+    provers: Vec<ProverSetItem<'a>>,
+}
+
+/// A single item in a prover set
+pub struct ProverSetItem<'a> {
+    pub prover: WrappedProver<'a>,
+
+    /// Any *extra* requirements the prover was given, due to the precondition of a contract
+    ///
+    /// The added `Node` provides the original source of the requirement, so that we can point back
+    /// to it later.
+    pub pre: &'a [Requirement<'a>],
+
+    /// The source for the preconditions. This must be `Some(_)` if there are any
+    /// pre-conditions, but having post-conditions does *not* necessarily imply this should exist
+    pub pre_source: Option<Node<'a>>,
+
+    /// Any requirements the prover must be able to show at the end of the function, given in terms
+    /// of the function arguments and
+    pub post: &'a [Requirement<'a>],
+
+    /// The source for post-conditions. This should be `Some(_)` if there are any post-conditions.
+    pub post_source: Option<Node<'a>>,
+}
+
+pub struct Mask {
+    size: usize,
+    repr: MaskType,
+}
+
+enum MaskType {
+    All,
+    Nothing,
+    // The usize is the number of indices not currently masked
+    Mix(Vec<bool>, usize),
 }
 
 impl<'a> Drop for WrappedProver<'a> {
@@ -206,6 +246,196 @@ impl<'a> WrappedProver<'a> {
         self.reqs = new_reqs;
         self.dependent_provers = new_deps;
         self.prover = Some(new_prover);
+    }
+}
+
+impl<'a> ProverSetItem<'a> {
+    pub fn new(
+        base: &'a [Requirement<'a>],
+        pre: &'a [Requirement<'a>],
+        pre_source: Option<Node<'a>>,
+        post: &'a [Requirement<'a>],
+        post_source: Option<Node<'a>>,
+    ) -> Self {
+        let reqs = base.iter().cloned().chain(pre.iter().cloned()).collect();
+        let prover = WrappedProver::new(reqs);
+
+        Self {
+            prover,
+            pre,
+            pre_source,
+            post,
+            post_source,
+        }
+    }
+}
+
+impl<'a> Provers<'a> {
+    pub fn new(items: Vec<ProverSetItem<'a>>) -> Self {
+        assert!(!items.is_empty());
+
+        Provers { provers: items }
+    }
+
+    /// Returns the number of provers stored
+    pub fn size(&self) -> usize {
+        self.provers.len()
+    }
+
+    /// Attempts to prove the given requirement for all provers simultaneously, returning a list of
+    /// each of the results.
+    ///
+    /// The mask allows individual provers to be ignored - their values in the vector will b e
+    pub fn prove(&self, req: &'a Requirement<'a>, mask: &Mask) -> Vec<ProofResult> {
+        self.provers
+            .iter()
+            .enumerate()
+            .map(|(i, p)| match mask.allows(i) {
+                true => p.prove(req),
+                false => ProofResult::True,
+            })
+            .collect()
+    }
+
+    pub fn define(&mut self, x: Ident<'a>, expr: Expr<'a>) {
+        self.provers
+            .iter_mut()
+            .for_each(|p| p.define(x.clone(), expr.clone()));
+    }
+
+    pub fn shadow(&mut self, x: Ident<'a>) {
+        self.provers.iter_mut().for_each(|p| p.shadow(x.clone()));
+    }
+
+    pub unsafe fn gen_new_tmp(&mut self, expr: &'a ast::Expr<'a>) -> Ident<'a> {
+        let tmp = self.provers[0].gen_new_tmp(expr);
+        self.provers[1..]
+            .iter_mut()
+            .for_each(|p| assert_eq!(p.gen_new_tmp(expr), tmp));
+        tmp
+    }
+
+    pub fn add_reqs(&mut self, reqs: Vec<Requirement<'a>>) {
+        self.provers[1..]
+            .iter_mut()
+            .for_each(|p| p.add_reqs(reqs.clone()));
+        self.provers[0].add_reqs(reqs);
+    }
+}
+
+impl Mask {
+    pub fn block(&mut self, idx: usize) {
+        match &mut self.repr {
+            MaskType::Nothing => {
+                let mut v = vec![false; self.size];
+                v[idx] = true;
+                self.repr = MaskType::Mix(v, self.size - 1);
+            }
+            // Everything's already masked, so there's nothing more we can do
+            MaskType::All => (),
+            MaskType::Mix(v, ref mut n_open) => {
+                if !v[idx] {
+                    *n_open -= 1;
+                    v[idx] = true;
+                }
+
+                if *n_open == 0 {
+                    // drop((v, n_open));
+                    self.repr = MaskType::All;
+                }
+            }
+        }
+    }
+
+    pub fn allows(&self, idx: usize) -> bool {
+        match &self.repr {
+            MaskType::All => false,
+            MaskType::Nothing => true,
+            MaskType::Mix(v, _) => !v[idx],
+        }
+    }
+
+    pub fn none(size: usize) -> Mask {
+        Mask {
+            size,
+            repr: MaskType::Nothing,
+        }
+    }
+
+    pub fn all(size: usize) -> Mask {
+        Mask {
+            size,
+            repr: MaskType::All,
+        }
+    }
+}
+
+impl BitOr for Mask {
+    type Output = Mask;
+
+    fn bitor(self, rhs: Mask) -> Mask {
+        use MaskType::{All, Mix, Nothing};
+
+        assert_eq!(self.size, rhs.size);
+
+        let repr = match (self.repr, rhs.repr) {
+            (Nothing, Nothing) => Nothing,
+            (All, _) | (_, All) => All,
+            (Mix(v, n), Nothing) | (Nothing, Mix(v, n)) => Mix(v, n),
+            (Mix(xs, _), Mix(ys, _)) => {
+                let v = xs
+                    .into_iter()
+                    .zip(ys.into_iter())
+                    .map(|(x, y)| x || y)
+                    .collect::<Vec<_>>();
+                let n = v.iter().filter(|&m| !m).count();
+
+                match n {
+                    0 => All,
+                    _ => Mix(v, n),
+                }
+            }
+        };
+
+        Mask {
+            size: self.size,
+            repr,
+        }
+    }
+}
+
+impl BitOrAssign for Mask {
+    fn bitor_assign(&mut self, that: Mask) {
+        let this = std::mem::replace(self, Mask::none(1));
+        *self = this.bitor(that);
+    }
+}
+
+impl<'a> Deref for Provers<'a> {
+    type Target = [ProverSetItem<'a>];
+
+    fn deref(&self) -> &Self::Target {
+        &self.provers
+    }
+}
+
+impl<'a> DerefMut for Provers<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.provers
+    }
+}
+
+impl<'a> Deref for ProverSetItem<'a> {
+    type Target = WrappedProver<'a>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.prover
+    }
+}
+
+impl<'a> DerefMut for ProverSetItem<'a> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.prover
     }
 }
 

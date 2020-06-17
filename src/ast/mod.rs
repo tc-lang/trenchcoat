@@ -104,7 +104,7 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
 ////////////////////////////////////////////////////////////////////////////////
 
 /// A single AST type, given so that
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum Node<'a> {
     Ident(&'a Ident<'a>),
     Item(&'a Item<'a>),
@@ -112,6 +112,7 @@ pub enum Node<'a> {
     Expr(&'a Expr<'a>),
     Args(&'a FnArgs<'a>),
     ProofStmt(&'a proof::Stmt<'a>),
+    ProofCond(&'a proof::Condition<'a>),
 }
 
 /// Most parsing functions return a ParseRet.
@@ -470,7 +471,7 @@ impl<'a> Node<'a> {
             lower.start..upper.end
         }
 
-        use Node::{Args, Expr, Ident, Item, ProofStmt, Stmt};
+        use Node::{Args, Expr, Ident, Item, ProofCond, ProofStmt, Stmt};
 
         match self {
             Ident(id) => match &id.source {
@@ -494,6 +495,10 @@ impl<'a> Node<'a> {
             ProofStmt(st) => join(
                 st.source[0].byte_range().unwrap(),
                 st.source.last().unwrap().byte_range().unwrap(),
+            ),
+            ProofCond(cond) => join(
+                cond.source[0].byte_range().unwrap(),
+                cond.source.last().unwrap().byte_range().unwrap(),
             ),
         }
     }

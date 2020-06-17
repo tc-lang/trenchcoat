@@ -110,7 +110,7 @@ pub enum StmtKind<'a> {
 #[derive(Debug, Clone)]
 pub struct Condition<'a> {
     pub kind: ConditionKind<'a>,
-    source: &'a [Token<'a>],
+    pub source: &'a [Token<'a>],
 }
 
 #[derive(Debug, Clone)]
@@ -337,6 +337,10 @@ impl<'a> Stmt<'a> {
 }
 
 impl<'a> Condition<'a> {
+    pub fn node(&'a self) -> Node<'a> {
+        Node::ProofCond(self)
+    }
+
     /// Attempts to parse a condition from the entirety of the given set of tokens
     pub fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Self> {
         // There are fundamentally two types of conditions: compound conditions, which consist of a
