@@ -19,8 +19,8 @@
 
 This document describes the bound substitution proof algorithm and some of the reasoning behind it.
 
-After defining the problem, a naive algorithm will be defined. Optimisations to this will be
-proposed and that will form the basis of the current method which will be described at the end.
+Firstly, a naive algorithm will be defined using bound substitution. Optimisations to this will be
+proposed and these will form the basis of the current method which will be described at the end.
 
 
 ## Problem Definition
@@ -42,7 +42,7 @@ result may be given if the result is true or false but the algorithm cannot dete
 
 #### Requirements
 
-This algorithm takes `DescriptivBound`s as the input format for the requirements (what can be
+This algorithm takes `DescriptiveBound`s as the input format for the requirements (what can be
 assumed true).
 
 ```rust
@@ -67,7 +67,7 @@ An important invariant here is that the `bound` expression does not contain `sub
 `DescriptiveBound` bounds its subject based only on other variables.
 
 The input format of `DescriptiveBound`s is different to that of a set of inequalities as given by
-the general problem. Before this algorithm is run, each requirement given is rearranged in to a
+the general problem. Before this algorithm is run, each requirement given is rearranged into a
 set of bounds on each of it's variables.
 
 For example, if the following set of requirements was given:
@@ -89,7 +89,7 @@ Of course, perfect rearrangement of any expression would be infeasible and chang
 this complexity. Rearrangement of linear inequalities and in fact most other common inequalities is
 reasonably trivial and can be done in a good time complexity.
 
-We will not go in to the details of this algorithm yet, but note that if a requirement cannot be
+We will not go into the details of this algorithm yet, but note that if a requirement cannot be
 rearranged to a target bound then it is simply dropped from the input. This means that results
 which require more complex requirements (ones which cannot be rearranged) to prove will always give
 *undetermined*. This is acceptable from the algorithm specification and important for keeping time
@@ -119,8 +119,8 @@ an undetermined result.
 #### Bound Substituters
 
 There are 2 bound substituters, a *maximizer* and a *minimizer*, each of which substitutes a
-`DescriptiveBound` in to an `Expr` to generate a new `Expr`:
-- *Minimizer* finds an lower bound of the expression; a minimum value, given the bound.
+`DescriptiveBound` into an `Expr` to generate a new `Expr`:
+- *Minimizer* finds a lower bound of the expression; a minimum value, given the bound.
 - *Maximizer* finds an upper bound of the expression; a maximum value, given the bound.
 These algorithms are fairly obvious but they will be described further in
 [Specifics → Bound Substitution](#bound-substitution).
@@ -194,9 +194,9 @@ function is_less_than_0(solving: Expr, bounds: [DescriptiveBound]) -> bool {
 }
 ```
 
-The `is_ge_0` and `is_less_than_0` functions can also be thought of as constructing a tree. Where
-each function call is a node and each recursive call is a child. This makes the `solving` value for
-each of a child's node the `solving` value of itself but with the different substitutions made.
+The `is_ge_0` and `is_less_than_0` functions can also be thought of as constructing a tree, where
+each function call is a node and each recursive call is a child. The `solving` value of a nodes
+children would be the `solving` value of the parent each with a different substitution made.
 
 A clear alternative algorithm from this model is a breadth first search approach. This will be
 explored later on however (when paired with other optimisations) turns out not to be faster.
@@ -210,19 +210,19 @@ number of requirements).
 
 ### Budgeting
 
-One way to improve this worst-case running time is to limit the depth of the tree it creates - i.e.
+One way to improve this worst-case runtime is to limit the depth of the tree it creates - i.e.
 limiting the number of recursive calls.
 
 If this is done, making the limit *m* recursive calls (or a tree depth of *m*+1), then the
-worst-case running time becomes:
-O( n (n-1) (n-2) ... (n-m) ) = O( n^(m+1) )
+worst-case runtime becomes:
+`O( n (n-1) (n-2) ... (n-m) ) = O( n^(m+1) )`
 
-The breadth of the tree can still get incredibly high if a lot of bounds are given, meaning that
-there is still quite a long runtime despite it having a polynomial worst case.
+The tree can still get incredibly wide if a lot of bounds are given, meaning that there is still
+quite a long runtime despite it having a polynomial worst case.
 
-This is also quite limiting since it limits the number of requirements you can use within a proof.
-While there are many quite complex cases don't require making many substitutions, there are also
-many that do - many simple cases, too. Take a long chain such as:
+This is also quite restrictive since it sets a hard limit on the number of requirements you can use
+within a proof.  While there are many quite complex cases don't require making many substitutions,
+there are also many that do - many simple cases, too. Take a long chain such as:
 ```
 a ≤ b
 b ≤ c
@@ -240,9 +240,9 @@ This section will go over the specifics of the main types and the algorithms use
 them.
 
 The proof algorithms can be read without the details in this section so feel free to skip to
-[Optimisations](#optimisations) if you are just looking for the big picture however note that these
-form the fundamental machinery behind most other algorithms in this document the limitations of them
-as they are currently implemented limits the capability of the proof method.
+[Optimisations](#optimisations) if you are just looking for the big picture. Do however note that
+these form the fundamental machinery behind the current method, hence the limitations of them as they
+are currently implemented limits the capability of the proof method.
 
 The scope of these algorithms is intentionally left reasonably simple. Whilst they are capable,
 they could be significantly more capable with just a little more work. However more complexity leads
@@ -253,9 +253,9 @@ perfectly capable. This is considered okay since the vast majority of cases enco
 linear.
 
 These types and algorithms can change with no effect on the proof algorithms. This makes adding
-complexity, if required, very easy, making this method relatively extensible in terms of what it can
-solve (for example, only linear factors can currently be taken out, whereas, if quadratics could be
-factorised, then quadratic inequalities could also be proven).
+complexity, if required, very easy thus making this method relatively extensible in terms of what it
+can solve (for example, currently only linear factors can be taken out whereas, if quadratics could
+be factorised then quadratic inequalities could also be proven).
 
 ### Expr
 
@@ -293,13 +293,14 @@ struct Ident {
 ```
 
 This representation can model any expression consisting of addition, subtraction, multiplication and
-division which is a broad scope and not very limiting at all for the purpose of this proof system.
+division which is a broad scope and not very limiting, at all, for the purpose of this proof system.
 
-A notable omission is that of powers and roots. This, as discussed later, limits 
+A notable omission is that of powers and roots. This, as discussed later, limits the proof systems
+ability to tightly bound polynomials.
 
 #### Simplification
 
-The idea behind simplification is to put expressions in to a form that make the algorithms that
+The idea behind simplification is to put expressions into a form that make the algorithms that
 manipulate them much simpler to write and also keeping the size of expressions minimal to improve
 runtime and remove duplicated substitutions.
 
@@ -311,7 +312,7 @@ Current rules include, but are not limited to:
 - grouping like terms with literal coefficients (for example `x+3*x-2*x=2*x`),
 - flattening sums and products (for example `a+(b+c)+d+(e)=a+b+c+d+e` or `a*(b*c)=a*b*c`),
 - performing calculations on literals (for example `2+3=5` or `6/3=2`),
-- removing doubled negation (for example `-(-x)=x`),
+- removing double negation (for example `-(-x)=x`),
 - sorting terms of sums and products (this is *really* useful).
 
 The full rules for simplification and the implementation can be found in:
@@ -327,19 +328,19 @@ The algorithms for these are fairly trivial.
 
 - If the input expression is just the variable being substituted, then:
   - if the expression is being *minimized* and the bound is a lower bound, the bound replaces
-    the variable direcrly;
+    the variable directly;
   - if the expression is being *maximized* and the bound is an upper bound, the bound replaces
-    the variable direcly;
+    the variable directly;
   - else the variable is left as was.
 - If the input expression is another variable, it is left as was;
 - if the expression is a Neg or a Recip, then the bound is the opposite substituter applied to the
   inner expression, wrapped in Neg or Recip - for example a lower bound of `-x` is `-(upper bound on
-  x`;
+  x)`;
 - if the expression is a Sum, the terms of the sum are replaced by the substituter applied
   individually to each term - for example a lower bound of `a + b` is `(lower bound of a) + (lower
   bound of b)`;
 - if the expression is a Prod, then the general process isn't trivial. For now, we just bound
-  scaler multiples of a single non-literal expression that we can substitute in to. This case is
+  scalar multiples of a single non-literal expression that we can substitute into. This case is
   simple: `a*b*c*(expr)` can be replaced with `a*b*c*(subbed expr)` if `a`, `b` and `c` are all
   literals. This works for all linear cases, which is the current focus.
   There are simple methods to handle more cases although cases that require them don't seem to
@@ -406,7 +407,7 @@ Rewriting the expression of the LHS to only include `x` once is the more complex
 Below is a simple algorithm which is currently the one used. It succeeds only if `x` is linear, i.e.
 it cannot handle `x*x` or `x*x + x`. In principle, it would be easy to extend to handle such cases,
 although it would require adding powers and roots to Expr to allow for the unwrapping of expressions
-such as `x³` or `(2*x+3)²`. Such as addition would add to complexity and is not currently deemed
+such as `x³` or `(2*x+3)²`. Such an addition would add to complexity and is not currently deemed
 necessary, but it is something to bear in mind as a potential improvement that may be made.
 
 Note that the algorithms below assume that the expression is simplified, specifically, it assumes
@@ -414,14 +415,14 @@ that:
 - Sums and Prods are flattened (i.e. they do not contain, as direct children, other Sums or Prods),
 
 To factor `x` from an expression (returns `expr/x` if `x` can be cleanly factored or otherwise None):
-- If the expression is `x`, then the factored expression is 1;
-- if the expression is another atom, then it cannot be factored;
-- if the expression is a literal, then it cannot be factored;
-- if the expression is a Neg, then the factored expression is -(factored inner expression)
-- if the expression is a Recip, then the factored expression is 1/(inner expression factored with
-  1/x)
-- if the expression is a Sum, then the factored expression is the sum of its terms, each factored;
-- if the expression is a Prod, then the expression can only be factored if exactly one term contains
+- If the expression is `x`, the factored expression is 1;
+- if the expression is another atom, it cannot be factored;
+- if the expression is a literal, it cannot be factored;
+- if the expression is a Neg, the factored expression is -(factored inner expression);
+- if the expression is a Recip, the factored expression is 1/(inner expression factored with
+  1/x);
+- if the expression is a Sum, the factored expression is the sum of its terms, each factored;
+- if the expression is a Prod, the expression can only be factored if exactly one term contains
   `x`. If so, then the factored expression is the product of the factored term containing `x` and
   the rest of the terms.
 
@@ -432,12 +433,12 @@ To rewrite an expression to contain `x` exactly once:
   result in a Neg;
 - if the expression is a Recip, then rewrite inner expression to include exactly one `x` and wrap the
   result in a Recip;
-- if the expression is a Sum, collect the terms containing `x` in to `x_terms` and the other terms
-  in to `other_terms` then the singled expression is `x*factor(x_terms, x) + other_terms`;
-- if the expression is a Prod and more than one term contains `x` then it cannot be rewritten;
-- if the expression is a Prod and exactly one term contains `x` then it is rewritten as the product
+- if the expression is a Sum, collect the terms containing `x` into `x_terms` and the other terms
+  into `other_terms` then the singled expression is `x*factor(x_terms, x) + other_terms`;
+- if the expression is a Prod and more than one term contains `x`, it cannot be rewritten;
+- if the expression is a Prod and exactly one term contains `x`, it is rewritten as the product
   of the other terms and the term containing `x`, rewritten;
-- if the expression is a Prod not containinig `x`, leave it as was.
+- if the expression is a Prod not containing `x`, leave it as was.
 
 For more details, the implementation can be found at: [TODO]
 
@@ -445,15 +446,15 @@ For more details, the implementation can be found at: [TODO]
 
 Comparison with 0 can be done by evaluating the simplified expression.
 
-If a variable is within the expression, then it cannot be evaluated. This is a perfectly valid way
-of comparing expressions with 0 in the context of this algorithm since if the expression contains
+If a variable is within the expression then it can't be evaluated. This is a perfectly valid way
+of comparing expressions with 0 in the context of this algorithm since, if the expression contains
 a variable, to have a known difference with 0, the variable must be bound in terms of a literal.
 
 For example, if everything gets simplified to:
 ```
 0 <= z + 2
 ```
-Then for that to be true, you require -2 <= z.
+For that to be true, you require -2 <= z.
 
 If we have such a bound, or one which is tighter, it would be substituted and so the expression
 could be evaluated at that node instead.
@@ -480,7 +481,7 @@ b-a+1 >= a-a+1 = 1
 And hence the algorithm succeeds.
 
 This emphasises that cancellation is an important aspect to simplification; otherwise, `a-a+1` would
-not be simplified to remove the *a* making evaluation impossible.
+not be simplified to remove the `a` making evaluation impossible.
 
 #### Evaluation
 
@@ -500,29 +501,29 @@ values to get high enough to cause performance problems, the number of variables
 would have to be unreasonably high - and if this is the case, the final system will not break,
 since values will be unbounded but it will perform badly.
 
-Some, basic simplification is done though: for example, if the numerator and denominator perfectly
-cancel or if one of them is 0.
+Though, some very basic simplification is carried out: for example, if the
+numerator and denominator perfectly cancel or if one of them is 0.
 
 #### Linear Only?
 
 These algorithms are designed for general expressions as opposed to just linear expressions.
 
-This can make this proof method much more powerful however it may not be necessary in the context
-of proofs within programming languages. Various discussions have all lead to the conclusion that
+This can make the method much more powerful however it may not be necessary in the context
+of proofs within programming languages. Various discussions have all led to the conclusion that
 non-linear requirements are likely to be incredibly rare.
 
-The algorithms above become much simpler and therefore, due to the lack of having to do more
-allocation and less things to check, a bit faster when you know that the expressions are all linear
-and have a more appropriate representation for them - similar to what can be seen in the graph based
-method.
+The algorithms above become much simpler and therefore a bit faster when you know that the
+expressions are all linear and have a more appropriate representation for them; this is due to the
+lack of having to do more allocation and having less things to check. This would likely be similar
+(if not exactly) what can be seen in the graph based method.
 
 This isn't to say that non-linear proofs should be removed. If the compiler cannot prove something,
-then it would have to be asserted using 'unsafe' features - where a statement is not verified.
+it would have to be asserted using 'unsafe' features - where a statement is not verified.
 Using such features would be prone to human error, especially in cases that are too complex for
 the compiler.
 
 This is to say that a faster version of the bounds method could be written, using a different
-expression type specialized for linear inequalities. This would likely just require creating such
+expression type specialized for linear inequalities. Likely, this would just require creating such
 a type, since the bounds method algorithms can be generic. This method may be faster than the
 existing bounds method (as will be described later) but slower than the graph method. It would
 however be able to solve much more than the graph method (almost all linear inequalities) but
@@ -534,12 +535,10 @@ More research will be done on this very soon.
 
 ## Optimisations
 
-The naive algorithm described above is highly inefficient and when budgeted has clear rough edges.
+The naive algorithm described above is highly inefficient and, when budgeted, has clear rough edges.
 
 This section will cover *some* of the possible optimisations that were considered before the current
 algorithm was decided upon.
-
-These optimisations will be motivated by relatively simple examples and 
 
 ### Only Substitute Each Requirement Once
 
@@ -588,8 +587,8 @@ substituted next, then the returned bound is `2*a-b` and then the next substitut
 In the later case, the bound method would have concluded that `c ≤ a+b` but the first case would
 have yielded undetermined.
 
-If bounds are substituted not only in to the expression but also in to the other bounds, then the
-order of substitution no longer matters.
+If bounds are substituted not only into the expression but also in to the other bounds, the order of
+substitution no longer matters.
 
 This causes another problem however; consider:
 ```
@@ -601,13 +600,13 @@ There are 2 possible substitutions for `a` (`a ≥ 0` and `a ≥ b`). Once one i
 one cannot be. In fact, this is the case exactly when a substitution is on the same variable and has
 the same relation kind (whether it is an upper or lower bound).
 
-This leads to the following lemma: If bounds are grouped in to *permutation groups*, where bounds
+This leads to the following lemma: If bounds are grouped into *permutation groups*, where bounds
 are in the same group if and only if they have the same subject and the same relation kind (i.e.
 they are both Le or Ge values), then the order in which you make substitutions within permutation
 groups *does* matter but the order between permutation groups *does not*. (Note that this says
 nothing about the choice of bounds to substitute.)
 
-This means that if bounds are sorted in to their *permutation groups*, an arbitrary order to
+This means that if bounds are sorted into their *permutation groups*, an arbitrary order to
 substitute each group in can be chosen and then the only bounds which must be permuted are those
 within the same *permutation group*. This drastically reduces the breadth of the tree.
 
@@ -621,9 +620,9 @@ c ≤ _ : [c ≤ b]
 c ≥ _ : []
 ```
 This shows that the only substitutions that must be permuted with each other are `b ≥ a` and `b ≥ c`
-- the order of the rest does not matter.
+\- the order of the rest does not matter.
 
-Importantly, this does not hold if bounds are not also substituted in to all other bounds. For a
+Importantly, this does not hold if bounds are not also substituted into all other bounds. For a
 simple counter example, choose the bounds:
 ```
 a ≤ d
@@ -631,10 +630,10 @@ a ≤ d
 ```
 to minimize `a+d`.
 
-If the `d ≥ _` permutation group is chosen first, then `2*a` is given as a lower bound which then
-leads to `0` whereas if the `a ≥ _` permutation group is chosen first, then `d` is given as a lower
-bound which then leads to `a` again. If `a ≥ 0` was also substituted in to the `a ≤ b` requirement
-though then this would have lead to the same lower bound of `0`.
+If the `d ≥ _` permutation group is chosen first, `2*a` is given as a lower bound which then leads
+to `0` whereas if the `a ≥ _` permutation group is chosen first, `d` is given as a lower bound which
+then leads to `a` again. If `a ≥ 0` was also substituted into the `a ≤ b` requirement though, this
+would have led to the same lower bound of `0`.
 
 This almost\* doesn't change the capability of the algorithm.
 
@@ -654,7 +653,7 @@ In a couple of cases above, I mentioned that they "almost\*" don't change the ca
 algorithm.
 
 This is because, when applied, these optimisations enforce that if a substitution for, say, `x` is
-made it must also be made in all other cases where `x` pops up (since it's also substituted in to
+made it must also be made in all other cases where `x` pops up (since it's also substituted into
 all bounds).
 
 The naive algorithm had the ability to occasionally use different substitutions for the same
@@ -692,7 +691,7 @@ cheaper to make the substitutions on the requirements (since there are less of t
 bounds when required.
 
 Also, if bounds are stored as a single expression like the proposition (one where `0 ≤ expr ⇔
-requirement`) then a substitution only needs to be made in to one expression per requirement.
+requirement`) then a substitution only needs to be made into one expression per requirement.
 
 
 ## Current Method
@@ -715,8 +714,8 @@ expression* for the proposition will be referred to as `solving`.
 #### Bound Substituters
 
 There are 2 bound substituters, a *maximizer* and a *minimizer*, each of which substitutes a
-`DescriptiveBound` in to an `Expr` to generate a new `Expr`:
-- *Minimizer* finds an lower bound of the expression; a minimum value, given the bound.
+`DescriptiveBound` into an `Expr` to generate a new `Expr`:
+- *Minimizer* finds a lower bound of the expression; a minimum value, given the bound.
 - *Maximizer* finds an upper bound of the expression; a maximum value, given the bound.
 Both of these were described in more detail in [Specifics → Bound Substitution](#bound-substitution)
 
@@ -726,7 +725,7 @@ This is either a *minimizer tree*, in which case its subsituter is the *minimize
 *maximizer tree*, in which case its subsituter is the *maximizer substituter*.
 
 Each node has:
-- solving: the expression to substitute bounds in to;
+- solving: the expression to substitute bounds into;
 - given: the list of requirements in the form proposed earlier (`given[i] ≥ 0 ⇔ requirement[i] ∀i`);
 - its children.
 
@@ -740,7 +739,7 @@ directly from the requirements as described above.
 If `solving` contains no variables, then this node yields `solving` as a bound.
 
 Otherwise, each node chooses a variable from `solving` (*x*) and tried to rearrange each of the
-requirements (from it's *ge0 expression*) in to a bound on *x*. If one is found, the rest of the
+requirements (from it's *ge0 expression*) into a bound on *x*. If one is found, the rest of the
 requirements are rearranged to make *x* the subject and bounds with the same relation kind are
 collected to form a *permutation group* (as defined in the [Optimisations](#optimisations) section).
 Otherwise, if none of the requirements specify a computable bound, then a different variable is
