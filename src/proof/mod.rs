@@ -1,4 +1,4 @@
-//! Verification for proof statments
+//! Verification for proof statements
 //!
 //! The high-level operations here are on functions and the global scope, taking the AST as input.
 //! It is assumed here that the AST nodes given as input have passed through the checks in `verify`
@@ -166,8 +166,8 @@ pub trait SimpleProver<'a> {
     /// Create a SimpleProver with the given requirements.
     fn new(reqs: Vec<Requirement<'a>>) -> Self;
 
-    /// Try to prove `req`. This will assume that the requirements passed to `new` are true.
-    fn prove(&self, req: &Requirement<'a>) -> ProofResult;
+    /// Try to prove `proposition`. This will assume that the requirements passed to `new` are true.
+    fn prove(&self, proposition: &Requirement<'a>) -> ProofResult;
 }
 
 pub trait Prover<'a> {
