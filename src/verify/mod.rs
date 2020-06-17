@@ -1020,21 +1020,19 @@ impl<'a> Scope<'a> {
         }
 
         if let (true, Some(contracts)) = (did_fail, func.contracts.as_ref()) {
-            for p in provers.iter_mut() {
-                let additions = contracts.iter().map(|c| {
-                    // If all of the precondition requirements have been proven true, we're guaranteed
-                    // all of the postconditions
-                    if c.pre.iter().all(|req| p.prove(&req.substitute_all(&subs)) == ProofResult::True) {
-                        // It's worth noting that the substitution of the return variable is included
-                        // in `subs`, so the post-conditions are translated into the current set of
-                        // temporary variables
-                        c.post.iter().map(|req| req.substitute_all(&subs)).collect()
-                    } else {
-                        Vec::new()
-                    }
-                }).flatten().collect::<Vec<_>>();
+            let mut reqs = vec![Vec::new(); provers.size()];
 
-                p.add_reqs(additions);
+            for c in contracts.iter() {
+                let post = c.post.iter().map(|req| req.substitute_all(&subs)).collect::<Vec<_>>();
+                let pre = c.pre.iter().map(|rs| rs.substitute_all(&subs)).collect::<Vec<_>>();
+
+                provers.prove_all(&pre).into_iter().filter(|(_, passed)| *passed).for_each(|(i,_)| {
+                    reqs[i].extend(c.post.iter().cloned());
+                });
+            }
+
+            for (p, rs) in provers.iter_mut().zip(reqs) {
+                p.add_reqs(rs);
             }
         }
 

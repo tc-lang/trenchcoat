@@ -119,7 +119,7 @@ impl<'a> WrappedProver<'a> {
         }
     }
 
-    pub fn prove(&self, req: &'a Requirement<'a>) -> ProofResult {
+    pub fn prove(&self, req: &Requirement<'a>) -> ProofResult {
         self.prover.as_ref().unwrap().prove(req)
     }
 
@@ -296,17 +296,17 @@ impl<'a> Provers<'a> {
         self.provers.len()
     }
 
-    /// Attempts to prove the given requirement for all provers simultaneously, returning a list of
-    /// each of the results.
+    /// Attempts to prove the given requirements for all provers simultaneously, returning - for
+    /// each prover - its index and whether the requirements were all proven true.
     ///
-    /// The mask allows individual provers to be ignored - their values in the vector will b e
-    pub fn prove(&self, req: &'a Requirement<'a>) -> Vec<ProofResult> {
+    /// The mask allows individual provers to be ignored - their values will always be true.
+    pub fn prove_all(&self, reqs: &[Requirement<'a>]) -> Vec<(usize, bool)> {
         self.provers
             .iter()
             .enumerate()
             .map(|(i, p)| match self.mask.allows(i) {
-                true => p.prove(req),
-                false => ProofResult::True,
+                true => (i, reqs.iter().all(|req| p.prove(req) == ProofResult::True)),
+                false => (i, true),
             })
             .collect()
     }
