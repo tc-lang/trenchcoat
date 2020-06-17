@@ -1,7 +1,7 @@
 //! Error definitions for verification
 
 use super::Func;
-use crate::ast::{Item, ItemKind::FnDecl, Node};
+use crate::ast::{Ident, Item, ItemKind::FnDecl, Node};
 use crate::proof::{ProofResult, Requirement};
 use crate::types::Type;
 use crate::PrettyError;
@@ -49,6 +49,16 @@ pub enum Kind<'a> {
         fn_name: &'a str,
         func_info: &'a Func<'a>,
         failed: Vec<(ProofResult, Requirement<'a>)>,
+    },
+    /// A collection of proof requirements that didn't pass while attempting to uphold a contract
+    /// The source should be the node representing the postconditions (from
+    /// `ProverSetItem.post_source`)
+    FailedContract {
+        fn_name: &'a str,
+        failed: Vec<(ProofResult, Requirement<'a>)>,
+        pre_source: Option<Node<'a>>,
+        /// The temporary variable corresponding to the final return value of the function
+        ret_ident: Ident<'a>,
     },
 }
 
