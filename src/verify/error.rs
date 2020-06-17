@@ -51,12 +51,12 @@ pub enum Kind<'a> {
         failed: Vec<(ProofResult, Requirement<'a>)>,
     },
     /// A collection of proof requirements that didn't pass while attempting to uphold a contract
-    /// The source should be the node representing the postconditions (from
-    /// `ProverSetItem.post_source`)
+    /// The source should be the node representing the function definition
     FailedContract {
         fn_name: &'a str,
         failed: Vec<(ProofResult, Requirement<'a>)>,
         pre_source: Option<Node<'a>>,
+        post_source: Node<'a>,
         /// The temporary variable corresponding to the final return value of the function
         ret_ident: Ident<'a>,
     },
@@ -92,7 +92,8 @@ impl<'a> Error<'a> {
 impl PrettyError for Error<'_> {
     fn pretty_print(&self, file_str: &str, file_name: &str) -> String {
         use Kind::{
-            FailedProofs, FunctionMustBeName, FunctionNotFound, ItemConflict, TypeMismatch,
+            FailedContract, FailedProofs, FunctionMustBeName, FunctionNotFound, ItemConflict,
+            TypeMismatch,
         };
 
         match &self.kind {
@@ -115,6 +116,22 @@ impl PrettyError for Error<'_> {
                 fn_name,
                 func_info,
                 &self.source,
+                file_str,
+                file_name,
+            ),
+            FailedContract {
+                fn_name,
+                failed,
+                pre_source,
+                post_source,
+                ret_ident,
+            } => Error::format_failed_contract(
+                failed,
+                fn_name,
+                ret_ident,
+                *pre_source,
+                *post_source,
+                self.source,
                 file_str,
                 file_name,
             ),
@@ -147,7 +164,7 @@ impl Error<'_> {
 
         // Subtract 1 from both of these so that they start at zero
         let line_no = lines.len() - 1;
-        let col_no = last[..byte_idx - offset].chars().count() - 1;
+        let col_no = last[..byte_idx - offset].chars().count().saturating_sub(1);
 
         (line_no, col_no, offset, byte_idx - offset, last)
     }
@@ -502,7 +519,7 @@ impl Error<'_> {
         //    |                   ^^^^^^
         //    |
         //    = help: `foo(x)` requires `x >= 5`
-        //    = note:
+        //    = note: `3 >= 5` is false
         // ```
         //
         // or:
@@ -516,8 +533,8 @@ impl Error<'_> {
         //   |
         //   = help: `foo(x, y)` requires `x >= 5`, `y <= 3` and `x + y <= 10`
         //   = note: `3 >= 5` is false
-        //   = note: `z <= 3` cannot be determined
-        //   = note: `3 + z <= 10` cannot be determined
+        //   = note: whether `z <= 3` cannot be determined
+        //   = note: whether `3 + z <= 10` cannot be determined
         // ```
 
         assert!(func.params.len() >= 1);
@@ -628,6 +645,276 @@ impl Error<'_> {
 
         // We don't use `writeln!` because `notes` ends in a newline
         write!(msg, "{}", notes).unwrap();
+
+        msg
+    }
+
+    fn format_failed_contract(
+        proofs: &[(ProofResult, Requirement)],
+        fn_name: &str,
+        ret_ident: &Ident,
+        pre_source: Option<Node>,
+        post_source: Node,
+        fn_source: Node,
+        file_str: &str,
+        file_name: &str,
+    ) -> String {
+        // This error message looks something like:
+        // ```
+        // error: contract is not upheld for function `foo`
+        //   --> src/main.tc:10:13
+        //   --> src/main.tc:35:19
+        //    |
+        // 10 | # x <= 4 => _ <= 5
+        //    |             ^^^^^^
+        // ...
+        // 13 | fn foo(x: int) -> int {
+        // ...
+        // 34 |     let y = bar(x);
+        // 35 |     x + y
+        //    |     ^^^^^
+        // 36 | }
+        //    |
+        //    = note: the contract assumes that `x <= 4`
+        //    = note: whether `(x + y) <= 5` cannot be determined
+        // ```
+
+        // This error message is one of the more complicated ones.
+        //
+        // Because there's so much to do here, we'll sort out this message by breaking it apart into
+        // pieces.
+
+        let fn_name_source = match fn_source {
+            Node::Item(item) => {
+                let FnDecl { name, .. } = &item.kind;
+                name.node()
+            }
+            _ => panic!(
+                "non-item node as function source for failed contract error: {:?}",
+                fn_source
+            ),
+        };
+
+        let mut msg = format!(
+            "{}: contract is not upheld for function `{}`\n",
+            Red.paint("error"),
+            fn_name
+        );
+
+        struct Info<'b> {
+            line_no: usize,
+            col_no: usize,
+            line: &'b str,
+            line_range: Range<usize>,
+        }
+
+        // A helper function for generating bits of information about the ranges around a given node.
+        let info = |node: Node| -> Info {
+            let byte_range = node.byte_range();
+            let (line_no, col_no, line_offset, _, line) =
+                Error::line_info(file_str, byte_range.start);
+
+            let line_range = {
+                let start = byte_range.start - line_offset;
+                let end = byte_range.end - line_offset;
+                start..end
+            };
+
+            Info {
+                line_no,
+                col_no,
+                line,
+                line_range,
+            }
+        };
+
+        let lines = file_str.lines().collect::<Vec<_>>();
+
+        let req = info(post_source);
+        let func = info(fn_name_source);
+        let ret = info(ret_ident.node());
+
+        let pre_ret_line = match ret.line_no - 1 <= func.line_no {
+            true => None,
+            false => Some(lines[ret.line_no - 1]),
+        };
+
+        let (end_fn_line_no, _, _, _, end_fn_line) =
+            Error::line_info(file_str, fn_source.byte_range().end);
+
+        let pad_size = (end_fn_line_no + 1).to_string().len();
+        let padding = " ".repeat(pad_size);
+
+        // Write the first two context lines. In the example at the top of this function, these are
+        // the following two lines:
+        // ```
+        //   --> src/main.tc:10:13
+        //   --> src/main.tc:35:19
+        // ```
+        // They serve to indicate the relevant locations for the error
+        writeln!(
+            msg,
+            "{}{} {}:{}:{}",
+            padding,
+            Blue.paint("-->"),
+            file_name,
+            req.line_no,
+            req.col_no
+        )
+        .unwrap();
+        writeln!(
+            msg,
+            "{}{} {}:{}:{}",
+            padding,
+            Blue.paint("-->"),
+            file_name,
+            ret.line_no,
+            ret.col_no
+        )
+        .unwrap();
+
+        let filler_line = format!("{} {}", padding, Blue.paint("|"));
+        let dots_line = format!("{}", Blue.paint("..."));
+
+        // There's a single filler line after the context
+        writeln!(msg, "{}", filler_line).unwrap();
+
+        // The next component is the highlighted selection of the requirement. This consists of two
+        // lines - the first gives the line itself, and the second underlines the selection.
+        writeln!(
+            msg,
+            "{:>width$} {} {}",
+            req.line_no,
+            Blue.paint("|"),
+            req.line,
+            width = pad_size
+        )
+        .unwrap();
+        writeln!(
+            msg,
+            "{} {}",
+            filler_line,
+            Blue.paint(Error::underline(req.line, req.line_range))
+        )
+        .unwrap();
+
+        // Before we print the function definition, we might want to add a `...` before it. We'll
+        // do that if the function definition doesn't immediately follow the proof line.
+        if req.line_no + 1 != func.line_no {
+            writeln!(msg, "{}", dots_line).unwrap();
+        }
+
+        // And now for the function definition. This condition should never be true, but it's good
+        // to check anyways.
+        if func.line_no != ret.line_no {
+            writeln!(
+                msg,
+                "{:>width$} {} {}",
+                func.line_no,
+                Blue.paint("|"),
+                func.line,
+                width = pad_size
+            )
+            .unwrap();
+        }
+
+        // Again with maybe dots between the function definition and return
+        if func.line_no + 2 < ret.line_no {
+            writeln!(msg, "{}", dots_line).unwrap();
+        }
+
+        // And now the line before the return
+        if let Some(line) = pre_ret_line {
+            writeln!(
+                msg,
+                "{:>width$} {} {}",
+                ret.line_no - 1,
+                Blue.paint("|"),
+                line,
+                width = pad_size
+            )
+            .unwrap();
+        }
+
+        // And the return line, followed by a highlight
+        writeln!(
+            msg,
+            "{:>width$} {} {}",
+            ret.line_no,
+            Blue.paint("|"),
+            ret.line,
+            width = pad_size
+        )
+        .unwrap();
+        writeln!(
+            msg,
+            "{} {}",
+            filler_line,
+            Red.paint(Error::underline(ret.line, ret.line_range))
+        )
+        .unwrap();
+
+        // And our final bit of source: The last line of the function. This - once again - might
+        // need some dots to connect it
+        if ret.line_no + 1 < end_fn_line_no {
+            writeln!(msg, "{}", dots_line).unwrap();
+        }
+
+        if ret.line_no != end_fn_line_no {
+            // No need to account for width here since this line has the longest number
+            writeln!(
+                msg,
+                "{} {} {}",
+                end_fn_line_no,
+                Blue.paint("|"),
+                end_fn_line,
+            )
+            .unwrap();
+        }
+
+        // Now, all that we have left is for notes to the user. We'll add a filler line first, then
+        // format the requirements as necessary.
+        writeln!(msg, "{}", filler_line).unwrap();
+
+        // First note:
+        // ```
+        //    = note: the contract assumes that `x <= 4`
+        // ```
+        // This  will not be present if the contract has no assumptions
+        if let Some(pre_source) = pre_source {
+            writeln!(
+                msg,
+                "{} {} note: the contract assumes that `{}`",
+                padding,
+                Blue.paint("="),
+                &file_str[pre_source.byte_range()]
+            )
+            .unwrap();
+        }
+
+        // Trailing notes:
+        for (res, req) in proofs {
+            assert!(res != &ProofResult::True);
+
+            let (before, after) = match res {
+                ProofResult::False => ("", "is false"),
+                // Undetermined
+                _ => ("whether ", "cannot be determined"),
+            };
+
+            writeln!(
+                msg,
+                "{} {} note: {}`{}` {}",
+                padding,
+                Blue.paint("="),
+                before,
+                req.pretty(file_str),
+                after
+            )
+            .unwrap();
+        }
+
+        // And then we're done!
 
         msg
     }

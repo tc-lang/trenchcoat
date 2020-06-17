@@ -543,10 +543,11 @@ impl<'a> TopLevelScope<'a> {
                             fn_name: name,
                             failed: failed_reqs,
                             pre_source: p.pre_source.clone(),
+                            post_source: p.post_source.clone().unwrap(),
                             ret_ident: ret_ident.clone(),
                         },
                         context: error::Context::FnTail,
-                        source: p.post_source.clone().unwrap(),
+                        source: func.source.node(),
                     });
                 }
             }
@@ -1060,7 +1061,7 @@ impl<'a> Scope<'a> {
                 let pre = c.pre.iter().map(|rs| rs.substitute_all(&subs)).collect::<Vec<_>>();
 
                 provers.prove_all(&pre).into_iter().filter(|(_, passed)| *passed).for_each(|(i,_)| {
-                    reqs[i].extend(c.post.iter().cloned());
+                    reqs[i].extend(post.clone());
                 });
             }
 
