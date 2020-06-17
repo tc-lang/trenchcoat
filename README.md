@@ -1,6 +1,6 @@
 # TrenchCoat
 
-This repository houses the bulk of the work on the Trenchcoat language demo. This consists of a
+This repository houses the bulk of the work on the TrenchCoat language demo. This consists of a
 rudimentary interpreter to follow the static analysis given as part of the language definition.
 Currently, the basic demo procedure is to modify 'src/test\_input.tc' and build+run the project.
 This is detailed further below.
@@ -26,6 +26,7 @@ prover. As such, there are expected failures. These tests can be found in
 Much more information is available about the various pieces of this project:
 * [Project structure & overview](writeups/project-structure.md)
 * Provers:
+  * [Overview](writeups/proof-overview.ms)
   * [Bound method in-depth](writeups/bound-method.md)
   * [Graph method in-depth](writeups/graph-method.md)
 
