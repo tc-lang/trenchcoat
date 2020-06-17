@@ -3,14 +3,14 @@ mod prover;
 
 use crate::ast::proof::Stmt as ProofStmt;
 use crate::ast::{
-    self, BinOp, Block, Expr, ExprKind, FnArgs, Ident, IdentSource, Item, ItemKind, PrefixOp,
+    BinOp, Block, Expr, ExprKind, FnArgs, Ident, IdentSource, Item, ItemKind, Node, PrefixOp,
     StmtKind, TypeExpr,
 };
 use crate::proof::{self, ProofResult, Requirement};
 use crate::tokens::FAKE_TOKEN;
 use crate::types::{self, Type};
 use error::Error;
-use prover::WrappedProver;
+use prover::{Mask, ProverSetItem, Provers};
 use std::collections::HashMap;
 use std::mem::transmute; // :)
 
@@ -64,13 +64,13 @@ pub struct Func<'a> {
     reqs: Option<Vec<Requirement<'a>>>,
 
     /// The 'contracts' given by a function. These are a set of statments asserting that - given
-    /// some (optional) requirement on the input, the output requirement will be satisfied.
+    /// some (optional) set of requirements on the input, the output requirement will be satisfied.
     ///
     /// These are checked whenever they are used in order to provide additional information about
     /// variables created by any callers of this function.
     ///
     /// Like `reqs`, `contracts` will be `None` if there was an error in validating them.
-    contracts: Option<Vec<(Option<Requirement<'a>>, Requirement<'a>)>>,
+    contracts: Option<Vec<Contract<'a>>>,
 
     /// The types of each parameter, along with their names
     ///
@@ -89,6 +89,18 @@ pub struct Func<'a> {
     source: &'a Item<'a>,
 }
 
+/// A helper type for `Func`, storing a single proof contract and some contextual information
+///
+/// The two `Node`s provide additional context to the pre- and post-conditions, respectively.
+#[derive(Debug, Clone)]
+struct Contract<'a> {
+    pre: Vec<Requirement<'a>>,
+    // If there aren't any preconditions, the source will be `None`.
+    pre_source: Option<Node<'a>>,
+    post: Vec<Requirement<'a>>,
+    post_source: Node<'a>,
+}
+
 /// The top level scope consists of named items, currently just functions. Things will be
 /// transitioned out of here as they can be placed in local scopes until everything is under
 /// the `Scope` type. It exists now for simplicity.
@@ -102,7 +114,7 @@ struct TopLevelScope<'a> {
 
     // A set of provers that's stored so that the errors can reference the strings stored in the
     // provers. This *must* be dropped after `errors`.
-    provers: Vec<Option<WrappedProver<'a>>>,
+    provers: Vec<Provers<'a>>,
 }
 
 impl<'a> Drop for TopLevelScope<'a> {
@@ -133,7 +145,7 @@ struct Scope<'a> {
 struct ScopeItem<'a> {
     name: &'a str,
     typ: Type<'a>,
-    source: Option<ast::Node<'a>>,
+    source: Option<Node<'a>>,
 }
 
 impl<'a> TopLevelScope<'a> {
@@ -212,13 +224,7 @@ impl<'a> TopLevelScope<'a> {
         params: &[(&Ident<'a>, &Type<'a>)],
         ret_ty: &TypeExpr<'a>,
         source_item: &'a Item<'a>,
-    ) -> Result<
-        (
-            Vec<Requirement<'a>>,
-            Vec<(Option<Requirement<'a>>, Requirement<'a>)>,
-        ),
-        Vec<Error<'a>>,
-    > {
+    ) -> Result<(Vec<Requirement<'a>>, Vec<Contract<'a>>), Vec<Error<'a>>> {
         use crate::ast::proof::{
             Condition, ConditionKind, Expr as ProofExpr,
             ExprKind::{Compound, Literal, Malformed, Named},
@@ -289,16 +295,28 @@ impl<'a> TopLevelScope<'a> {
             allowed_return_ident: bool,
             params: &[(&Ident<'b>, &Type<'b>)],
             required_return_int: &mut bool,
-            source: ast::Node<'b>,
         ) -> Vec<Error<'b>> {
+            use crate::ast::proof::LogicOp::{And, Or};
+
             match &cond.kind {
-                ConditionKind::Compound { .. } => vec![Error {
+                ConditionKind::Compound {
+                    ref lhs,
+                    op: And,
+                    ref rhs,
+                } => {
+                    let mut lhs_errs =
+                        check_condition(lhs, allowed_return_ident, params, required_return_int);
+                    let rhs_errs =
+                        check_condition(rhs, allowed_return_ident, params, required_return_int);
+                    lhs_errs.extend(rhs_errs);
+                    lhs_errs
+                }
+                ConditionKind::Compound { op: Or, .. } => vec![Error {
                     kind: error::Kind::FeatureNotAllowed {
-                        description:
-                            "Logical operators are currently not allowed in proof statements",
+                        description: "Logical OR is currently not allowed in proof statements",
                     },
                     context: error::Context::ProofStmt,
-                    source,
+                    source: cond.node(),
                 }],
                 ConditionKind::Simple {
                     ref lhs, ref rhs, ..
@@ -321,7 +339,7 @@ impl<'a> TopLevelScope<'a> {
         let mut errors = Vec::new();
 
         let mut reqs = <Vec<Requirement>>::new();
-        let mut contracts = <Vec<(Option<Requirement>, Requirement)>>::new();
+        let mut contracts = <Vec<self::Contract>>::new();
 
         for stmt in stmts {
             match &stmt.kind {
@@ -331,22 +349,14 @@ impl<'a> TopLevelScope<'a> {
                         false,
                         params,
                         &mut required_return_int,
-                        stmt.node(),
                     ));
-                    reqs.push(cond.into());
+                    reqs.extend(Vec::from(cond));
+                    // reqs.push(cond.into());
                 }
                 Contract { pre, ref post } => {
                     errors.extend(
                         pre.as_ref()
-                            .map(|c| {
-                                check_condition(
-                                    c,
-                                    false,
-                                    params,
-                                    &mut required_return_int,
-                                    stmt.node(),
-                                )
-                            })
+                            .map(|c| check_condition(c, false, params, &mut required_return_int))
                             .unwrap_or(vec![]),
                     );
                     errors.extend(check_condition(
@@ -354,9 +364,13 @@ impl<'a> TopLevelScope<'a> {
                         true,
                         params,
                         &mut required_return_int,
-                        stmt.node(),
                     ));
-                    contracts.push((pre.as_ref().map(Into::into), post.into()));
+                    contracts.push(self::Contract {
+                        pre: pre.as_ref().map(Vec::from).unwrap_or_default(),
+                        pre_source: pre.as_ref().map(|p| p.node()),
+                        post: Vec::from(post),
+                        post_source: post.node(),
+                    });
                 }
                 &StmtKind::Malformed => panic!("Unexpected malformed proof statment in `verify`"),
             }
@@ -373,7 +387,7 @@ impl<'a> TopLevelScope<'a> {
                         found: ret_ty.typ.clone(),
                     },
                     context: error::Context::ProofStmt,
-                    source: ast::Node::Item(source_item),
+                    source: Node::Item(source_item),
                 }),
             }
         }
@@ -388,9 +402,11 @@ impl<'a> TopLevelScope<'a> {
     fn check_items(&'a mut self) {
         for func in self.items.values() {
             if let Ok(func) = func {
-                let (prover, errs) = TopLevelScope::check_fn(func, &self.items);
+                let (provers, errs) = TopLevelScope::check_fn(func, &self.items);
                 self.errors.extend(errs);
-                self.provers.push(prover);
+                if let Some(ps) = provers {
+                    self.provers.push(ps);
+                }
             }
         }
     }
@@ -403,13 +419,37 @@ impl<'a> TopLevelScope<'a> {
     fn check_fn(
         func: &'a Func<'a>,
         items: &'a HashMap<&'a str, Result<Func<'a>, &'a Item<'a>>>,
-    ) -> (Option<WrappedProver<'a>>, Vec<Error<'a>>) {
-        let mut base_prover = func.reqs.as_ref().cloned().map(WrappedProver::new);
+    ) -> (Option<Provers<'a>>, Vec<Error<'a>>) {
+        let mut prover_set = match (func.reqs.as_ref(), func.contracts.as_ref()) {
+            (Some(reqs), Some(contracts)) => {
+                // NOTE: This section could be optimized to group by precondition, which would
+                // reduce the number of provers. The current version is probably *good enough* as
+                // is, so this has been left to some future improvement.
+
+                let mut provers = Vec::with_capacity(1 + contracts.len());
+                // Add the base prover
+                provers.push(ProverSetItem::new(reqs, &[], None, &[], None));
+
+                // And now the provers for each contract
+                for c in contracts {
+                    provers.push(ProverSetItem::new(
+                        reqs,
+                        &c.pre,
+                        c.pre_source,
+                        &c.post,
+                        Some(c.post_source),
+                    ));
+                }
+
+                Some(Provers::new(provers))
+            }
+            _ => None,
+        };
 
         // Create a scope containing all the function arguments
         let empty;
         let mut scopes;
-        let prover = base_prover.as_mut();
+        let provers = prover_set.as_mut();
 
         let (mut errors, tail_type, _ret_ident, _stop_proof) = if func.params.is_empty() {
             // If there aren't any, then this is just an empty scope.
@@ -420,9 +460,9 @@ impl<'a> TopLevelScope<'a> {
             };
             // Intentional lifetime shrinking so that the prover doesn't require the scope to have
             // a longer lifetime
-            let prover = unsafe { transmute(prover) };
+            let provers = unsafe { transmute(provers) };
 
-            empty.check_block(prover, func.block, 0)
+            empty.check_block(provers, func.block, 0)
         } else {
             // We'll now create a scope for each parameter.
             // Using the notation `parent <- child`, this will create the structure:
@@ -459,9 +499,9 @@ impl<'a> TopLevelScope<'a> {
 
             // Intentional lifetime shrinking so that the prover doesn't require the scope to have
             // a longer lifetime
-            let prover = unsafe { transmute(prover) };
+            let provers = unsafe { transmute(provers) };
 
-            scopes.last().unwrap().check_block(prover, func.block, 0)
+            scopes.last().unwrap().check_block(provers, func.block, 0)
         };
 
         drop(_ret_ident);
@@ -483,30 +523,30 @@ impl<'a> TopLevelScope<'a> {
         // `scopes` and `empty`. The reason it's safe to extend the lifetime is because the
         // generated errors don't reference the data *owned* by the two values in this scope, but
         // the things *they* reference.
-        unsafe { (base_prover, transmute(errors as Vec<Error>)) }
+        unsafe { (prover_set, transmute(errors as Vec<Error>)) }
     }
 }
 
 /// This macro primarily exists for thoroughly disrespecting the borrow-checker
 ///
-/// Throughout many of the functions below, we pass an `Option<&mut WrappedProver>` to allow proof
-/// to take place. Unfortunately, the borrowing rules mean that any usage of this type would amount
-/// to full consumption; there isn't any way to use it twice without unsafe blocks.
+/// Throughout many of the functions below, we pass an `Option<&mut ProverSet>` to allow proof to
+/// take place. Unfortunately, the borrowing rules mean that any usage of this type would amount to
+/// full consumption; there isn't any way to use it twice without unsafe blocks.
 ///
 /// So that's what this macro provides: "aliased" mutable references. Typically that would be UB in
 /// Rust -- it's one of the core assumptions that allows many optimizations. Here, it's expected
-/// that the caller understand that the prover MUST be used (consumed) immediately.
+/// that the caller understand that the provers MUST be used (consumed) immediately.
 ///
-/// This macro - in essence - provides two things: A variable `__raw_prover` that is instead as
-/// type `Option<*mut WrappedProver>`, and a separate `prover!` macro that gives short-lived access
-/// to that variable as a `Option<&mut WrappedProver>`, allowing callers to use it multiple times.
-macro_rules! split_prover {
-    ($prover:ident) => {
-        let __raw_prover = $prover.map(|p| p as *mut WrappedProver<'a>);
+/// This macro - in essence - provides two things: A variable `__raw_provers` that is instead as
+/// type `Option<*mut ProverSet>`, and a separate `provers!` macro that gives short-lived access to
+/// that variable as a `Option<&mut ProverSet>`, allowing callers to use it multiple times.
+macro_rules! split_provers {
+    ($provers:ident) => {
+        let __raw_provers = $provers.map(|p| p as *mut Provers<'a>);
 
-        macro_rules! prover {
+        macro_rules! provers {
             () => {
-                __raw_prover.map(|p| unsafe { &mut *p })
+                __raw_provers.map(|p| unsafe { &mut *p })
             };
         }
     };
@@ -537,7 +577,7 @@ impl<'a> Scope<'a> {
 
     /// Checks that the given type is an integer type (either `Int` or `UInt`), and returns a
     /// `TypeMismatch` error with no context if not.
-    fn integer_check(t: &Type<'a>, source: ast::Node<'a>) -> Option<Error<'a>> {
+    fn integer_check(t: &Type<'a>, source: Node<'a>) -> Option<Error<'a>> {
         // If the type was already poisoned, we won't return any error here - that would distract
         // from the *actual* error.
         if t == &Type::Int || t == &Type::UInt || t == &Type::Poisoned {
@@ -556,7 +596,7 @@ impl<'a> Scope<'a> {
 
     /// Checks that the given type is a boolean, returning a `TypeMismatch` error with no context
     /// if it is not.
-    fn bool_check(t: &Type<'a>, source: ast::Node<'a>) -> Option<Error<'a>> {
+    fn bool_check(t: &Type<'a>, source: Node<'a>) -> Option<Error<'a>> {
         // If the type was already poisoned, we won't return any error here - that would distract
         // from the *actual* error.
         match t {
@@ -574,20 +614,21 @@ impl<'a> Scope<'a> {
 
     fn check_bin_op_expr(
         &'a self,
-        prover: Option<&mut WrappedProver<'a>>,
+        provers: Option<&mut Provers<'a>>,
         lhs: &'a Expr<'a>,
         op: BinOp,
         rhs: &'a Expr<'a>,
         enclosing_expr: &'a Expr<'a>,
-    ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
+    ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
         use BinOp::{Add, And, Div, Eq, Ge, Gt, Le, Lt, Mul, Or, Sub};
 
-        split_prover!(prover);
+        let prover_size = provers.as_ref().map(|p| p.size()).unwrap_or(1);
+        split_provers!(provers);
 
         // The first thing we'll do is to check both sides of the expression
 
-        let (mut errors, lhs_ty, lhs_tmp_var, lhs_stop) = self.check_expr(prover!(), lhs);
-        let (rhs_errs, rhs_ty, rhs_tmp_var, rhs_stop) = self.check_expr(prover!(), rhs);
+        let (mut errors, lhs_ty, lhs_tmp_var, lhs_stop) = self.check_expr(provers!(), lhs);
+        let (rhs_errs, rhs_ty, rhs_tmp_var, rhs_stop) = self.check_expr(provers!(), rhs);
         errors.extend(rhs_errs);
 
         // And now we check the types, adding on any errors that we find
@@ -650,7 +691,7 @@ impl<'a> Scope<'a> {
         errors.extend(same_type_err);
 
         let out_tmp = if !has_type_errs && output_type == Type::Int || output_type == Type::UInt {
-            prover!().map(|p| unsafe { p.gen_new_tmp(enclosing_expr) })
+            provers!().map(|p| unsafe { p.gen_new_tmp(enclosing_expr) })
         } else {
             None
         };
@@ -658,7 +699,7 @@ impl<'a> Scope<'a> {
         // Finally, if the types and operator are compatible with doing so, we'll add definitions
         // into the prover in order to account for the basic arithmetic operations.
         if let (Some(p), Some(t), Some(lhs), Some(rhs)) =
-            (prover!(), out_tmp.clone(), lhs_tmp_var, rhs_tmp_var)
+            (provers!(), out_tmp.clone(), lhs_tmp_var, rhs_tmp_var)
         {
             use crate::proof::Expr::{Neg, Prod, Recip, Sum};
 
@@ -684,23 +725,28 @@ impl<'a> Scope<'a> {
             }
         }
 
+        let type_errs_mask = match has_type_errs {
+            true => Mask::all(prover_size),
+            false => Mask::none(prover_size),
+        };
+
         (
             errors,
             output_type,
             out_tmp,
-            lhs_stop || rhs_stop || has_type_errs,
+            lhs_stop | rhs_stop | type_errs_mask,
         )
     }
 
     fn check_prefix_op_expr(
         &'a self,
-        prover: Option<&mut WrappedProver<'a>>,
+        provers: Option<&mut Provers<'a>>,
         op: PrefixOp,
         rhs: &'a Expr<'a>,
-    ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
+    ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
         use PrefixOp::Not;
 
-        let (mut errors, typ, _tmp_var, stop_proof) = self.check_expr(prover, rhs);
+        let (mut errors, typ, _tmp_var, stop_proof) = self.check_expr(provers, rhs);
 
         let output_type = match op {
             // Boolean -> Boolean operators
@@ -721,19 +767,27 @@ impl<'a> Scope<'a> {
     /// user or temporary) corresponding to the expression, if it is available.
     fn check_expr(
         &'a self,
-        prover: Option<&mut WrappedProver<'a>>,
+        provers: Option<&mut Provers<'a>>,
         expr: &'a Expr<'a>,
-    ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
+    ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
         use ExprKind::{
             BinOp, Bracket, Empty, FieldAccess, FnCall, Malformed, Named, Num, PrefixOp, Struct,
         };
 
+        let prover_size = provers.as_ref().map(|p| p.size()).unwrap_or(1);
+
         match &expr.kind {
-            BinOp(lhs, op, rhs) => self.check_bin_op_expr(prover, lhs, *op, rhs, expr),
-            FnCall(fn_expr, args) => self.check_fn_call_expr(prover, fn_expr, args, expr),
-            Empty => (Vec::new(), types::empty_struct(), None, false),
-            Malformed => (Vec::new(), Type::Poisoned, None, false), // the error will have already been raised
-            Bracket(block) => self.check_block(prover, &block, 0),
+            BinOp(lhs, op, rhs) => self.check_bin_op_expr(provers, lhs, *op, rhs, expr),
+            FnCall(fn_expr, args) => self.check_fn_call_expr(provers, fn_expr, args, expr),
+            Empty => (
+                Vec::new(),
+                types::empty_struct(),
+                None,
+                Mask::none(prover_size),
+            ),
+            // the error will have already been raised
+            Malformed => (Vec::new(), Type::Poisoned, None, Mask::all(prover_size)),
+            Bracket(block) => self.check_block(provers, &block, 0),
             // (Overflows will be handled when the int is
             //  parsed? If the interpreter is going to parse
             //  from the AST then we can validate here for
@@ -744,7 +798,7 @@ impl<'a> Scope<'a> {
                     int::{Int, Rational},
                 };
 
-                let tmp = prover.map(|p| {
+                let tmp = provers.map(|p| {
                     let t = unsafe { p.gen_new_tmp(expr) };
                     p.define(
                         t.clone(),
@@ -756,11 +810,16 @@ impl<'a> Scope<'a> {
                     t
                 });
 
-                (Vec::new(), Type::Int, tmp, false) // Woo! No errors here!
+                (Vec::new(), Type::Int, tmp, Mask::none(prover_size)) // Woo! No errors here!
             }
-            PrefixOp(op, inner_expr) => self.check_prefix_op_expr(prover, *op, inner_expr),
+            PrefixOp(op, inner_expr) => self.check_prefix_op_expr(provers, *op, inner_expr),
             Named(name) => match self.get(name.name) {
-                Some(item) => (Vec::new(), item.typ.clone(), Some(name.clone()), false),
+                Some(item) => (
+                    Vec::new(),
+                    item.typ.clone(),
+                    Some(name.clone()),
+                    Mask::none(prover_size),
+                ),
                 None => (
                     vec![Error {
                         kind: error::Kind::VariableNotFound,
@@ -769,21 +828,22 @@ impl<'a> Scope<'a> {
                     }],
                     Type::Poisoned,
                     None,
-                    true,
+                    Mask::all(prover_size),
                 ),
             },
             // Note: Currently proof doesn't carry through struct fields
             Struct(fields) => {
-                split_prover!(prover);
+                split_provers!(provers);
 
                 let mut errors = Vec::new();
-                let mut stop_proof = false;
+                let mut mask = Mask::none(prover_size);
 
                 let field_types = fields
                     .iter()
                     .map(|(name, expr)| {
-                        let (expr_errors, typ, _tmp_ident, stop) = self.check_expr(prover!(), expr);
-                        stop_proof = stop_proof || stop;
+                        let (expr_errors, typ, _tmp_ident, new_mask) =
+                            self.check_expr(provers!(), expr);
+                        mask |= new_mask;
                         errors.extend(expr_errors);
 
                         types::StructField {
@@ -793,10 +853,11 @@ impl<'a> Scope<'a> {
                     })
                     .collect();
 
-                (errors, Type::Struct(field_types), None, stop_proof)
+                (errors, Type::Struct(field_types), None, mask)
             }
             FieldAccess(expr, field_ident) => {
-                let (mut errors, expr_type, _tmp_ident, stop_proof) = self.check_expr(prover, expr);
+                let (mut errors, expr_type, _tmp_ident, stop_proof) =
+                    self.check_expr(provers, expr);
                 let fields = match &expr_type {
                     Type::Struct(fields) => fields,
                     _ => {
@@ -827,18 +888,20 @@ impl<'a> Scope<'a> {
     /// Checks that the given function-call is valid
     ///
     /// Returns a few things: (1) any errors, (2) the return type of the function, (3) the name of
-    /// the temporary variable given to that return, if applicable, and (4) whether any errors were
-    /// so significant as to warrant forgoing any further proof checking.
+    /// the temporary variable given to that return, if applicable, and (4) a mask over the set of
+    /// provers to stop them if there were any errors so significant as to warrant stopping proof
     #[rustfmt::skip]
     fn check_fn_call_expr(
         &'a self,
-        prover: Option<&mut WrappedProver<'a>>,
+        provers: Option<&mut Provers<'a>>,
         fn_expr: &'a Expr<'a>,
         args: &'a FnArgs<'a>,
         enclosing_expr: &'a Expr<'a>,
-    ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
+    ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
         use error::Context::{Expr as ExprCtx, FnArg as FnArgCtx};
         use error::Kind::{FunctionMustBeName, FunctionNotFound, IncorrectNumberOfArgs, FailedProofs, TypeMismatch};
+
+        let prover_size = provers.as_ref().map(|p| p.size()).unwrap_or(1);
 
         // The source for the first few errors. This is here so that we can slightly reduce the
         // visual noise from error handling
@@ -851,7 +914,7 @@ impl<'a> Scope<'a> {
                 vec![Error { kind: FunctionMustBeName, context: ExprCtx, source }],
                 Type::Poisoned,
                 None,
-                true,
+                Mask::all(prover_size),
             )
         };
 
@@ -859,12 +922,12 @@ impl<'a> Scope<'a> {
         let func = match self.get_fn(name) {
             Some(Ok(f)) => f,
             // If there's a conflict, we'll simply return - we can't make meaningful errors here
-            Some(Err(_)) => return (Vec::new(), Type::Poisoned, None, true),
+            Some(Err(_)) => return (Vec::new(), Type::Poisoned, None, Mask::all(prover_size)),
             None => return (
                 vec![Error { kind: FunctionNotFound { name }, context: ExprCtx, source }],
                 Type::Poisoned,
                 None,
-                true,
+                Mask::all(prover_size),
             )
         };
 
@@ -877,17 +940,17 @@ impl<'a> Scope<'a> {
                         func,
                     },
                     context: ExprCtx,
-                    source: ast::Node::Args(&args),
+                    source: Node::Args(&args),
                 }],
                 Type::Poisoned,
                 None,
-                true,
+                Mask::all(prover_size),
             );
         }
 
         let mut errors = Vec::new();
-        let mut stop_proof = false;
-        split_prover!(prover);
+        let mut mask = Mask::none(prover_size);
+        split_provers!(provers);
 
         // 4. Produce a list of the current name + type for each argument, along with checking that
         //    they produce the correct types
@@ -897,17 +960,18 @@ impl<'a> Scope<'a> {
             .iter()
             .enumerate()
             .map(|(i, arg)| {
-                let (arg_errs, arg_type, tmp_ident, stop) = self.check_expr(prover!(), arg);
+                let (arg_errs, arg_type, tmp_ident, new_mask) = self.check_expr(provers!(), arg);
                 errors.extend(arg_errs);
-                stop_proof = stop_proof || stop;
+                mask |= new_mask;
 
                 if arg_type.is_poisoned() {
-                    // There's a type error in something that produced this expression, so we'll
-                    stop_proof = true;
+                    // There's a type error in something that produced this expression, so there's
+                    // no point in trying to do proof
+                    mask = Mask::all(prover_size);
                 } else if &arg_type != func.params[i].1 {
                     // If there's a type error, we can't guarantee anything about proof beyond this
                     // point in the function
-                    stop_proof = true;
+                    mask = Mask::all(prover_size);
 
                     errors.push(Error {
                         kind: TypeMismatch {
@@ -926,7 +990,7 @@ impl<'a> Scope<'a> {
         // 5. Generate a temp variable for later use, because we'll need to add it to `subs`
         //
         // We only generate an output variable if the return type is an integer
-        let output_tmp_var = if let Some(p) = prover!() {
+        let output_tmp_var = if let Some(p) = provers!() {
             match func.ret.typ {
                 Type::Int | Type::UInt => Some(unsafe { p.gen_new_tmp(enclosing_expr) }),
                 _ => None,
@@ -935,7 +999,7 @@ impl<'a> Scope<'a> {
 
         // 6. If it still makes sense to, try to prove whatever requirements might exist.
         if func.reqs.is_none() {
-            stop_proof = true;
+            mask = Mask::all(prover_size);
         }
 
         let mut subs = func.params.iter().zip(cons_args.iter()).filter_map(|((x, _), (with, _))| {
@@ -951,19 +1015,29 @@ impl<'a> Scope<'a> {
 
         let subs = subs.iter().map(|(x, with)| (x, with)).collect::<Vec<_>>();
 
+        // All/any of the proof statments that are strictly required to call this function.
         let mut failed_reqs: Vec<(ProofResult, Requirement)> = Vec::new();
-        if let (false, Some(p), Some(reqs)) = (stop_proof, prover!(), func.reqs.as_ref()) {
+        if let (Some(p), Some(reqs)) = (provers!(), func.reqs.as_ref()) {
+            // The "base prover" -- the one with no assumptions - is given to be index 0, because
+            // of how we originally construct it. We only actually want to prove that it's true
+            // with this one, because (1) it'll then be true for all the others and (2) the others
+            // will most likely just have duplicate error messages
+            let base_prover = &p[0];
+
+
             // Try to prove all of the requirements
             for req in reqs {
                 let req = req.substitute_all(&subs);
-                let res = p.prove(&req);
+                let res = base_prover.prove(&req);
                 if res != ProofResult::True {
                     failed_reqs.push((res, req));
                 }
             }
         }
+        
+        let did_fail = !failed_reqs.is_empty();
 
-        if !failed_reqs.is_empty() {
+        if did_fail {
             errors.push(Error {
                 kind: FailedProofs {
                     failed: failed_reqs,
@@ -980,44 +1054,47 @@ impl<'a> Scope<'a> {
         //   (b) Check all contracts, and apply them if they are valid
 
         if func.contracts.is_none() {
-            stop_proof = true;
+            mask = Mask::all(prover_size);
         }
 
-        if let (false, Some(p), Some(contracts)) = (stop_proof, prover!(), func.contracts.as_ref()) {
-            let addition = contracts.iter().filter_map(|(pre, post)| {
-                match pre {
-                    // It's worth noting that the substitution of the return variable is included
-                    // in `subs`, so the post-conditions are translated into the current set of
-                    // temporary variables
-                    Some(req) => match p.prove(&req.substitute_all(&subs)) {
-                        ProofResult::True => Some(post.substitute_all(&subs)),
-                        _ => None,
+        if let (true, Some(ps), Some(contracts)) = (did_fail, provers!(), func.contracts.as_ref()) {
+            for p in ps.iter_mut() {
+                let additions = contracts.iter().map(|c| {
+                    // If all of the precondition requirements have been proven true, we're guaranteed
+                    // all of the postconditions
+                    if c.pre.iter().all(|req| p.prove(&req.substitute_all(&subs)) == ProofResult::True) {
+                        // It's worth noting that the substitution of the return variable is included
+                        // in `subs`, so the post-conditions are translated into the current set of
+                        // temporary variables
+                        c.post.iter().map(|req| req.substitute_all(&subs)).collect()
+                    } else {
+                        Vec::new()
                     }
-                    None => Some(post.substitute_all(&subs)),
-                }
-            }).collect::<Vec<_>>();
+                }).flatten().collect::<Vec<_>>();
 
-            p.add_reqs(addition);
+                p.add_reqs(additions);
+            }
         }
 
         // And we're done!
 
-        (errors, func.ret.typ.clone(), output_tmp_var, stop_proof)
+        (errors, func.ret.typ.clone(), output_tmp_var, mask)
     }
 
     /// Checks an assignment operation, returning any errors encountered and whether any were so
     /// significant as to warrant forgoing further proof checking.
     fn check_assign(
         &'a self,
-        prover: Option<&mut WrappedProver<'a>>,
+        provers: Option<&mut Provers<'a>>,
         ident: &'a Ident<'a>,
         expr: &'a Expr<'a>,
-    ) -> (Vec<Error<'a>>, bool) {
-        split_prover!(prover);
+    ) -> (Vec<Error<'a>>, Mask) {
+        let prover_size = provers.as_ref().map(|p| p.size()).unwrap_or(1);
+        split_provers!(provers);
 
-        let (mut errors, expr_type, tmp_ident, expr_stop_proof) = self.check_expr(prover!(), expr);
+        let (mut errors, expr_type, tmp_ident, expr_mask) = self.check_expr(provers!(), expr);
 
-        let stop_proof = match self.get(ident.name) {
+        let mask = match self.get(ident.name) {
             Some(item) if item.typ != expr_type => {
                 errors.push(Error {
                     kind: error::Kind::TypeMismatch {
@@ -1027,20 +1104,20 @@ impl<'a> Scope<'a> {
                     context: error::Context::Assign,
                     source: ident.node(),
                 });
-                true
+                Mask::all(prover_size)
             }
-            Some(_) => match (prover!(), tmp_ident) {
+            Some(_) => match (provers!(), tmp_ident) {
                 (Some(p), Some(id)) => {
                     p.define(ident.clone(), id.into());
-                    false
+                    Mask::none(prover_size)
                 }
                 // If we aren't given anything to reference due to the assignment, we want to be
                 // sure that this value *is* properly overwritten, so we shadow it.
                 (Some(p), None) => {
                     p.shadow(ident.clone());
-                    false
+                    Mask::none(prover_size)
                 }
-                _ => false,
+                _ => Mask::none(prover_size),
             },
             None => {
                 errors.push(Error {
@@ -1048,54 +1125,50 @@ impl<'a> Scope<'a> {
                     context: error::Context::Assign,
                     source: ident.node(),
                 });
-                true
+                Mask::all(prover_size)
             }
         };
 
-        (errors, expr_stop_proof || stop_proof)
+        (errors, expr_mask | mask)
     }
 
     /// Checks that the given block is valid within its scope
     fn check_block(
         &'a self,
-        prover: Option<&mut WrappedProver<'a>>,
+        provers: Option<&mut Provers<'a>>,
         block: &'a Block<'a>,
         start: usize,
-    ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, bool) {
+    ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
         use StmtKind::{Assign, Eval, Let, Print};
 
-        split_prover!(prover);
+        let prover_size = provers.as_ref().map(|p| p.size()).unwrap_or(1);
+        split_provers!(provers);
 
         let mut errors: Vec<Error> = Vec::new();
-        let mut stop_proof = false;
+        let mut mask = Mask::none(prover_size);
 
         // Check the statements from `start`
         for idx in start..block.body.len() {
             let stmt = &block.body[idx];
 
-            let prover = move || match stop_proof {
-                true => None,
-                false => prover!(),
-            };
-
             match &stmt.kind {
                 Eval(expr) | Print(expr) => {
-                    let (errs, _typ, _tmp_var, stop) = self.check_expr(prover(), expr);
+                    let (errs, _typ, _tmp_var, expr_mask) = self.check_expr(provers!(), expr);
                     errors.extend(errs);
-                    stop_proof = stop || stop_proof;
+                    mask |= expr_mask;
                 }
                 Assign(name, expr) => {
-                    let (errs, stop) = self.check_assign(prover(), name, expr);
+                    let (errs, ass_mask) = self.check_assign(provers!(), name, expr);
                     errors.extend(errs);
-                    stop_proof = stop || stop_proof;
+                    mask |= ass_mask;
                 }
 
                 Let(name, expr) => {
-                    let (errs, typ, tmp_var, stop) = self.check_expr(prover(), expr);
+                    let (errs, typ, tmp_var, let_mask) = self.check_expr(provers!(), expr);
                     errors.extend(errs);
-                    stop_proof = stop || stop_proof;
+                    mask |= let_mask;
 
-                    if let (Some(p), false) = (prover(), stop_proof) {
+                    if let Some(p) = provers!() {
                         if let (Some(t), true) = (tmp_var, typ == Type::Int || typ == Type::UInt) {
                             p.define(name.clone(), t.into());
                         } else {
@@ -1110,15 +1183,13 @@ impl<'a> Scope<'a> {
                     });
 
                     // Check the remainder of this block with the new scope, then return.
-                    let prover = match stop_proof {
-                        true => None,
-                        // The transmute here is in order to artifically reduce the lifetime of
-                        // `prover`
-                        false => unsafe { transmute(prover()) },
-                    };
+                    //
+                    // The transmute here is in order to artifically reduce the lifetime of
+                    // `provers`
+                    let provers = unsafe { transmute(provers!()) };
 
-                    let (mut errs, end_type, end_tmp_var, stop) =
-                        new_scope.check_block(prover, block, idx + 1);
+                    let (mut errs, end_type, end_tmp_var, end_mask) =
+                        new_scope.check_block(provers, block, idx + 1);
 
                     // We reverse the errors here because otherwise there'd be an (erroneous)
                     // borrow-checker conflict on the final return in this function -- outside of
@@ -1129,14 +1200,15 @@ impl<'a> Scope<'a> {
                     let end_type: Type<'a> = unsafe { transmute(end_type) };
                     let end_tmp_var: Option<Ident<'a>> = unsafe { transmute(end_tmp_var) };
 
-                    return (errs, end_type, end_tmp_var, stop || stop_proof);
+                    return (errs, end_type, end_tmp_var, mask | end_mask);
                 }
             }
         }
 
-        let (tail_errors, tail_type, tail_tmp_var, stop) = self.check_expr(prover!(), &block.tail);
+        let (tail_errors, tail_type, tail_tmp_var, expr_mask) =
+            self.check_expr(provers!(), &block.tail);
         errors.extend(tail_errors);
 
-        (errors, tail_type, tail_tmp_var, stop || stop_proof)
+        (errors, tail_type, tail_tmp_var, mask | expr_mask)
     }
 }

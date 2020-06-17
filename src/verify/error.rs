@@ -538,7 +538,7 @@ impl Error<'_> {
         // writeln!
         let (context_lines, spacing) =
             Error::context_lines_and_spacing(source, file_str, file_name);
-        write!(msg, "{}", context_lines);
+        write!(msg, "{}", context_lines).unwrap();
 
         // The line that says:
         // ```
