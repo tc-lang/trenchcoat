@@ -1053,7 +1053,7 @@ impl<'a> Scope<'a> {
             mask = Mask::all(provers.size());
         }
 
-        if let (true, Some(contracts)) = (did_fail, func.contracts.as_ref()) {
+        if let (false, Some(contracts)) = (did_fail, func.contracts.as_ref()) {
             let mut reqs = vec![Vec::new(); provers.size()];
 
             for c in contracts.iter() {
