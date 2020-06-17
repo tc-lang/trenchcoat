@@ -661,7 +661,7 @@ impl Error<'_> {
     ) -> String {
         // This error message looks something like:
         // ```
-        // error: contract is not upheld for function `foo`
+        // error: proof contract is not upheld for function `foo`
         //   --> src/main.tc:10:13
         //   --> src/main.tc:35:19
         //    |
@@ -696,7 +696,7 @@ impl Error<'_> {
         };
 
         let mut msg = format!(
-            "{}: contract is not upheld for function `{}`\n",
+            "{}: proof contract is not upheld for function `{}`\n",
             Red.paint("error"),
             fn_name
         );
