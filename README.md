@@ -26,7 +26,7 @@ prover. As such, there are expected failures. These tests can be found in
 Much more information is available about the various pieces of this project:
 * [Project structure & overview](writeups/project-structure.md)
 * Provers:
-  * [Overview](writeups/proof-overview.ms)
+  * [Overview](writeups/proof-overview.md)
   * [Bound method in-depth](writeups/bound-method.md)
   * [Graph method in-depth](writeups/graph-method.md)
 
