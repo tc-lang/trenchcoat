@@ -47,6 +47,7 @@ pub struct WrappedProver<'a> {
 /// A wrapper type for maintaining multiple different sets of proofs at the same time
 pub struct Provers<'a> {
     provers: Vec<ProverSetItem<'a>>,
+    mask: Mask,
 }
 
 /// A single item in a prover set
@@ -71,11 +72,13 @@ pub struct ProverSetItem<'a> {
     pub post_source: Option<Node<'a>>,
 }
 
+#[derive(Debug, Clone)]
 pub struct Mask {
     size: usize,
     repr: MaskType,
 }
 
+#[derive(Debug, Clone)]
 enum MaskType {
     All,
     Nothing,
@@ -274,7 +277,18 @@ impl<'a> Provers<'a> {
     pub fn new(items: Vec<ProverSetItem<'a>>) -> Self {
         assert!(!items.is_empty());
 
-        Provers { provers: items }
+        Provers {
+            mask: Mask::none(items.len()),
+            provers: items,
+        }
+    }
+
+    pub fn get_mask(&self) -> Mask {
+        self.mask.clone()
+    }
+
+    pub fn mask_mut(&mut self) -> &mut Mask {
+        &mut self.mask
     }
 
     /// Returns the number of provers stored
@@ -286,11 +300,11 @@ impl<'a> Provers<'a> {
     /// each of the results.
     ///
     /// The mask allows individual provers to be ignored - their values in the vector will b e
-    pub fn prove(&self, req: &'a Requirement<'a>, mask: &Mask) -> Vec<ProofResult> {
+    pub fn prove(&self, req: &'a Requirement<'a>) -> Vec<ProofResult> {
         self.provers
             .iter()
             .enumerate()
-            .map(|(i, p)| match mask.allows(i) {
+            .map(|(i, p)| match self.mask.allows(i) {
                 true => p.prove(req),
                 false => ProofResult::True,
             })
