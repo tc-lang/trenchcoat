@@ -143,6 +143,7 @@ kwd! {
     "print" => Print,
     "return" => Return,
     "require" => Require,
+    "lemma" => Lemma,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -161,6 +162,8 @@ pub enum Oper {
     Not,
     RightArrow,
     Implies,
+    LongImplies,
+    LongImpliedBy,
     Or,
     And,
 }
@@ -183,6 +186,8 @@ impl Oper {
             "!" => Some(Not),
             "->" => Some(RightArrow),
             "=>" => Some(Implies),
+            "==>" => Some(LongImplies),
+            "<==" => Some(LongImpliedBy),
             "||" => Some(Or),
             "&&" => Some(And),
             _ => None,
@@ -210,6 +215,7 @@ impl Oper {
         match self {
             Add | Sub | Star | Div | Ref | Assign | Lt | Gt | Not => 1,
             Equals | LtOrEqual | GtOrEqual | RightArrow | Implies | Or | And => 2,
+            LongImplies | LongImpliedBy => 3,
         }
     }
 }

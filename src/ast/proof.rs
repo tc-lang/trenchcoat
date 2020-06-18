@@ -1,7 +1,7 @@
 //! Parsing for proof statements
 
 use crate::ast::{Error, ErrorContext, ErrorKind, Ident, IdentSource, Node, ParseRet};
-use crate::tokens::{self, Oper, Token, TokenKind};
+use crate::tokens::{self, split_at_commas, Oper, Token, TokenKind};
 use std::convert::{TryFrom, TryInto};
 
 /// Consumes all given lines of proof
@@ -85,6 +85,25 @@ pub enum StmtKind<'a> {
 
         /// The post-condition
         post: Condition<'a>,
+    },
+
+    /// Represents a 'lemma' statement.
+    /// These either have the form
+    /// * `# lemma <stmt>` (an unproven lemma),
+    /// * `# lemma <ps_1>, <ps_2>, ... ==> <stmt>`
+    /// * `# lemma <stmt> <== <ps_1>, <ps_2>, ...`
+    ///
+    /// A lemma statement adds `<stmt>` to the list of requirements that the main prover can use.
+    ///
+    /// The statement must be proven though. In the case of an unproven lemma, it is proved using
+    /// all the requirements; in the case of a lemma with proof statements (ps_1, ps_2, ...), these
+    /// are proven using the main prover and then a more advancced prover can use only those
+    /// requirements to prove `<stmt>`.
+    Lemma {
+        /// The lemma statement (<stmt>)
+        stmt: Condition<'a>,
+        /// The proof statements (ps_1, ps_2, ...), None for an unproven lemma.
+        proof: Option<Vec<Condition<'a>>>,
     },
 
     /// A sentinel value for signaling a failure to parse a statement, when we don't want to give a
@@ -284,6 +303,77 @@ impl<'a> Stmt<'a> {
         });
 
         Some(stmt_res)
+    }
+
+    /// Attempts to parse a 'lemma' statment from the entire given set of tokens
+    ///
+    /// A 'lemma' statement has one of the following forms:
+    /// * `# lemma <stmt>` (an unproven lemma),
+    /// * `# lemma <ps_1>, <ps_2>, ... ==> <stmt>`
+    /// * `# lemma <stmt> <== <ps_1>, <ps_2>, ...`
+    fn parse_lemma(source: &'a [Token<'a>]) -> Option<ParseRet<'a, Self>> {
+        use tokens::Keyword::Lemma;
+        use TokenKind::Keyword;
+
+        match &source.get(0)?.kind {
+            Keyword(Lemma) => (),
+            _ => return None,
+        }
+
+        let tokens = &source[1..];
+
+        let proof_statements;
+        let stmt;
+
+        if let Some(implies_idx) = tokens
+            .iter()
+            .position(|token| token.kind == TokenKind::Oper(Oper::LongImplies))
+        {
+            // <ps_1>, <ps_2>, ... ==> <stmt>
+            proof_statements = &tokens[..implies_idx];
+            stmt = &tokens[implies_idx + 1..];
+        } else if let Some(implied_idx) = tokens
+            .iter()
+            .position(|token| token.kind == TokenKind::Oper(Oper::LongImpliedBy))
+        {
+            // <stmt> <== <ps_1>, <ps_2>, ...
+            stmt = &tokens[..implied_idx];
+            proof_statements = &tokens[implied_idx + 1..];
+        } else {
+            // Unproven lamma; the tokens after 'lemma' is the lemma statement.
+            return Some(Condition::parse(tokens).map(|cond| Stmt {
+                kind: StmtKind::Lemma {
+                    stmt: cond,
+                    proof: None,
+                },
+                source: tokens,
+            }));
+        }
+
+        let mut errors = Vec::new();
+
+        // Parse each proof statement
+        let proof_statements = split_at_commas(proof_statements)
+            .iter()
+            .map(|stmt| Condition::parse(stmt));
+        // To hold the unwrapped proof statements
+        let mut proof = Vec::with_capacity(proof_statements.len());
+
+        // Unwrap each proof statement
+        for res in proof_statements {
+            proof.push(next_option!(res, errors));
+        }
+
+        // Parse the lemma statement
+        let stmt = next_option!(Condition::parse(stmt), errors);
+
+        Some(ParseRet::with_soft_errs(Stmt {
+            kind: StmtKind::Lemma {
+                stmt,
+                proof: Some(proof),
+            },
+            source,
+        }, errors))
     }
 
     /// Attempts to parse a contract statement from the entire set of tokens
