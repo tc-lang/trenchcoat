@@ -1097,7 +1097,7 @@ impl<'a> Stmt<'a> {
 
         // 4. Expr ";"
         let expr = next_option!(
-            Stmt::parse_terminated_expr(&tokens[3..]).unwrap_or_else(|| {
+            Stmt::parse_terminated_expr(&tokens[3..], false).unwrap_or_else(|| {
                 ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingExpr,
                     context: ErrorContext::LetExpr,
@@ -1144,7 +1144,7 @@ impl<'a> Stmt<'a> {
 
         let mut errors = Vec::new();
         let expr = next_option!(
-            Stmt::parse_terminated_expr(&tokens[1..]).unwrap_or_else(|| {
+            Stmt::parse_terminated_expr(&tokens[1..], false).unwrap_or_else(|| {
                 ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingExpr,
                     context: PrintExpr,
@@ -1208,7 +1208,7 @@ impl<'a> Stmt<'a> {
 
         // 3. Expr ";"
         let expr = next_option!(
-            Stmt::parse_terminated_expr(&tokens[2..]).unwrap_or_else(|| {
+            Stmt::parse_terminated_expr(&tokens[2..], false).unwrap_or_else(|| {
                 ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingExpr,
                     context: AssignExpr,
@@ -1274,7 +1274,7 @@ impl<'a> Stmt<'a> {
     fn parse_eval(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Self>> {
         use StmtKind::Eval;
 
-        Some(Stmt::parse_terminated_expr(tokens)?.map(|expr| {
+        Some(Stmt::parse_terminated_expr(tokens, true)?.map(|expr| {
             // +1 for it being terminated
             let consumed = expr.consumed() + 1;
             Stmt {
@@ -1287,7 +1287,10 @@ impl<'a> Stmt<'a> {
     /// Extracts a semicolon-terminated expression from a subset of the given tokens, returning the
     /// expression. The number of consumed tokens will always be equal to the number consumed by
     /// the expression, plus one.
-    fn parse_terminated_expr(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
+    fn parse_terminated_expr(
+        tokens: &'a [Token<'a>],
+        allow_empty: bool,
+    ) -> Option<ParseRet<'a, Expr<'a>>> {
         use tokens::{Punc::Sep, TokenKind::Punc};
 
         let sep_idx = tokens
@@ -1296,7 +1299,7 @@ impl<'a> Stmt<'a> {
             .find(|(_, t)| t.kind == Punc(Sep))
             .map(|(i, _)| i)?;
 
-        Expr::parse(&tokens[..sep_idx], false).map(|ret| match ret {
+        Expr::parse(&tokens[..sep_idx], allow_empty).map(|ret| match ret {
             ParseRet::Ok(expr) => ParseRet::Ok(expr),
             ParseRet::SoftErr(expr, errs) => ParseRet::SoftErr(
                 expr,
