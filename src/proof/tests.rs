@@ -49,7 +49,8 @@ macro_rules! requirements {
         $(
             let tokens = tokenize($strings);
             let cond = Condition::parse(&tokens).unwrap();
-            $reqs.push(Requirement::from(&cond));
+            let reqs: Vec<Requirement> = (&cond).into();
+            $reqs.extend(reqs);
         )*
     };
 
@@ -65,22 +66,24 @@ macro_rules! requirements {
             ($stmt:expr => $expected:expr) => {
                 let tokens = tokenize($stmt);
                 let cond = Condition::parse(&tokens).unwrap();
-                let req = Requirement::from(&cond);
-                if ONLY_TEST.map(|r| r == $expected).unwrap_or(true) {
-                    let result = $prover.prove(&req);
-                    if result != $expected {
-                        errors.push((false, $stmt, result, $expected));
+                let reqs: Vec<Requirement> = (&cond).into();
+                for req in reqs {
+                    if ONLY_TEST.map(|r| r == $expected).unwrap_or(true) {
+                        let result = $prover.prove(&req);
+                        if result != $expected {
+                            errors.push((false, $stmt, result, $expected));
+                        }
                     }
-                }
-                // Also try to prove the contra-positive.
-                // If the result is Undetermined, both these proof attempts will be worse case.
-                // If the result is True/False, the other will be the opposite so at least 1 worst case
-                // optimiser run will occur. This therefore slows tests down by quite a bit.
-                if ONLY_TEST.map(|r| r == !$expected).unwrap_or(true) {
-                    let contra_req = req.contra_positive();
-                    let contra_result = $prover.prove(&contra_req);
-                    if contra_result != !$expected {
-                        errors.push((true, $stmt, contra_result, !$expected));
+                    // Also try to prove the contra-positive.
+                    // If the result is Undetermined, both these proof attempts will be worse case.
+                    // If the result is True/False, the other will be the opposite so at least 1 worst case
+                    // optimiser run will occur. This therefore slows tests down by quite a bit.
+                    if ONLY_TEST.map(|r| r == !$expected).unwrap_or(true) {
+                        let contra_req = req.contra_positive();
+                        let contra_result = $prover.prove(&contra_req);
+                        if contra_result != !$expected {
+                            errors.push((true, $stmt, contra_result, !$expected));
+                        }
                     }
                 }
             };
@@ -110,31 +113,6 @@ fn budget(n: usize) -> usize {
     //(0_usize.leading_zeros()-(n+1).saturating_pow(8).leading_zeros()) as usize + (n/8).min(16)
     //(0_usize.leading_zeros()-(n+1).saturating_pow(4).leading_zeros()) as usize + n
     2 * n
-}
-
-#[test]
-fn contra_positive_test() {
-    let tokens = tokenize("a >= z");
-    let cond = Condition::parse(&tokens).unwrap();
-    let req = Requirement::from(&cond);
-    //   ¬(a >= z)
-    // ==> a < z
-    // ==> a+1 <= z
-    assert_eq!(
-        format!("{}", req.contra_positive().simplify()),
-        "a + 1 <= z"
-    );
-
-    let tokens = tokenize("a <= z");
-    let cond = Condition::parse(&tokens).unwrap();
-    let req = Requirement::from(&cond);
-    //   ¬(a <= z)
-    // ==> a > z
-    // ==> a-1 >= z
-    assert_eq!(
-        format!("{}", req.contra_positive().simplify()),
-        "-(1) + a >= z"
-    );
 }
 
 #[test]

@@ -5,7 +5,7 @@
 //! without error.
 
 mod bound;
-mod bound_group;
+//mod bound_group;
 //pub mod bound_method;
 pub mod expr;
 pub mod fast_bound_method;
@@ -74,16 +74,16 @@ impl<'a> Requirement<'a> {
 
     /// Returns the bounds on `name` given by self.
     /// If no bounds are given or if they cannot be computed, None is returned.
-    pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
-        self.relation.bounds_on(name)
-    }
+    //pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
+    //    self.relation.bounds_on(name)
+    //}
 
     /// Returns bounds specified by self.
     /// The tuple contains the variable the bound is on and the bound itself.
     /// It may not return all bounds since some bounds cannot yet be calculated.
-    fn bounds(&self) -> Vec<DescriptiveBound<'a>> {
-        self.relation.bounds()
-    }
+    //fn bounds(&self) -> Vec<DescriptiveBound<'a>> {
+    //    self.relation.bounds()
+    //}
 
     fn as_relation<'b>(&'b self) -> &'b Relation<'a> {
         &self.relation
@@ -181,7 +181,7 @@ pub trait SimpleProver<'a> {
     /// hopefully capable of proving more.
     ///
     /// The default behaviour is to just use self.prove
-    fn lemma_prove(&self, proposition: &Requirement<'a>) -> ProofResult {
+    fn prove_lemma(&self, proposition: &Requirement<'a>) -> ProofResult {
         self.prove(proposition)
     }
 }
@@ -197,7 +197,7 @@ pub trait Prover<'a> {
     /// hopefully capable of proving more.
     ///
     /// The default behaviour is to just use self.prove
-    fn lemma_prove(&self, req: &Requirement<'a>) -> ProofResult {
+    fn prove_lemma(&self, req: &Requirement<'a>) -> ProofResult {
         self.prove(req)
     }
 
@@ -233,7 +233,7 @@ impl<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> SimpleProver<'a>
     for JointSimpleProver<'a, P, LP>
 {
     fn new(reqs: Vec<Requirement<'a>>) -> Self {
-        // TODO We could lazily generate provers (since lemma_prover isn't going to be used in
+        // TODO We could lazily generate provers (since prove_lemma isn't going to be used in
         // quite a few cases). This probably isn't super worthwhile because creating a bound prover
         // is pretty cheap.
         JointSimpleProver {
@@ -248,8 +248,8 @@ impl<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> SimpleProver<'a>
         self.prover.prove(prop)
     }
 
-    fn lemma_prove(&self, prop: &Requirement<'a>) -> ProofResult {
-        self.lemma_prover.lemma_prove(prop)
+    fn prove_lemma(&self, prop: &Requirement<'a>) -> ProofResult {
+        self.lemma_prover.prove_lemma(prop)
     }
 }
 
@@ -300,15 +300,15 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
         }
     }
 
-    fn lemma_prove(&self, req: &Requirement<'a>) -> ProofResult {
+    fn prove_lemma(&self, req: &Requirement<'a>) -> ProofResult {
         use ScopedSimpleProver::{Defn, Root, Shadow};
         match self {
-            Root(prover) => prover.lemma_prove(req),
+            Root(prover) => prover.prove_lemma(req),
             Defn {
                 ref x,
                 expr,
                 parent,
-            } => parent.lemma_prove(&req.substitute(x, expr)),
+            } => parent.prove_lemma(&req.substitute(x, expr)),
             Shadow { ref x, parent } => {
                 // If the requirement to be proven requires something of x, then we can't prove it
                 // since we know nothing about x!
@@ -316,7 +316,7 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
                 if req.variables().contains(x) {
                     ProofResult::Undetermined
                 } else {
-                    parent.lemma_prove(req)
+                    parent.prove_lemma(req)
                 }
             }
         }

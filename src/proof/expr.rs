@@ -791,14 +791,14 @@ impl<'b, 'a: 'b> Expr<'a> {
     }
 
     /// Returns an i8 with the same sign as the expression or None if this can't be determined.
-    pub fn sign(&self) -> Option<i8> {
+    pub fn sign(&self, named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy) -> Option<i8> {
         match self {
-            Expr::Neg(inner) => Some(-inner.sign()?),
-            Expr::Recip(inner, _) => Some(inner.sign()?),
+            Expr::Neg(inner) => Some(-inner.sign(named_sign)?),
+            Expr::Recip(inner, _) => Some(inner.sign(named_sign)?),
 
             Expr::Prod(terms) => terms
                 .iter()
-                .map(Expr::sign)
+                .map(|term| term.sign(named_sign))
                 .fold(Some(1), |sign, term_sign| Some(sign? * term_sign?)),
 
             // 0 signs do not effect the sign of a sum.
@@ -807,7 +807,7 @@ impl<'b, 'a: 'b> Expr<'a> {
             Expr::Sum(terms) => {
                 terms
                     .iter()
-                    .map(Expr::sign)
+                    .map(|term| term.sign(named_sign))
                     .fold(Some(0), |sign, term_sign| match (sign?, term_sign?) {
                         (0, term_sign) => Some(term_sign),
                         (1, 1) => Some(1),
@@ -817,8 +817,7 @@ impl<'b, 'a: 'b> Expr<'a> {
             }
 
             Expr::Atom(Atom::Literal(x)) => Some(x.sign_i8()),
-            // TODO Add hooks for determining the sign of variables
-            Expr::Atom(Atom::Named(_)) => None,
+            Expr::Atom(Atom::Named(x)) => named_sign(x),
         }
     }
 }
@@ -907,8 +906,14 @@ impl<'a> PrettyFormat<'a> for Expr<'a> {
         use Expr::{Atom, Neg, Prod, Recip, Sum};
         match self {
             Atom(atom) => atom.pretty_format(f, file_str),
-            Neg(expr) => write!(f, "-({})", expr.pretty(file_str)),
-            Recip(expr, _) => write!(f, "1/({})", expr.pretty(file_str)),
+            Neg(expr) => match &**expr {
+                Sum(_) => write!(f, "-({})", expr.pretty(file_str)),
+                _ => write!(f, "-{}", expr.pretty(file_str)),
+            },
+            Recip(expr, _) => match &**expr {
+                Atom(_) => write!(f, "1/{}", expr.pretty(file_str)),
+                _ => write!(f, "1/({})", expr.pretty(file_str)),
+            },
             Sum(terms) => write!(
                 f,
                 "{}",

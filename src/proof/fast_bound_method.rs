@@ -16,7 +16,7 @@ pub struct Prover<'a, Opt: Options> {
 pub fn default_budget(n: usize) -> isize {
     let ni = n as isize;
     // There's a bit of maths behind this, but not loads. Feel free to change it.
-    ni * ni + ni + 1
+    ni * ni + ni + 1 + 10000000
 }
 
 impl<'a, Opt: Options> SimpleProver<'a> for Prover<'a, Opt> {

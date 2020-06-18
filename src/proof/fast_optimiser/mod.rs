@@ -4,7 +4,7 @@ use self::options::Options;
 use super::ast::Ident;
 use super::bound::{bounds_on_ge0, Bound, DescriptiveBound, Relation, RelationKind};
 use super::expr::{self, Atom, Expr};
-use super::int::{Int, Rational};
+use super::int::Int;
 use std::iter::Iterator;
 
 // TODO These types can probably be created with a macro to remove duplication.
@@ -27,6 +27,8 @@ const LAZY_GENERATE_CHILDREN: bool = true;
 const BFS: bool = false;
 /// If true, only make substitutions that don't increase the number of variables.
 // TODO const NO_MORE_VARIABLES: bool = false;
+/// WIP
+const TRIVIAL_SIGN_LIMIT: usize = 0;
 
 const TRY_NO_SUB: bool = NO_SUB_FIRST || NO_SUB_LAST;
 
@@ -241,15 +243,18 @@ impl<'a, Opt: Options> Maximizer<'a, Opt> {
 /// This is so that if this is passed to a child optimiser, the next requirement checked will be
 /// the one after the one that has just been substituted (possibly reducing the number of failed
 /// rearrangements).
-fn ge0_sub_and_exclude<'a, Opt: Options>(
+fn ge0_sub_and_exclude<'a, Opt: Options, NS: Fn(&Ident) -> Option<i8> + Copy>(
     ge0s: &[Expr<'a>],
     exclude: usize,
     sub: &DescriptiveBound<'a>,
+    named_sign: NS,
 ) -> Vec<Expr<'a>> {
     ge0s[exclude + 1..]
         .iter()
         .chain(ge0s[..exclude].iter())
-        .map(|expr| Maximizer::<Opt>::sub_bound(expr, sub).unwrap_or_else(|| expr.clone()))
+        .map(|expr| {
+            Maximizer::<Opt>::sub_bound(expr, sub, named_sign).unwrap_or_else(|| expr.clone())
+        })
         .map(|expr| expr.simplify())
         .collect()
 }
@@ -257,6 +262,49 @@ fn ge0_sub_and_exclude<'a, Opt: Options>(
 // Methods on both Maximizer and Minimizer
 macro_rules! find_pg_group_fn {
     () => {
+        // THIS IS A WORK IN PROGRESS
+        fn trivial_sign(&self, x: &Ident, exclude: &[&Ident]) -> Option<i8> {
+            if exclude.len() >= TRIVIAL_SIGN_LIMIT {
+                return None;
+            }
+
+            let mut new_exclude_vec;
+            let new_exclude_arr;
+            let new_exclude;
+            if exclude.len() == 0 {
+                new_exclude_arr = [x];
+                new_exclude = &new_exclude_arr[..];
+            } else {
+                // FIXME This can be done without heap allocation
+                new_exclude_vec = Vec::with_capacity(TRIVIAL_SIGN_LIMIT);
+                new_exclude_vec.extend_from_slice(exclude);
+                new_exclude_vec.push(x);
+                new_exclude = &new_exclude_vec;
+            }
+            let named_sign = |y: &Ident| {
+                if new_exclude.contains(&y) {
+                    None
+                } else {
+                    self.trivial_sign(y, &new_exclude)
+                }
+            };
+            for ge0 in self.given_ge0.iter() {
+                match bounds_on_ge0(&ge0, x, named_sign) {
+                    //Some(Bound::Le(expr)) => match expr.sign(named_sign) {
+                    Some(Bound::Le(expr)) => match expr.sign(|_| None) {
+                        Some(-1) => return Some(-1),
+                        _ => (),
+                    },
+                    Some(Bound::Ge(expr)) => match expr.sign(|_| None) {
+                        Some(1) => return Some(1),
+                        _ => (),
+                    },
+                    None => (),
+                }
+            }
+            None
+        }
+
         fn find_permutation_group(&mut self) {
             self.permutation_group = self
                 .solving
@@ -268,10 +316,14 @@ macro_rules! find_pg_group_fn {
                         .enumerate()
                         .map(move |(idx, expr)| (idx, expr, var))
                         .filter_map(|(given_idx, expr, var)| {
-                            Some((given_idx, bounds_on_ge0(expr, var)?.simplify(), var))
+                            Some((
+                                given_idx,
+                                bounds_on_ge0(expr, var, |x| self.trivial_sign(x, &[]))?.simplify(),
+                                var,
+                            ))
                         })
                         .filter_map(|(given_idx, bound, var)| {
-                            Some((
+                            let rv = Some((
                                 var.clone(),
                                 bound.clone(),
                                 Self::sub_bound(
@@ -280,10 +332,12 @@ macro_rules! find_pg_group_fn {
                                         subject: var.clone(),
                                         bound,
                                     },
+                                    |x| self.trivial_sign(x, &[]),
                                 )?
                                 .simplify(),
                                 given_idx,
-                            ))
+                            ));
+                            rv
                         })
                 })
                 .next()
@@ -300,7 +354,9 @@ macro_rules! find_pg_group_fn {
                                     if !ge0.contains(&var) {
                                         return None;
                                     }
-                                    let bound = bounds_on_ge0(ge0, &var)?.simplify();
+                                    let bound =
+                                        bounds_on_ge0(ge0, &var, |x| self.trivial_sign(x, &[]))?
+                                            .simplify();
                                     if bound.relation_kind() == top_bound.relation_kind() {
                                         Some((
                                             bound.clone(),
@@ -310,6 +366,7 @@ macro_rules! find_pg_group_fn {
                                                     subject: var.clone(),
                                                     bound,
                                                 },
+                                                |x| self.trivial_sign(x, &[]),
                                             )?
                                             .simplify(),
                                             given_idx,
@@ -380,13 +437,14 @@ macro_rules! find_pg_group_fn {
                     //Child::Node(Box::new(Self::new(
                     Self::new(
                         to_solve.clone(),
-                        ge0_sub_and_exclude::<Opt>(
+                        ge0_sub_and_exclude::<Opt, _>(
                             &self.given_ge0,
                             *req_id,
                             &DescriptiveBound {
                                 subject: var.clone(),
                                 bound: bound.clone(),
                             },
+                            |x| self.trivial_sign(x, &[]),
                         ),
                         self.child_budget,
                         self.options.clone(),
@@ -427,13 +485,14 @@ macro_rules! find_pg_group_fn {
 
             self.children.push(Self::new(
                 to_solve.clone(),
-                ge0_sub_and_exclude::<Opt>(
+                ge0_sub_and_exclude::<Opt, _>(
                     &self.given_ge0,
                     *req_id,
                     &DescriptiveBound {
                         subject: var.clone(),
                         bound: bound.clone(),
                     },
+                    |x| self.trivial_sign(x, &[]),
                 ),
                 self.child_budget,
                 self.options.clone(),
@@ -560,18 +619,19 @@ macro_rules! optimizer_next_body {
 
 /// Substitutes sub_bound in to bound and returns the result.
 /// This uses {Minimizer, Maximizer}::sub_bound
-pub fn bound_sub<'a, Opt: Options>(
+pub fn bound_sub<'a, Opt: Options, F: Fn(&Ident) -> Option<i8> + Copy>(
     bound: &DescriptiveBound<'a>,
     sub_bound: &DescriptiveBound<'a>,
+    named_sign: F,
 ) -> Option<DescriptiveBound<'a>> {
     let (relation_kind, new_bound_expr) = match &bound.bound {
         Bound::Le(expr) => (
             RelationKind::Le,
-            Maximizer::<Opt>::sub_bound(expr, sub_bound),
+            Maximizer::<Opt>::sub_bound(expr, sub_bound, named_sign),
         ),
         Bound::Ge(expr) => (
             RelationKind::Ge,
-            Minimizer::<Opt>::sub_bound(expr, sub_bound),
+            Minimizer::<Opt>::sub_bound(expr, sub_bound, named_sign),
         ),
     };
     // Unwrap new_bound_expr
@@ -599,7 +659,7 @@ pub fn bound_sub<'a, Opt: Options>(
             kind: relation_kind,
             right: expr::zero(),
         }
-        .bounds_on_unsafe(&bound.subject)?
+        .bounds_on_unsafe(&bound.subject, named_sign)?
         .simplify(),
     })
 }
@@ -618,21 +678,29 @@ impl<'a, Opt: Options> Iterator for Maximizer<'a, Opt> {
 }
 
 /// Used internally by {Minimizer, Maximizer}::sub_bound
-fn sub_bound_into<'a>(
+fn sub_bound_into<
+    'a,
+    SS: Fn(&Expr<'a>, &DescriptiveBound<'a>, NS) -> Option<Expr<'a>>,
+    SO: Fn(&Expr<'a>, &DescriptiveBound<'a>, NS) -> Option<Expr<'a>>,
+    NS: Fn(&Ident) -> Option<i8> + Copy,
+>(
     expr: &Expr<'a>,
     bound: &DescriptiveBound<'a>,
-    self_sub: impl Fn(&Expr<'a>, &DescriptiveBound<'a>) -> Option<Expr<'a>>,
-    sub_opposite: impl Fn(&Expr<'a>, &DescriptiveBound<'a>) -> Option<Expr<'a>>,
+    self_sub: SS,
+    sub_opposite: SO,
+    named_sign: NS,
 ) -> Option<Expr<'a>> {
     match expr {
         // An atom has a fixed value if it was not `x`
         Expr::Atom(_) => None,
 
         // An upper bound for -(...) is -(a lower bound for ...)
-        Expr::Neg(inner_expr) => Some(Expr::Neg(Box::new(sub_opposite(inner_expr, bound)?))),
+        Expr::Neg(inner_expr) => Some(Expr::Neg(Box::new(sub_opposite(
+            inner_expr, bound, named_sign,
+        )?))),
         // An upper bound for 1/(...) is 1/(a lower bound for ...)
         Expr::Recip(inner_expr, rounding) => Some(Expr::Recip(
-            Box::new(sub_opposite(inner_expr, bound)?),
+            Box::new(sub_opposite(inner_expr, bound, named_sign)?),
             *rounding,
         )),
 
@@ -641,7 +709,7 @@ fn sub_bound_into<'a>(
             // Try substituting into each term.
             let subbed_terms = terms
                 .iter()
-                .map(|term| self_sub(term, bound))
+                .map(|term| self_sub(term, bound, named_sign))
                 .collect::<Vec<Option<Expr>>>();
             // If no terms had substitutions then return None.
             if subbed_terms.iter().all(Option::is_none) {
@@ -675,6 +743,24 @@ fn sub_bound_into<'a>(
             let mut made_sub = false;
             for i in 0..terms.len() {
                 let term = &terms[i];
+                out.push(match self_sub(term, bound, named_sign) {
+                    Some(subbed) => {
+                        if made_sub {
+                            return None;
+                        } else {
+                            made_sub = true;
+                            subbed
+                        }
+                    }
+                    None => match term.sign(named_sign) {
+                        None => return None,
+                        Some(1) | Some(0) => term.clone(),
+                        Some(-1) => todo!(),
+                        Some(_) => panic!("invalid sign"),
+                    },
+                });
+
+                /*
                 out.push(match term {
                     // We will just copy literals.
                     // Note that we require only positive literals (which we should have if the
@@ -704,7 +790,7 @@ fn sub_bound_into<'a>(
                                 return None;
                             }
                             made_sub = true;
-                            self_sub(term, bound)?
+                            self_sub(term, bound, named_sign)?
                         }
                     },
 
@@ -715,9 +801,9 @@ fn sub_bound_into<'a>(
                             return None;
                         }
                         made_sub = true;
-                        self_sub(term, bound)?
+                        self_sub(term, bound, named_sign)?
                     }
-                });
+                });*/
             }
             Some(Expr::Prod(out))
         }
@@ -728,7 +814,11 @@ impl<'a, Opt: Options> Minimizer<'a, Opt> {
     /// Returns an upper bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
-    pub fn sub_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Option<Expr<'a>> {
+    pub fn sub_bound(
+        expr: &Expr<'a>,
+        bound: &DescriptiveBound<'a>,
+        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+    ) -> Option<Expr<'a>> {
         // If the expression is x, then an upper bound is given directly.
         if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
             return match &bound.bound {
@@ -741,6 +831,7 @@ impl<'a, Opt: Options> Minimizer<'a, Opt> {
             bound,
             Minimizer::<Opt>::sub_bound,
             Maximizer::<Opt>::sub_bound,
+            named_sign,
         )
     }
 }
@@ -749,7 +840,11 @@ impl<'a, Opt: Options> Maximizer<'a, Opt> {
     /// Returns a lower bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
-    pub fn sub_bound(expr: &Expr<'a>, bound: &DescriptiveBound<'a>) -> Option<Expr<'a>> {
+    pub fn sub_bound(
+        expr: &Expr<'a>,
+        bound: &DescriptiveBound<'a>,
+        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+    ) -> Option<Expr<'a>> {
         if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
             return match &bound.bound {
                 Bound::Le(bound_expr) => Some(bound_expr.clone()),
@@ -761,6 +856,7 @@ impl<'a, Opt: Options> Maximizer<'a, Opt> {
             bound,
             Maximizer::<Opt>::sub_bound,
             Minimizer::<Opt>::sub_bound,
+            named_sign,
         )
     }
 }

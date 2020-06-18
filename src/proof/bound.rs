@@ -6,11 +6,12 @@ use super::PrettyFormat;
 use crate::ast::Ident;
 use std::fmt::{self, Display, Formatter};
 
-fn bound_sub<'a>(
+fn bound_sub<'a, F: Fn(&Ident) -> Option<i8> + Copy>(
     bound: &DescriptiveBound<'a>,
     sub_bound: &DescriptiveBound<'a>,
+    named_sign: F,
 ) -> Option<DescriptiveBound<'a>> {
-    _bound_sub::<DefaultOptimiserOptions>(bound, sub_bound)
+    _bound_sub::<DefaultOptimiserOptions, F>(bound, sub_bound, named_sign)
 }
 
 /// Represents a bound on something.
@@ -98,7 +99,11 @@ impl<'a> Relation<'a> {
     /// - `subject` only occurs exactly once in self.left.
     ///    This can be achieved by using `self.left = self.left.single_x(subject)?`
     /// - `subject` does not occur in self.right
-    pub fn rearrange_unsafe(&self, subject: &Ident<'a>) -> Option<Relation<'a>> {
+    pub fn rearrange_unsafe(
+        &self,
+        subject: &Ident<'a>,
+        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+    ) -> Option<Relation<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
 
         // We are done if self.left = subject
@@ -132,7 +137,7 @@ impl<'a> Relation<'a> {
                     kind: self.kind,
                     right: new_right,
                 }
-                .rearrange_unsafe(subject)
+                .rearrange_unsafe(subject, named_sign)
             }
             Prod(terms) => {
                 // Also by assumption, `subject` will occur only in 1 term.
@@ -152,7 +157,7 @@ impl<'a> Relation<'a> {
                 let other_terms = Sum(other_terms);
                 // We're going to divide by other_terms so we must check it's sign.
                 // If it's negative, we should flip the relation.
-                let new_kind = match other_terms.sign() {
+                let new_kind = match other_terms.sign(named_sign) {
                     Some(1) => self.kind,
                     Some(-1) => self.kind.opposite(),
 
@@ -190,7 +195,7 @@ impl<'a> Relation<'a> {
                     kind: new_kind,
                     right: new_right,
                 }
-                .rearrange_unsafe(subject)
+                .rearrange_unsafe(subject, named_sign)
             }
 
             // Negate both sides to unwrap the Neg
@@ -199,7 +204,7 @@ impl<'a> Relation<'a> {
                 kind: self.kind.opposite(),
                 right: Neg(Box::new(self.right.clone())),
             }
-            .rearrange_unsafe(subject),
+            .rearrange_unsafe(subject, named_sign),
 
             // Recip both sides to unwrap this Recip
             Recip(term, _rounding) => Relation {
@@ -209,7 +214,7 @@ impl<'a> Relation<'a> {
                 // See Prod case for how it should be done.
                 right: Recip(Box::new(self.right.clone()), todo!()),
             }
-            .rearrange_unsafe(subject),
+            .rearrange_unsafe(subject, named_sign),
 
             // If we are left with an atom that is not subject, then something has gone wrong.
             // Very wrong, actually.
@@ -219,9 +224,13 @@ impl<'a> Relation<'a> {
 
     /// Returns the bounds on `target` given by self.
     /// This method makes the same assumptions as `rearrange_unsafe`
-    pub fn bounds_on_unsafe(&self, target: &Ident<'a>) -> Option<Bound<'a>> {
+    pub fn bounds_on_unsafe(
+        &self,
+        target: &Ident<'a>,
+        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+    ) -> Option<Bound<'a>> {
         use RelationKind::{Ge, Le};
-        Some(match self.rearrange_unsafe(target)? {
+        Some(match self.rearrange_unsafe(target, named_sign)? {
             Relation {
                 left: _,
                 kind: Le,
@@ -236,7 +245,11 @@ impl<'a> Relation<'a> {
     }
 
     /// Returns the bound on `name` given by self if it exists and can be computed.
-    pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
+    pub fn bounds_on(
+        &self,
+        name: &Ident<'a>,
+        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+    ) -> Option<Bound<'a>> {
         // These will form the Relation that we will solve.
         // This must end up satisfying the preconditions on bounds_on_unsafe.
         let lhs;
@@ -272,17 +285,20 @@ impl<'a> Relation<'a> {
             kind,
             right: rhs,
         }
-        .bounds_on_unsafe(name)
+        .bounds_on_unsafe(name, named_sign)
     }
 
     /// Returns a list of all the bounds that can be computed from self.
-    pub fn bounds(&self) -> Vec<DescriptiveBound<'a>> {
+    pub fn bounds(
+        &self,
+        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+    ) -> Vec<DescriptiveBound<'a>> {
         self.variables()
             .iter()
             .filter_map(|x| {
                 Some(DescriptiveBound {
                     subject: x.clone(),
-                    bound: self.bounds_on(x)?,
+                    bound: self.bounds_on(x, named_sign)?,
                 })
             })
             .collect()
@@ -362,19 +378,27 @@ impl<'a> DescriptiveBound<'a> {
     }
 
     /// Try substituting sub in to self and return the result.
-    pub fn sub(&self, sub: &DescriptiveBound<'a>) -> Option<DescriptiveBound<'a>> {
-        bound_sub(self, &sub)
+    pub fn sub(
+        &self,
+        sub: &DescriptiveBound<'a>,
+        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+    ) -> Option<DescriptiveBound<'a>> {
+        bound_sub(self, &sub, named_sign)
     }
 }
 
 /// Returns the bound on `subject` given by `0 <= expr_ge0`
-pub fn bounds_on_ge0<'a>(expr_ge0: &Expr<'a>, subject: &Ident<'a>) -> Option<Bound<'a>> {
+pub fn bounds_on_ge0<'a>(
+    expr_ge0: &Expr<'a>,
+    subject: &Ident<'a>,
+    named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+) -> Option<Bound<'a>> {
     Relation {
         left: expr_ge0.single_x(subject)?,
         kind: RelationKind::Ge,
         right: zero(),
     }
-    .bounds_on_unsafe(subject)
+    .bounds_on_unsafe(subject, named_sign)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
