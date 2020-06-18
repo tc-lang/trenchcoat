@@ -121,6 +121,10 @@ impl<'a> WrappedProver<'a> {
         self.prover.as_ref().unwrap().prove(req)
     }
 
+    pub fn prove_lemma(&self, req: &Requirement<'a>) -> ProofResult {
+        self.prover.as_ref().unwrap().prove_lemma(req)
+    }
+
     pub fn prove_return(&self, req: &Requirement<'a>, ret_ident: Ident<'a>) -> ProofResult {
         use ScopedSimpleProver::{Defn, Root, Shadow};
 
@@ -346,6 +350,25 @@ impl<'a> Provers<'a> {
             .enumerate()
             .map(|(i, p)| match self.mask.allows(i) {
                 true => (i, reqs.iter().all(|req| p.prove(req) == ProofResult::True)),
+                false => (i, true),
+            })
+            .collect()
+    }
+
+    /// Attempts to prove the requirements using the lemma prover for all provers simultaneously,
+    /// returning - for each prover - its index and whether the requirement was proven true.
+    ///
+    /// The mask allows individual provers to be ignored - their values will always be true.
+    pub fn prove_lemma(&self, reqs: &[Requirement<'a>]) -> Vec<(usize, bool)> {
+        self.provers
+            .iter()
+            .enumerate()
+            .map(|(i, p)| match self.mask.allows(i) {
+                true => (
+                    i,
+                    reqs.iter()
+                        .all(|req| p.prove_lemma(req) == ProofResult::True),
+                ),
                 false => (i, true),
             })
             .collect()

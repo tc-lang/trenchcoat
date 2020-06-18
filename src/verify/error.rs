@@ -50,6 +50,9 @@ pub enum Kind<'a> {
         func_info: &'a Func<'a>,
         failed: Vec<(ProofResult, Requirement<'a>)>,
     },
+    FailedLemma {
+        failed: Vec<(ProofResult, Requirement<'a>)>,
+    },
     /// A collection of proof requirements that didn't pass while attempting to uphold a contract
     /// The source should be the node representing the function definition
     FailedContract {
@@ -74,6 +77,7 @@ pub enum Context {
     FieldAccess,
     BinOpTypeCheck,
     PrefixOpTypeCheck,
+    LemmaStmt,
 }
 
 impl<'a> Error<'a> {

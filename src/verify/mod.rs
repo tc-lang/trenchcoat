@@ -1,7 +1,7 @@
 pub mod error;
 mod prover;
 
-use crate::ast::proof::Stmt as ProofStmt;
+use crate::ast::proof::{Stmt as ProofStmt, StmtKind as ProofStmtKind};
 use crate::ast::{
     BinOp, Block, Expr, ExprKind, FnArgs, Ident, IdentSource, Item, ItemKind, Node, PrefixOp,
     StmtKind, TypeExpr,
@@ -1204,7 +1204,34 @@ impl<'a> Scope<'a> {
                     return (errs, end_type, end_tmp_var, end_mask);
                 }
 
-                Lemma(proof_stmt) => todo!(),
+                Lemma(proof_stmt) => {
+                    let (lemma_stmt, proof) = match &proof_stmt.kind {
+                        ProofStmtKind::Lemma { stmt, proof } => (stmt, proof),
+                        _ => panic!("incorrect proof statement kind in Lemma statement"),
+                    };
+                    let lemma: Vec<Requirement> = lemma_stmt.into();
+                    let base_prover = &provers[0];
+                    match proof {
+                        None => {
+                            let res = lemma.iter().map(|req| (base_prover.prove_lemma(req), req));
+                            let failed_reqs = res
+                                .filter(|(res, _)| *res != ProofResult::True)
+                                .map(|(res, req)| (res, req.clone()))
+                                .collect::<Vec<_>>();
+                            if !failed_reqs.is_empty() {
+                                errors.push(Error {
+                                    kind: error::Kind::FailedLemma {
+                                        failed: failed_reqs,
+                                    },
+                                    context: error::Context::LemmaStmt,
+                                    source: stmt.node(),
+                                });
+                            }
+                        }
+                        Some(proof_stmts) => todo!(),
+                    };
+                    provers.add_reqs(lemma);
+                }
             }
         }
 

@@ -5,19 +5,23 @@ fn hi(x: int) -> int {
 }
 
 # require x >= 3
+# require y >= 1
 # x <= 2 => 5 >= _
 fn foo(x: int, y: int) -> int {
-    # lemma 5 <= x
     bar(x, y, 3)
 }
 
-# x <= 2 => _ <= 2 + z
+# require y >= 1
+# require z >= 1
+# x <= 2 => _ <= 3*y+2*z
 fn bar(x: int, y: int, z: int) -> int {
     x * (y + z) + y
 }
 
 fn main() {
-    print foo(1, 2);
+	let x = 3;
+	# lemma x >= 3
+    print foo(x, 2);
 }
 
 fn t(my_struct: { hello: int, world: {x: int, y: int, z: bool} }) -> {a: int, b: bool, c: int} {
