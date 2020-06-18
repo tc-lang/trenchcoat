@@ -499,7 +499,7 @@ at the end. This is done in a way which cannot lead to an incorrect True/False r
 to loose bounds making some True/False results undetermined. This isn't very common.
 
 These rational numbers are also not kept in a simplified form. While algorithms such as the Binary
-GCD Algorithm can be used to keep rational numbers simplified with O(n^2) (where n is the maximum
+GCD Algorithm can be used to keep rational numbers simplified with O(n²) (where n is the maximum
 number of bits) time complexity, this would be called quite often and for numerator and denominator
 values to get high enough to cause performance problems, the number of variables and their values
 would have to be unreasonably high - and if this is the case, the final system will not break,
@@ -825,8 +825,8 @@ The running time is maximized when the permutation groups all have the same size
 permutation groups, they would have a size of *n*/*g*. The worst case number of nodes is therefore
 (*n*/*g*)^*g*.
 
-The value of *g* to maximizes this is:
-![](assets/bound_method_runtime.png)
+The value of *g* to maximize this is *g*=*n*/*e* so the worst case time complexity is
+O(*e*^(*n*/*e*))
 
 This is still not an acceptable time complexity.
 
