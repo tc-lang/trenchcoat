@@ -2,9 +2,9 @@
 
 use super::Func;
 use crate::ast::{Ident, Item, ItemKind::FnDecl, Node};
+use crate::errors::{context_lines, context_lines_and_spacing, line_info, underline, PrettyError};
 use crate::proof::{ProofResult, Requirement};
 use crate::types::Type;
-use crate::PrettyError;
 use ansi_term::Color::{Blue, Red};
 use std::fmt::Write;
 use std::ops::{Deref, Range};
@@ -90,7 +90,7 @@ impl<'a> Error<'a> {
 ///////////////////////////////////////////////////////////////////////////////
 
 impl PrettyError for Error<'_> {
-    fn pretty_print(&self, file_str: &str, file_name: &str) -> String {
+    fn pretty_format(&self, file_str: &str, file_name: &str) -> String {
         use Kind::{
             FailedContract, FailedProofs, FunctionMustBeName, FunctionNotFound, ItemConflict,
             TypeMismatch,
@@ -141,162 +141,6 @@ impl PrettyError for Error<'_> {
 }
 
 impl Error<'_> {
-    /// Returns information about the position of the given byte index within the file
-    ///
-    /// The return values are - in order - the line number, column number, the byte index of the
-    /// line in the text, and the byte index on the line. All values start at zero.
-    ///
-    /// The final return value is the string containing the entire line.
-    fn line_info<'a>(file_str: &'a str, byte_idx: usize) -> (usize, usize, usize, usize, &'a str) {
-        let start_offset = |line: &str| {
-            let line_ptr = line as *const str as *const u8 as usize;
-            let base_ptr = file_str as *const str as *const u8 as usize;
-            line_ptr - base_ptr
-        };
-
-        let lines = file_str
-            .lines()
-            .take_while(|line| start_offset(line) <= byte_idx)
-            .collect::<Vec<_>>();
-
-        let last = lines.last().unwrap();
-        let offset = start_offset(last);
-
-        // Subtract 1 from both of these so that they start at zero
-        let line_no = lines.len() - 1;
-        let col_no = last[..byte_idx - offset].chars().count().saturating_sub(1);
-
-        (line_no, col_no, offset, byte_idx - offset, last)
-    }
-
-    /// Produces a row of caret characters to underline the given byte range of the line. The upper
-    /// value on the byte range may be longer than the end of the line - this is quietly ignored.
-    fn underline(line: &str, mut range: Range<usize>) -> String {
-        range.end = range.end.min(line.len());
-
-        // In the future, this function could account for non-ascii strings. Right now, we're just
-        // going with the super simple solution of not dealing with that, and simply returning the
-        // values.
-
-        // For consistency, we'll double-check that the range is within the bounds of the line
-        assert!(range.start < line.len());
-
-        let mut pre = " ".repeat(range.start);
-        let mid = "^".repeat(range.end - range.start);
-        let post = " ".repeat(line.len() - range.end);
-
-        write!(pre, "{}{}", mid, post).unwrap();
-        pre
-    }
-
-    /// Produces the standard portion of many error messages. This contains the "context line" and
-    /// selection + highlighting of the source. The returned string has a trailing - but no leading
-    /// - newline.
-    ///
-    /// For more information, see the comments inside the function.
-    fn context_lines(source: &Node, file_str: &str, file_name: &str) -> String {
-        Error::context_lines_and_spacing(source, file_str, file_name).0
-    }
-
-    /// The same function `context_lines`, except there is the added (second) return value of the
-    /// spacing used to prefix certain lines
-    ///
-    /// This function is useful in cases where additional information must be displayed after the
-    /// context lines - that additional info needs to be aligned in the same manner.
-    fn context_lines_and_spacing(
-        source: &Node,
-        file_str: &str,
-        file_name: &str,
-    ) -> (String, String) {
-        // The standard portion of the error message primarily consists of contextual information
-        // for the user, without regard to what the error message actually is.
-        //
-        // Here's an example of what it might look like:
-        // ```
-        //   --> src/test_input.tc:18:10
-        //    |
-        // 18 |     print bar();
-        //    |           ^^^
-        // ```
-        //
-        // We'll use this particular example to demonstrate what each component supplies to the
-        // total set of lines.
-
-        let byte_range = source.byte_range();
-        let (line_no, col_no, line_offset, _, line) = Error::line_info(file_str, byte_range.start);
-
-        let line_no_str = (line_no + 1).to_string();
-        let spacing = " ".repeat(line_no_str.len());
-
-        // The range of bytes that the source takes up on its initial line.
-        //
-        // In a future version, we might allow displaying regions that span multiple lines, but
-        // this will do for now - realistically, it should be fine.
-        let line_range = {
-            let start = byte_range.start - line_offset;
-            let end = (byte_range.end - line_offset).min(line.len());
-            start..end
-        };
-
-        // First, we'll put in the context line. This will tend to look something like:
-        // ```
-        //   --> src/test_input.tc:18:10
-        // ```
-        // It provides a little bit of color and the location that the error occured. The newline
-        // is at the end so we can start the next line without one.
-        let mut msg = format!(
-            "{}{} {}:{}:{}\n",
-            spacing,
-            Blue.paint("-->"),
-            file_name,
-            line_no + 1,
-            col_no + 1
-        );
-
-        // The next line is the "filler" line - this simply adds a little bit of space, and sets us
-        // up for the selected text and highlight. We mostly just want this to align properly.
-        //
-        // We save it so that we can use it later in constructing the highlight line.
-        // The filler line from above is simply:
-        // ```
-        //    |
-        // ```
-        // The only important piece here is that it lines up wit the middle character of the arrow
-        // above it and evenly with the pipes below it.
-        let filler_line = format!("{} {}", spacing, Blue.paint("|"));
-        writeln!(msg, "{}", filler_line).unwrap();
-
-        // And now we have some fun stuff. The selection line has two things on it: (1) The full
-        // line that the node started on and (2) the line number once more, which is off to the
-        // left.
-        //
-        // The selection line from the example is:
-        // ```
-        // 18 |     print bar();
-        // ```
-        writeln!(msg, "{} {}", Blue.paint(line_no_str + " |"), line).unwrap();
-
-        // The final line here is the "highlight" line - though this is really more like an
-        // underline. It serves to draw extra focus by giving a bright red set of "^^^^" underneath
-        // the actual selected region.
-        //
-        // The highlight line from the example above is:
-        // ```
-        //    |           ^^^
-        // ```
-        writeln!(
-            msg,
-            "{} {}",
-            filler_line,
-            Red.paint(Error::underline(line, line_range))
-        )
-        .unwrap();
-
-        (msg, spacing)
-    }
-}
-
-impl Error<'_> {
     fn format_item_conflict(fst: &Item, snd: &Item, file_str: &str, file_name: &str) -> String {
         // This error message looks something like:
         // ```
@@ -326,8 +170,7 @@ impl Error<'_> {
 
         let (fst_line_no, fst_col_no, fst_line, fst_line_range) = {
             let byte_range = fst_name.node().byte_range();
-            let (line_no, col_no, line_offset, _, line) =
-                Error::line_info(file_str, byte_range.start);
+            let (line_no, col_no, line_offset, _, line) = line_info(file_str, byte_range.start);
 
             let line_range = {
                 let start = byte_range.start - line_offset;
@@ -340,8 +183,7 @@ impl Error<'_> {
 
         let (snd_line_no, snd_col_no, snd_line, snd_line_range) = {
             let byte_range = snd_name.node().byte_range();
-            let (line_no, col_no, line_offset, _, line) =
-                Error::line_info(file_str, byte_range.start);
+            let (line_no, col_no, line_offset, _, line) = line_info(file_str, byte_range.start);
 
             let line_range = {
                 let start = byte_range.start - line_offset;
@@ -377,7 +219,7 @@ impl Error<'_> {
         let highlight = format!(
             "{} {}",
             filler_line,
-            Red.paint(Error::underline(snd_line, snd_line_range))
+            Red.paint(underline(snd_line, snd_line_range))
         );
         let note = format!(
             "{} {} note: First defined here, at {}:{}:{}:",
@@ -391,7 +233,7 @@ impl Error<'_> {
         let snd_highlight = format!(
             "{} {}",
             filler_line,
-            Blue.paint(Error::underline(fst_line, fst_line_range))
+            Blue.paint(underline(fst_line, fst_line_range))
         );
 
         writeln!(msg, "{}", context_line).unwrap();
@@ -425,7 +267,7 @@ impl Error<'_> {
             "{}: cannot find function `{}`\n{}",
             Red.paint("error"),
             name,
-            Error::context_lines(source, file_str, file_name)
+            context_lines(source, file_str, file_name)
         )
     }
 
@@ -442,7 +284,7 @@ impl Error<'_> {
         format!(
             "{}: function calls must be direct by name\n{}",
             Red.paint("error"),
-            Error::context_lines(source, file_str, file_name)
+            context_lines(source, file_str, file_name)
         )
     }
 
@@ -497,7 +339,7 @@ impl Error<'_> {
             Red.paint("error"),
             expected_types,
             found,
-            Error::context_lines(source, file_str, file_name),
+            context_lines(source, file_str, file_name),
         )
     }
 
@@ -563,8 +405,7 @@ impl Error<'_> {
         //
         // There's already a trailing newline from `context_lines`, so we only use write!, not
         // writeln!
-        let (context_lines, spacing) =
-            Error::context_lines_and_spacing(source, file_str, file_name);
+        let (context_lines, spacing) = context_lines_and_spacing(source, file_str, file_name);
         write!(msg, "{}", context_lines).unwrap();
 
         // The line that says:
@@ -711,8 +552,7 @@ impl Error<'_> {
         // A helper function for generating bits of information about the ranges around a given node.
         let info = |node: Node| -> Info {
             let byte_range = node.byte_range();
-            let (line_no, col_no, line_offset, _, line) =
-                Error::line_info(file_str, byte_range.start);
+            let (line_no, col_no, line_offset, _, line) = line_info(file_str, byte_range.start);
 
             let line_range = {
                 let start = byte_range.start - line_offset;
@@ -740,7 +580,7 @@ impl Error<'_> {
         };
 
         let (end_fn_line_no, _, _, _, end_fn_line) =
-            Error::line_info(file_str, fn_source.byte_range().end);
+            line_info(file_str, fn_source.byte_range().end);
 
         let pad_size = (end_fn_line_no + 1).to_string().len();
         let padding = " ".repeat(pad_size);
@@ -794,7 +634,7 @@ impl Error<'_> {
             msg,
             "{} {}",
             filler_line,
-            Blue.paint(Error::underline(req.line, req.line_range))
+            Blue.paint(underline(req.line, req.line_range))
         )
         .unwrap();
 
@@ -850,7 +690,7 @@ impl Error<'_> {
             msg,
             "{} {}",
             filler_line,
-            Red.paint(Error::underline(ret.line, ret.line_range))
+            Red.paint(underline(ret.line, ret.line_range))
         )
         .unwrap();
 

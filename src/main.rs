@@ -1,14 +1,15 @@
 #![warn(clippy::perf)]
 
 mod ast;
+mod errors;
 mod exec;
 mod proof;
 mod tokens;
 mod types;
 mod verify;
 
-use ansi_term::Color::Red;
 use ast::try_parse;
+use errors::display_errors;
 use tokens::auto_sep::auto_insert_sep;
 use tokens::tokenize;
 use verify::verify;
@@ -98,26 +99,4 @@ fn main() {
             println!("main: {:?}", global.exec("main", Vec::new()));
         }
     }
-}
-
-/// A helper function to provide pretty printing of error messages
-fn display_errors<E: PrettyError>(file_str: &str, file_name: &str, errs: &[E], pre_msg: &str) {
-    if errs.is_empty() {
-        panic!("Internal error: no errors to display");
-    }
-
-    for err in errs {
-        eprintln!("{}", err.pretty_print(file_str, file_name));
-    }
-
-    let err_no = match errs.len() {
-        1 => "a previous error".into(),
-        n => format!("{} previous errors", n),
-    };
-
-    eprintln!("{}: {} due to {}", Red.paint("error"), pre_msg, err_no);
-}
-
-trait PrettyError {
-    fn pretty_print(&self, file_str: &str, file_name: &str) -> String;
 }
