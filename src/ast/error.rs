@@ -6,6 +6,7 @@ use crate::tokens::{Token, TokenKind};
 use ansi_term::Color::{Blue, Red};
 use std::fmt::Write;
 use std::ops::Range;
+use unicode_width::UnicodeWidthStr;
 
 /// Errors each have a kind and a context in which it occured. These can be combined with the
 /// source token to create a hopefully ok error message.
@@ -170,7 +171,7 @@ impl PrettyError for Error<'_> {
         // Pull yourself up by the bootstraps!
         let mut help = None;
 
-        let (main_msg, needs_found): (&str, bool) = match (&self.kind, &self.context) {
+        let (main_msg, display_found): (&str, bool) = match (&self.kind, &self.context) {
             (TypeIdent, _) => ("expected type identifier", true),
             (ExpectingName, _) => ("expected idendentifier", true),
             (ExpectingParens, _) => ("expected parenthetical", true),
@@ -203,7 +204,7 @@ impl PrettyError for Error<'_> {
         };
 
         // `byte_range` will be `Some` if the error was not at EOF, otherwise None
-        let (byte_range, found): (Option<Range<usize>>, String) = match &self.source {
+        let (mut byte_range, found): (Option<Range<usize>>, String) = match &self.source {
             Single(t) => (Some(t.byte_range().unwrap()), token_desc(self, t)),
             Source::Range([t]) => (Some(t.byte_range().unwrap()), token_desc(self, t)),
             Source::Range([t, .., end]) => (
@@ -229,69 +230,118 @@ impl PrettyError for Error<'_> {
             EOF => (None, "end of file".into()),
         };
 
-        let (mut msg, spacing) = if let Some(range) = byte_range {
-            // ^ The error wasn't at EOF
-
-            let (context, spacing) = errors::context_lines_and_spacing(range, file_str, file_name);
-            let msg = if needs_found {
-                format!(
-                    "{}: {}, found {}\n{}\n",
-                    Red.paint("error"),
-                    main_msg,
-                    found,
-                    context,
-                )
-            } else {
-                format!("{}: {}\n{}\n", Red.paint("error"), main_msg, context,)
-            };
-
-            (msg, spacing)
+        // We'll generate the first line of the message, which depends on whether we want to
+        // display the token that was found at the error point
+        let mut msg = if display_found {
+            format!("{}: {}, found {}\n", Red.paint("error"), main_msg, found)
         } else {
-            // The error was at EOF. We'll display one extra line for context
-            let lines = file_str.lines().collect::<Vec<_>>();
-            let last_line_no = lines.len() - 1;
-
-            let mut msg = if needs_found {
-                format!("{}: {}, found {}\n", Red.paint("error"), main_msg, found)
-            } else {
-                format!("{}: {}\n", Red.paint("error"), main_msg)
-            };
-
-            // Add a little context line
-            let width = last_line_no.to_string().len();
-            let spacing = " ".repeat(width);
-            writeln!(msg, "{}{} {}:EOF", spacing, Blue.paint("-->"), file_name).unwrap();
-
-            let snd_last = lines.len().checked_sub(2).map(|i| lines[i]);
-
-            if let Some(line) = snd_last {
-                writeln!(
-                    msg,
-                    "{:>width$} {} {}",
-                    last_line_no - 1,
-                    Blue.paint("|"),
-                    line,
-                    width = width
-                )
-                .unwrap();
-            }
-
-            let last_line = lines.last().unwrap();
-            writeln!(msg, "{} {} {}", last_line_no, Blue.paint("|"), last_line).unwrap();
-            writeln!(
-                msg,
-                "{} {} {}",
-                spacing,
-                Blue.paint("|"),
-                errors::underline(&last_line, last_line.len()..last_line.len() + 1)
-            )
-            .unwrap();
-
-            (msg, spacing)
+            format!("{}: {}\n", Red.paint("error"), main_msg)
         };
 
-        // And finally, we add the help messages
+        // Collect the lines of the file, so we can grab some additional context for the message
+        let lines = file_str.lines().collect::<Vec<_>>();
+
+        let (line_no, col_no) = match &mut byte_range {
+            None => (lines.len() - 1, None),
+            Some(range) => {
+                let offset = |line: &&str| {
+                    (*line as *const str as *const u8 as usize)
+                        - (file_str as *const str as *const u8 as usize)
+                };
+
+                let line_no = lines
+                    .binary_search_by_key(&range.start, offset)
+                    .unwrap_or_else(|x| x - 1);
+
+                let line_offset = offset(&lines[line_no]);
+
+                let col_no = UnicodeWidthStr::width(
+                    &lines[line_no][..range.start - offset(&lines[line_no])],
+                );
+
+                range.start -= line_offset;
+                range.end -= line_offset;
+
+                (line_no, Some(col_no))
+            }
+        };
+
+        let width = match lines.get(line_no + 1) {
+            None => (line_no + 1).to_string().len(),
+            Some(_) => (line_no + 2).to_string().len(),
+        };
+
+        let spacing = " ".repeat(width);
+        match col_no {
+            Some(c) => writeln!(
+                msg,
+                "{}{} {}:{}:{}",
+                spacing,
+                Blue.paint("-->"),
+                file_name,
+                line_no + 1,
+                c + 1
+            )
+            .unwrap(),
+            None => writeln!(msg, "{}{} {}:EOF", spacing, Blue.paint("-->"), file_name).unwrap(),
+        }
+
+        let filler_line = format!("{} {}", spacing, Blue.paint("|"));
+
+        writeln!(msg, "{}", filler_line).unwrap();
+
+        if let Some(pre) = line_no.checked_sub(1) {
+            writeln!(
+                msg,
+                "{:>width$} {} {}",
+                pre + 1,
+                Blue.paint("|"),
+                &lines[pre],
+                width = width,
+            )
+            .unwrap();
+        }
+
+        let line = lines[line_no];
+        writeln!(
+            msg,
+            "{:>width$} {} {}",
+            line_no + 1,
+            Blue.paint("|"),
+            line,
+            width = width
+        )
+        .unwrap();
+        let line_range = match byte_range {
+            Some(range) => range,
+            // The selected area will be the end of the file, and this line is the last in the
+            // file. So all we need to do is to give the end of the line as the range
+            None => (line.len()..line.len() + 1),
+        };
+        writeln!(
+            msg,
+            "{} {} {}",
+            spacing,
+            Blue.paint("|"),
+            Red.paint(errors::underline(line, line_range))
+        )
+        .unwrap();
+
+        if let Some(post_line) = lines.get(line_no + 1) {
+            writeln!(
+                msg,
+                "{:>width$} {} {}",
+                line_no + 2,
+                Blue.paint("|"),
+                post_line,
+                width = width
+            )
+            .unwrap();
+        }
+
         if let Some(help) = help {
+            // A little bit more padding if we have something else to say
+            writeln!(msg, "{}", filler_line).unwrap();
             writeln!(msg, "{} {} {}", spacing, Blue.paint("="), help).unwrap();
         }
 

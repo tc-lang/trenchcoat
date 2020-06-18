@@ -21,7 +21,14 @@ version = "0.1.0"
 dependencies = [
  "ansi_term",
  "gcd",
+ "unicode-width",
 ]
+
+[[package]]
+name = "unicode-width"
+version = "0.1.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "caaa9d531767d1ff2150b9332433f32a24622147e5ebb1f26409d5da67afd479"
 
 [[package]]
 name = "winapi"

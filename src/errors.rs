@@ -3,6 +3,7 @@
 use ansi_term::Color::{Blue, Red};
 use std::fmt::Write;
 use std::ops::Range;
+use unicode_width::UnicodeWidthStr;
 
 /// An interface for creating "pretty" error messages, given the total file string and the name of
 /// the file in which it occured.
@@ -54,7 +55,7 @@ pub fn line_info<'a>(file_str: &'a str, byte_idx: usize) -> (usize, usize, usize
 
     // Subtract 1 from both of these so that they start at zero
     let line_no = lines.len() - 1;
-    let col_no = last[..byte_idx - offset].chars().count().saturating_sub(1);
+    let col_no = UnicodeWidthStr::width(&last[..byte_idx - offset]);
 
     (line_no, col_no, offset, byte_idx - offset, last)
 }
