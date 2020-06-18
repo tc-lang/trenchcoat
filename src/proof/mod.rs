@@ -22,7 +22,15 @@ use crate::ast::{self, proof::Condition as AstCondition, Ident};
 use bound::{Bound, DescriptiveBound, Relation, RelationKind};
 pub use expr::Expr;
 use std::fmt::{self, Display, Formatter};
+use std::marker::PhantomData;
 use std::ops::{Deref, Not};
+
+/// The standard prover uses the graph method for normal proofs and the bound method for lemma
+/// proofs.
+pub type StandardSimpleProver<'a> =
+    JointSimpleProver<'a, graph::Prover, fast_bound_method::DefaultProver<'a>>;
+/// Wrapped `StandardSimpleProver`
+pub type StandardProver<'a> = ScopedSimpleProver<'a, StandardSimpleProver<'a>>;
 
 #[derive(Debug, Clone)]
 pub struct Requirement<'a> {
@@ -168,6 +176,14 @@ pub trait SimpleProver<'a> {
 
     /// Try to prove `proposition`. This will assume that the requirements passed to `new` are true.
     fn prove(&self, proposition: &Requirement<'a>) -> ProofResult;
+
+    /// Like prove, but intended for proving lemmas. This may have a longer runtime and is
+    /// hopefully capable of proving more.
+    ///
+    /// The default behaviour is to just use self.prove
+    fn lemma_prove(&self, proposition: &Requirement<'a>) -> ProofResult {
+        self.prove(proposition)
+    }
 }
 
 pub trait Prover<'a> {
@@ -176,6 +192,14 @@ pub trait Prover<'a> {
 
     /// Try to prove `req`. This will assume that the requirements passed to `new` are true.
     fn prove(&self, req: &Requirement<'a>) -> ProofResult;
+
+    /// Like prove, but intended for proving lemmas. This may have a longer runtime and is
+    /// hopefully capable of proving more.
+    ///
+    /// The default behaviour is to just use self.prove
+    fn lemma_prove(&self, req: &Requirement<'a>) -> ProofResult {
+        self.prove(req)
+    }
 
     /// Return a new prover whereby `x` is substituted for `expr` before proofs are made.
     /// `x` may refer to an identity which already exists, in which case the new `x` will be mapped
@@ -197,13 +221,43 @@ pub trait Prover<'a> {
     fn shadow(&'a self, x: Ident<'a>) -> Self;
 }
 
+/// A SimpleProver which uses P for standard proofs and LP for lemma proofs.
+pub struct JointSimpleProver<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> {
+    prover: P,
+    lemma_prover: LP,
+
+    lifetime: PhantomData<&'a ()>,
+}
+
+impl<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> SimpleProver<'a>
+    for JointSimpleProver<'a, P, LP>
+{
+    fn new(reqs: Vec<Requirement<'a>>) -> Self {
+        // TODO We could lazily generate provers (since lemma_prover isn't going to be used in
+        // quite a few cases). This probably isn't super worthwhile because creating a bound prover
+        // is pretty cheap.
+        JointSimpleProver {
+            prover: P::new(reqs.clone()),
+            lemma_prover: LP::new(reqs),
+
+            lifetime: PhantomData,
+        }
+    }
+
+    fn prove(&self, prop: &Requirement<'a>) -> ProofResult {
+        self.prover.prove(prop)
+    }
+
+    fn lemma_prove(&self, prop: &Requirement<'a>) -> ProofResult {
+        self.lemma_prover.lemma_prove(prop)
+    }
+}
+
 /// A utility type for implementing Prover with a SimpleProver
 ///
 /// This creates a simple tree, the root of which is a SimpleProver created with some given bounds.
 /// The childeren all store definitions and when asked to prove something, substitute their
 /// definition before handing the proof on to their parent.
-///
-/// It does not yet implement the shadow method.
 #[derive(Debug)]
 pub enum ScopedSimpleProver<'a, P: SimpleProver<'a>> {
     Root(P),
@@ -241,6 +295,28 @@ impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
                     ProofResult::Undetermined
                 } else {
                     parent.prove(req)
+                }
+            }
+        }
+    }
+
+    fn lemma_prove(&self, req: &Requirement<'a>) -> ProofResult {
+        use ScopedSimpleProver::{Defn, Root, Shadow};
+        match self {
+            Root(prover) => prover.lemma_prove(req),
+            Defn {
+                ref x,
+                expr,
+                parent,
+            } => parent.lemma_prove(&req.substitute(x, expr)),
+            Shadow { ref x, parent } => {
+                // If the requirement to be proven requires something of x, then we can't prove it
+                // since we know nothing about x!
+                // Otherwise, hand it up.
+                if req.variables().contains(x) {
+                    ProofResult::Undetermined
+                } else {
+                    parent.lemma_prove(req)
                 }
             }
         }
