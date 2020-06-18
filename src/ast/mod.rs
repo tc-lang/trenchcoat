@@ -15,16 +15,16 @@ use std::ops::{Deref, Range};
 ///
 /// As such, the caller of this macro must be a function with return type `Result<T, Vec<Error>>`.
 macro_rules! next {
-    ($f:expr , $errors:expr) => {{
+    ($f:expr, $errors:expr, $wrap:expr) => {{
         use ParseRet::*;
         match $f {
             Ok(v) => v,
             SoftErr(v, errs) => {
-                $errors.extend(errs);
+                $errors.extend($wrap(errs));
                 v
             }
             Err(errs) => {
-                $errors.extend(errs);
+                $errors.extend($wrap(errs));
                 return Err($errors);
             }
         }
@@ -37,12 +37,12 @@ macro_rules! next {
 /// callers that return an `Option<Result<T, Vec<Error>>>`, with the distinction being used to
 /// signify whether the another AST node should be parsed instead.
 macro_rules! next_option {
-    ($f:expr , $errors:expr) => {{
+    ($f:expr, $errors:expr, $wrap:expr) => {{
         use ParseRet::*;
         match $f {
             Ok(v) => v,
             SoftErr(v, errs) => {
-                $errors.extend(errs);
+                $errors.extend($wrap(errs));
                 v
             }
             Err(errs) => {
@@ -57,7 +57,7 @@ mod error;
 pub mod proof;
 mod u8_to_str;
 
-pub use error::{Context as ErrorContext, Error, Kind as ErrorKind};
+pub use error::{Context as ErrorContext, Error, Kind as ErrorKind, Source as ErrorSource};
 use proof::consume_proof_lines;
 use u8_to_str::u8_to_str;
 
@@ -78,12 +78,15 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
             idx += 1;
             continue;
         }
+
         match Item::parse_top_level(&tokens[idx..]) {
             ParseRet::Err(err) => return Err(err),
-            ParseRet::SoftErr(item, err) => {
+            ParseRet::SoftErr(item, errs) => {
                 idx += item.consumed();
                 items.push(item);
-                errors.extend(err);
+                // We don't set EOF here because the item parser is given all of the remaining
+                // tokens to use to parse with
+                errors.extend(errs);
             }
             ParseRet::Ok(item) => {
                 idx += item.consumed();
@@ -527,14 +530,19 @@ impl<'a> Item<'a> {
 
     /// Attempts to parse the set of tokens into an item, returning the number of tokens consumed
     /// if successful.
+    ///
+    /// This function assumes that the set of tokens provided is non-empty.
     fn parse_top_level(tokens: &'a [Token<'a>]) -> ParseRet<'a, Item<'a>> {
+        assert!(!tokens.is_empty());
+
         if let Some(pr) = Self::parse_fn_decl(tokens) {
             return pr;
         }
+
         ParseRet::single_err(Error {
             kind: ErrorKind::ExpectingKeyword,
             context: ErrorContext::TopLevel,
-            source: tokens.first(),
+            source: ErrorSource::Single(&tokens[0]),
         })
     }
 
@@ -549,16 +557,17 @@ impl<'a> Item<'a> {
         // rest of the function is done, but this isn't necessary at this time because there is
         // only one type of top-level item.
         let (consumed, ret) = consume_proof_lines(tokens);
-        let proof_stmts = next_option!(ret, errors);
+
+        // No need to set EOF because `consume_proof_lines` does it for us
+        let proof_stmts = next_option!(ret, errors, |errs| errs);
 
         let begin_decl_idx = consumed;
-
         match tokens.get(begin_decl_idx)?.kind {
             TokenKind::Keyword(Keyword::Fn) => (),
             _ => return None,
         }
 
-        // Token indexs for each part
+        // Token indexes for each part
         let name_idx = begin_decl_idx + 1;
         let params_idx = begin_decl_idx + 2;
         let ret_typ_idx = begin_decl_idx + 3;
@@ -570,22 +579,26 @@ impl<'a> Item<'a> {
                 .get(name_idx)
                 .map(Ident::parse)
                 .unwrap_or_else(|| ParseRet::single_err(Error {
-                    kind: ErrorKind::EOF,
+                    kind: ErrorKind::ExpectingName,
                     context: ErrorContext::FnName,
-                    source: None,
+                    source: ErrorSource::EOF,
                 }))
                 .with_context(ErrorContext::FnName),
-            errors
+            errors,
+            // No additional source here because it would *actually* be the end of the file
+            |errs| errs
         );
 
         // Function parameters
-        let params = next_option!(parse_fn_params(tokens.get(params_idx)), errors);
+        // Again: no additional source here because it would *actually* be the end of the file
+        let params = next_option!(parse_fn_params(tokens.get(params_idx)), errors, |errs| errs);
 
         // Function return type
         let (return_type, ret_consumed) = match parse_fn_return_type(&tokens[ret_typ_idx..]) {
             // If no type is specified, we default to returning an empty struct
             None => (empty_struct(), 0),
-            Some(pr) => next_option!(pr, errors),
+            // No need to replace EOF because we consume all of the tokens
+            Some(pr) => next_option!(pr, errors, |errs| errs),
         };
 
         // Function body, just 1 curly token.
@@ -594,7 +607,10 @@ impl<'a> Item<'a> {
         let body_idx = ret_typ_idx + ret_consumed;
         let body = next_option!(
             Block::parse_curlies(tokens.get(body_idx)).with_context(ErrorContext::FnBody),
-            errors
+            errors,
+            // No need to replace EOF because `parse_curlies` only gives EOF if given None, which
+            // will only be true if we've exhausted the tokens we've given (thus it's still EOF)
+            |errs| errs
         );
 
         Some(ParseRet::with_soft_errs(
@@ -632,6 +648,8 @@ impl<'a> Block<'a> {
             let stmt = match Stmt::parse(&tokens[idx..]) {
                 ParseRet::Ok(s) => s,
                 ParseRet::SoftErr(s, es) => {
+                    // No need to set EOF becaues `Stmt::parse` is given all of the remaining
+                    // tokens
                     errors.extend_from_slice(&es);
                     s
                 }
@@ -650,11 +668,15 @@ impl<'a> Block<'a> {
                         // expression parsing failed, so we'll go with the original statement
                         // parsing error and return
                         None | Some(ParseRet::Err(_)) => {
+                            // No need to set EOF becaues `Expr::parse` is given all of the
+                            // remaining tokens
                             errors.extend_from_slice(&es);
                             return ParseRet::Err(errors);
                         }
                         Some(ParseRet::SoftErr(ex, ex_errs)) => {
                             tail = ex;
+                            // No need to set EOF becaues `Expr::parse` is given all of the
+                            // remaining tokens
                             errors.extend_from_slice(&ex_errs);
                         }
                         Some(ParseRet::Ok(ex)) => tail = ex,
@@ -671,15 +693,18 @@ impl<'a> Block<'a> {
         ParseRet::with_soft_errs((stmts, tail), errors)
     }
 
+    /// Parses a curly block from the given token, if available
+    ///
+    /// The error sources will only have EOF if the given token is None.
     fn parse_curlies(token: Option<&'a Token<'a>>) -> ParseRet<'a, Block<'a>> {
         use TokenKind::Curlys;
 
         let (token, inner_tokens) = match token {
             None => {
                 return ParseRet::single_err(Error {
-                    kind: ErrorKind::EOF,
+                    kind: ErrorKind::ExpectingCurlys,
                     context: ErrorContext::NoContext,
-                    source: None,
+                    source: ErrorSource::EOF,
                 })
             }
             Some(t) => match &t.kind {
@@ -688,17 +713,25 @@ impl<'a> Block<'a> {
                     return ParseRet::single_err(Error {
                         kind: ErrorKind::ExpectingCurlys,
                         context: ErrorContext::NoContext,
-                        source: Some(t),
+                        source: ErrorSource::Single(t),
                     })
                 }
             },
         };
 
-        Block::parse_body(&inner_tokens).map(|(stmts, tail)| Block {
+        let ret = Block::parse_body(&inner_tokens).map(|(stmts, tail)| Block {
             body: stmts,
             tail: Box::new(tail),
             source: token,
-        })
+        });
+
+        match ret {
+            ParseRet::Ok(block) => ParseRet::Ok(block),
+            ParseRet::SoftErr(block, errs) => {
+                ParseRet::SoftErr(block, Error::set_eof(errs, ErrorSource::End(token)))
+            }
+            ParseRet::Err(errs) => ParseRet::Err(Error::set_eof(errs, ErrorSource::End(token))),
+        }
     }
 }
 
@@ -708,6 +741,9 @@ impl<'a> Ident<'a> {
         Node::Ident(self)
     }
 
+    /// Parses an identifier from the single token given
+    ///
+    /// The errors sources will never be EOF
     fn parse(token: &'a Token<'a>) -> ParseRet<'a, Ident> {
         match token.kind {
             TokenKind::NameIdent(name) => ParseRet::Ok(Ident {
@@ -722,13 +758,13 @@ impl<'a> Ident<'a> {
                 Error {
                     kind: ErrorKind::TypeIdent,
                     context: ErrorContext::UnknownName,
-                    source: Some(token),
+                    source: ErrorSource::Single(token),
                 },
             ),
             _ => ParseRet::single_err(Error {
                 kind: ErrorKind::ExpectingName,
                 context: ErrorContext::UnknownName,
-                source: Some(token),
+                source: ErrorSource::Single(token),
             }),
         }
     }
@@ -756,7 +792,9 @@ impl<'a> Type<'a> {
         let mut errors = Vec::new();
 
         for field_tokens in fields.iter() {
-            let field = next!(types::StructField::parse(field_tokens), errors);
+            // FIXME: The wrapping function *should* provide the next token from the commas, but we
+            // currently have no way of getting that.
+            let field = next!(types::StructField::parse(field_tokens), errors, |errs| errs);
             struct_fields.push(field);
         }
 
@@ -772,7 +810,7 @@ impl<'a> types::StructField<'a> {
                 return ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingIdent,
                     context: ErrorContext::Struct,
-                    source: None,
+                    source: ErrorSource::EOF,
                 })
             }
             1 | 2 => {
@@ -780,7 +818,7 @@ impl<'a> types::StructField<'a> {
                     // FIXME this should have further cases to provide a good soft error
                     kind: ErrorKind::MalformedStructField,
                     context: ErrorContext::Struct,
-                    source: Some(&tokens[0]),
+                    source: ErrorSource::Range(tokens),
                 });
             }
             _ => (),
@@ -791,7 +829,9 @@ impl<'a> types::StructField<'a> {
         // Fist the field name (an identifier)
         let name = next!(
             Ident::parse(&tokens[0]).with_context(ErrorContext::Struct),
-            errors
+            errors,
+            // No need to set EOF because `Ident::parse` never gives it
+            |errs| errs
         );
 
         // Check for the colon
@@ -803,14 +843,16 @@ impl<'a> types::StructField<'a> {
                     Error {
                         kind: ErrorKind::ExpectingColon,
                         context: ErrorContext::Struct,
-                        source: Some(&tokens[1]),
+                        source: ErrorSource::Single(&tokens[1]),
                     },
                 );
             }
         };
 
         // Finally the type expression.
-        let type_expr = next!(TypeExpr::parse(&tokens[2..]), errors);
+        // We don't set eof here because it consumes the rest of the tokens we have - it's still an
+        // EOF for us
+        let type_expr = next!(TypeExpr::parse(&tokens[2..]), errors, |errs| errs);
 
         ParseRet::with_soft_errs(
             types::StructField {
@@ -823,16 +865,20 @@ impl<'a> types::StructField<'a> {
 }
 
 impl<'a> TypeExpr<'a> {
+    /// Parses a type expression from the start of a list of tokens, without necessarily consuming
+    /// all of them
+    ///
+    /// The number of tokens used can be checked with `TypeExpr::consumed`.
     fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, TypeExpr<'a>> {
         use ErrorContext::NoContext;
-        use ErrorKind::{ExpectingType, EOF};
+        use ErrorKind::ExpectingType;
         use TokenKind::{Curlys, Parens, TypeIdent};
 
         if tokens.is_empty() {
             return ParseRet::single_err(Error {
-                kind: EOF,
+                kind: ExpectingType,
                 context: NoContext,
-                source: None,
+                source: ErrorSource::EOF,
             });
         }
 
@@ -844,14 +890,17 @@ impl<'a> TypeExpr<'a> {
                 source: &tokens[0..1],
             },
             Curlys(inner) | Parens(inner) => TypeExpr {
-                typ: next!(Type::parse_struct(inner), errors),
+                typ: next!(Type::parse_struct(inner), errors, |errs| Error::set_eof(
+                    errs,
+                    ErrorSource::End(&tokens[0])
+                )),
                 source: &tokens[0..1],
             },
             _ => {
                 return ParseRet::single_err(Error {
                     kind: ExpectingType,
                     context: NoContext,
-                    source: Some(&tokens[0]),
+                    source: ErrorSource::Single(&tokens[0]),
                 })
             }
         };
@@ -866,6 +915,8 @@ impl<'a> TypeExpr<'a> {
 }
 
 /// Takes the token expected to be the function params and tries to parse it.
+///
+/// This will return EOF as the source only if the token is `None`
 fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a>> {
     let tokens = match token {
         Some(t) => match &t.kind {
@@ -874,15 +925,15 @@ fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a
                 return ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingParens,
                     context: ErrorContext::FnParams,
-                    source: Some(t),
+                    source: ErrorSource::Single(t),
                 })
             }
         },
         None => {
             return ParseRet::single_err(Error {
-                kind: ErrorKind::EOF,
+                kind: ErrorKind::ExpectingParens,
                 context: ErrorContext::FnParams,
-                source: None,
+                source: ErrorSource::EOF,
             })
         }
     };
@@ -895,7 +946,10 @@ fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a
     for tokens in params_tokens {
         let param = next!(
             parse_single_param(tokens).with_context(ErrorContext::FnParams),
-            errors
+            errors,
+            // FIXME: We currently can't construct the comma tokens between the parameters, but
+            // that's what should go here to replace eof
+            |errs| errs
         );
         params.push(param);
     }
@@ -938,6 +992,7 @@ fn parse_fn_return_type<'a>(
     // Parse the type
     // The amount consumed is the type + 1 (for the arrow)
     Some(
+        // No need to set EOF here because these are given the rest of the tokens available
         TypeExpr::parse(&tokens[1..])
             .map(|typ| {
                 let consumed = typ.consumed() + 1;
@@ -969,7 +1024,10 @@ impl<'a> Stmt<'a> {
                 ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingStmt,
                     context: ErrorContext::ParseStmt,
-                    source: tokens.first(),
+                    source: tokens
+                        .first()
+                        .map(ErrorSource::Single)
+                        .unwrap_or(ErrorSource::EOF),
                 })
             })
     }
@@ -999,20 +1057,25 @@ impl<'a> Stmt<'a> {
             return Some(ParseRet::single_err(Error {
                 kind: ErrorKind::ExpectingName,
                 context: ErrorContext::LetName,
-                source: None,
+                source: ErrorSource::EOF,
             }));
         }
 
         let mut errors = Vec::new();
 
         // 2. Ident
-        let name = next_option!(Ident::parse(&tokens[1]).with_context(LetName), errors);
+        let name = next_option!(
+            Ident::parse(&tokens[1]).with_context(LetName),
+            errors,
+            // No need to set EOF because `Ident::parse` only consumes the single token
+            |errs| errs
+        );
 
         if tokens.len() <= 2 {
             errors.push(Error {
-                kind: ErrorKind::EOF,
+                kind: ErrorKind::ExpectingEquals,
                 context: LetEquals,
-                source: None,
+                source: ErrorSource::EOF,
             });
 
             return Some(ParseRet::Err(errors));
@@ -1025,7 +1088,7 @@ impl<'a> Stmt<'a> {
                 errors.push(Error {
                     kind: ErrorKind::ExpectingEquals,
                     context: LetEquals,
-                    source: Some(&tokens[2]),
+                    source: ErrorSource::Single(&tokens[2]),
                 });
 
                 return Some(ParseRet::Err(errors));
@@ -1038,11 +1101,16 @@ impl<'a> Stmt<'a> {
                 ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingExpr,
                     context: ErrorContext::LetExpr,
-                    source: tokens.get(3),
+                    source: match &tokens[3..] {
+                        [] => ErrorSource::EOF,
+                        [range @ ..] => ErrorSource::Range(range),
+                    },
                 })
                 .with_context(ErrorContext::LetExpr)
             }),
-            errors
+            errors,
+            // We don't set EOF because the tokens go to the end of what we have available
+            |errs| errs
         );
 
         // 3 for the first 3 bits, plus 1 for the trailing semicolon
@@ -1080,11 +1148,16 @@ impl<'a> Stmt<'a> {
                 ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingExpr,
                     context: PrintExpr,
-                    source: tokens.get(1),
+                    source: match &tokens[1..] {
+                        [] => ErrorSource::EOF,
+                        [range @ ..] => ErrorSource::Range(range),
+                    },
                 })
                 .with_context(PrintExpr)
             }),
-            errors
+            errors,
+            // We don't set EOF because the tokens go to the end of what we have available
+            |errs| errs
         );
 
         // 1 for 'print', 1 for the trailing semicolon
@@ -1117,6 +1190,7 @@ impl<'a> Stmt<'a> {
         let name = match Ident::parse(&tokens[0]) {
             ParseRet::Ok(n) => n,
             ParseRet::SoftErr(n, es) => {
+                // No need to set EOF because `Ident::parse` doesn't give that as a source
                 errors.extend(es.into_iter().map(|e| e.with_context(AssignName)));
                 n
             }
@@ -1138,11 +1212,16 @@ impl<'a> Stmt<'a> {
                 ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingExpr,
                     context: AssignExpr,
-                    source: tokens.get(2),
+                    source: match &tokens[2..] {
+                        [] => ErrorSource::EOF,
+                        [range @ ..] => ErrorSource::Range(range),
+                    },
                 })
                 .with_context(AssignExpr)
             }),
-            errors
+            errors,
+            // We don't set EOF because the tokens go to the end of what we have available
+            |errs| errs
         );
 
         // 2 for the first couple bits, plus 1 for the trailing semicolon
@@ -1158,13 +1237,19 @@ impl<'a> Stmt<'a> {
     }
 
     fn parse_lemma(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Self>> {
-        let proof_line = match &tokens.get(0)?.kind {
+        use proof::StmtKind::{Contract, Lemma, Malformed, Require};
+
+        let first = tokens.get(0)?;
+        let proof_line = match &first.kind {
             TokenKind::ProofLine(ts) => ts,
             _ => return None,
         };
+
         let mut errors = Vec::new();
-        let proof_stmt = next_option!(proof::Stmt::parse(proof_line), errors)?;
-        use proof::StmtKind::{Contract, Lemma, Malformed, Require};
+        let proof_stmt = next_option!(proof::Stmt::parse(proof_line), errors, |errs| {
+            Error::set_eof(errs, ErrorSource::End(first))
+        })?;
+
         // Push an error if the proof statement has the wrong kind
         match &proof_stmt.kind {
             Lemma { .. } => (),
@@ -1172,7 +1257,7 @@ impl<'a> Stmt<'a> {
                 errors.push(Error {
                     kind: ErrorKind::ExpectingLemma,
                     context: ErrorContext::FnBody,
-                    source: Some(&tokens[0]),
+                    source: ErrorSource::Single(first),
                 });
             }
             Malformed => (),
@@ -1190,6 +1275,7 @@ impl<'a> Stmt<'a> {
         use StmtKind::Eval;
 
         Some(Stmt::parse_terminated_expr(tokens)?.map(|expr| {
+            // +1 for it being terminated
             let consumed = expr.consumed() + 1;
             Stmt {
                 kind: Eval(expr),
@@ -1209,7 +1295,17 @@ impl<'a> Stmt<'a> {
             .enumerate()
             .find(|(_, t)| t.kind == Punc(Sep))
             .map(|(i, _)| i)?;
-        Some(Expr::parse(&tokens[..sep_idx])?)
+
+        Expr::parse(&tokens[..sep_idx]).map(|ret| match ret {
+            ParseRet::Ok(expr) => ParseRet::Ok(expr),
+            ParseRet::SoftErr(expr, errs) => ParseRet::SoftErr(
+                expr,
+                Error::set_eof(errs, ErrorSource::Single(&tokens[sep_idx])),
+            ),
+            ParseRet::Err(errs) => {
+                ParseRet::Err(Error::set_eof(errs, ErrorSource::Single(&tokens[sep_idx])))
+            }
+        })
     }
 }
 
@@ -1290,7 +1386,7 @@ impl<'a> Expr<'a> {
                     Error {
                         kind: ErrorKind::IntegerValueTooLarge,
                         context: ErrorContext::NoContext,
-                        source: Some(&tokens[0]),
+                        source: ErrorSource::Single(&tokens[0]),
                     },
                 )),
             },
@@ -1298,28 +1394,42 @@ impl<'a> Expr<'a> {
         }
     }
 
-    //fn parse_all(expr_sources: &'a [&'a [Token<'a>]]) -> ParseRet<'a, Vec<Expr<'a>>> {
     fn parse_all(expr_sources: Vec<&'a [Token<'a>]>) -> ParseRet<'a, Vec<Expr<'a>>> {
+        use ParseRet::{Err, Ok, SoftErr};
+
         let mut errors = Vec::new();
         let mut out = Vec::with_capacity(expr_sources.len());
+
         for tokens in expr_sources.iter() {
-            use ParseRet::{Err, Ok, SoftErr};
-            match Self::parse(tokens) {
+            match Expr::parse(tokens) {
                 Some(Ok(expr)) => out.push(expr),
                 Some(SoftErr(expr, errs)) => {
                     out.push(expr);
+                    // FIXME: We currently have no way of getting the tokens we need to replace EOF
+                    // here - the argument to this function should be changed
                     errors.extend(errs);
                 }
-                Some(Err(errs)) => return Err(errs),
+                Some(Err(errs)) => {
+                    // FIXME: We currently have no way of getting the tokens we need to replace EOF
+                    // here - the argument to this function should be changed
+                    errors.extend(errs);
+                    return Err(errors);
+                }
                 None => {
                     return ParseRet::single_err(Error {
                         kind: ErrorKind::ExpectingExpr,
                         context: ErrorContext::ParseAll,
-                        source: tokens.first(),
-                    })
+                        source: match tokens {
+                            // FIXME: We currently have no way of getting the tokens we need to
+                            // replace EOF here - the argument to this function should be changed
+                            [] => ErrorSource::EOF,
+                            [range @ ..] => ErrorSource::Range(range),
+                        },
+                    });
                 }
             }
         }
+
         ParseRet::with_soft_errs(out, errors)
     }
 
@@ -1336,20 +1446,32 @@ impl<'a> Expr<'a> {
         let callee = match Self::parse_callable(callee)? {
             Ok(callee) => callee,
             SoftErr(callee, errs) => {
-                errors = errs;
+                errors = Error::set_eof(errs, ErrorSource::Single(tokens.last().unwrap()));
                 callee
             }
-            Err(errs) => return Some(Err(errs)),
+            Err(errs) => {
+                return Some(Err(Error::set_eof(
+                    errs,
+                    ErrorSource::Single(tokens.last().unwrap()),
+                )))
+            }
         };
 
         let args = tokens::split_at_commas(&args);
         let args = match Self::parse_all(args) {
             Ok(args) => args,
             SoftErr(args, errs) => {
+                // FIXME: We currently don't have the information to replace EOF here - that will
+                // require a modification to `split_at_commas`.
                 errors.extend(errs);
                 args
             }
-            Err(errs) => return Some(Err(errs)),
+            Err(errs) => {
+                errors.extend(errs);
+                // FIXME: We currently don't have the information to replace EOF here - that will
+                // require a modification to `split_at_commas`.
+                return Some(Err(errors));
+            }
         };
 
         Some(ParseRet::with_soft_errs(
@@ -1370,33 +1492,45 @@ impl<'a> Expr<'a> {
     fn parse_both_bin_exprs(
         left_tokens: &'a [Token<'a>],
         op: BinOp,
+        op_token: &'a Token<'a>,
         right_tokens: &'a [Token<'a>],
     ) -> ParseRet<'a, ExprKind<'a>> {
         use ParseRet::{Err, Ok, SoftErr};
 
         // A helper macro for processing errors
         macro_rules! r#try {
-            ($expr:expr, $source:expr, $errors:expr, $context:expr) => {
+            ($expr:expr, $source:expr, $errors:expr, $context:expr, $eof:expr,) => {
                 match $expr {
                     None => {
                         $errors.push(Error {
                             kind: ErrorKind::ExpectingExpr,
                             context: $context,
-                            source: $source.first(), // we should probably put the operator token here if there's nothing on the left
+                            // we should probably put the operator token here if there's nothing on
+                            // the left
+                            source: match $source {
+                                [] => $eof,
+                                [range @ ..] => ErrorSource::Range(range),
+                            },
                         });
-                        Expr{ kind: ExprKind::Empty, source: $source }
-                    },
-                    Some(Err(errs)) => return Err(errs),
+                        Expr {
+                            kind: ExprKind::Empty,
+                            source: $source,
+                        }
+                    }
+                    Some(Err(errs)) => {
+                        $errors.extend(Error::set_eof(errs, $eof));
+                        return Err($errors);
+                    }
                     Some(SoftErr(exp, errs)) => {
-                        $errors.extend(errs);
+                        $errors.extend(Error::set_eof(errs, $eof));
                         exp
-                    },
+                    }
                     Some(Ok(exp)) if exp.consumed() == $source.len() => exp,
                     Some(Ok(exp)) => {
                         $errors.push(Error {
                             kind: ErrorKind::UnexpectedToken,
                             context: $context,
-                            source: Some(&$source[exp.consumed()]),
+                            source: ErrorSource::Single(&$source[exp.consumed()]),
                         });
                         exp
                     }
@@ -1410,13 +1544,15 @@ impl<'a> Expr<'a> {
             Expr::parse(left_tokens),
             left_tokens,
             errors,
-            ErrorContext::BinOperLeft
+            ErrorContext::BinOperLeft,
+            ErrorSource::Single(op_token),
         );
         let right = r#try!(
             Expr::parse(right_tokens),
             right_tokens,
             errors,
-            ErrorContext::BinOperRight
+            ErrorContext::BinOperRight,
+            ErrorSource::EOF,
         );
 
         ParseRet::with_soft_errs(ExprKind::BinOp(Box::new(left), op, Box::new(right)), errors)
@@ -1441,8 +1577,12 @@ impl<'a> Expr<'a> {
             for op in ops.iter() {
                 // Check if there's a token that will give us the operator we want
                 if let Some((idx, _)) = bin_op_indices.iter().find(|(_, o)| o == op) {
-                    let kind =
-                        Expr::parse_both_bin_exprs(&tokens[0..*idx], *op, &tokens[idx + 1..]);
+                    let kind = Expr::parse_both_bin_exprs(
+                        &tokens[0..*idx],
+                        *op,
+                        &tokens[*idx],
+                        &tokens[idx + 1..],
+                    );
 
                     return Some(kind.map(|k| Expr {
                         kind: k,
@@ -1471,20 +1611,17 @@ impl<'a> Expr<'a> {
         };
 
         let rhs = match Expr::parse(&tokens[1..]) {
+            // We don't need to set EOF here because it's already going to the end of the set of
+            // tokens we have available.
             Some(res) => res,
             None => {
-                // We'll try to get the source to be start of the expression, but that won't be
-                // posible if `tokens.len() == 1`. In that case, we'll just give the first token
-                // instead.
-                //
-                // TODO: The correct response may be to leave this as `None`. Change pending
-                // discussion.
-                let source = tokens.get(1).unwrap_or_else(|| &tokens[0]);
-
                 return Some(ParseRet::single_err(Error {
                     kind: ErrorKind::ExpectingExpr,
                     context: ErrorContext::PrefixOp,
-                    source: Some(source),
+                    source: match &tokens[1..] {
+                        [] => ErrorSource::EOF,
+                        [range @ ..] => ErrorSource::Range(range),
+                    },
                 }));
             }
         };
@@ -1513,8 +1650,19 @@ impl<'a> Expr<'a> {
         }
 
         let mut errors = Vec::new();
-        let expr = next_option!(Self::parse_callable(&tokens[..l - 2])?, errors);
-        let name = next_option!(Ident::parse(&tokens[l - 1]), errors);
+        let expr = next_option!(
+            Expr::parse_callable(&tokens[..l - 2])?,
+            errors,
+            // We set EOF to be the second-to-last token
+            |errs| Error::set_eof(errs, ErrorSource::Single(&tokens[l - 2]))
+        );
+        let name = next_option!(
+            Ident::parse(&tokens[l - 1]),
+            errors,
+            // No need to set EOF because this *is* the last token - and `Ident::parse` doesn't
+            // generate EOF sources
+            |errs| errs
+        );
         Some(ParseRet::with_soft_errs(
             Expr {
                 kind: ExprKind::FieldAccess(Box::new(expr), name),
@@ -1538,8 +1686,8 @@ impl<'a> Expr<'a> {
         let mut struct_fields = Vec::with_capacity(fields.len());
         // Keep track of the unnamed field index.
         // FIXME
-        // For now, unnamed indexes are u8. This is definitally fine for now, since a 256 tuple is
-        // probably all we'll need! This approach is not perminant however.
+        // For now, unnamed indexes are u8. This is definitely fine for now, since a 256 tuple is
+        // probably all we'll need! This approach is not permenant however.
         // We are also allowing unnamed fields to be separated by named fields. Again, we should
         // change how this works.
         let mut unnamed_idx: u8 = 0;
@@ -1549,7 +1697,9 @@ impl<'a> Expr<'a> {
             let struct_field = match Expr::parse(field) {
                 // A valid expression was found, so this is an unnamed field
                 Some(expr) => {
-                    let expr = next_option!(expr, errors);
+                    // FIXME: We should actually set EOF here, but we don't currently have the
+                    // information that we need to do so
+                    let expr = next_option!(expr, errors, |errs| errs);
                     // Generate a name based on the index
                     let name = Ident {
                         name: u8_to_str(unnamed_idx),
@@ -1562,12 +1712,14 @@ impl<'a> Expr<'a> {
                 None => {
                     // We need at least 3 tokens: `<name> ':' <expr>`
                     if field.len() < 3 || field[1].kind != TokenKind::Punc(Punc::Colon) {
+                        // FIXME: This error will be garbage if the user has accidentally written
+                        // two commas in a row
                         return Some(ParseRet::single_soft_err(
                             Expr::malformed(field),
                             Error {
                                 kind: ErrorKind::MalformedStructField,
                                 context: ErrorContext::StructExpr,
-                                source: field.first(),
+                                source: ErrorSource::Range(field),
                             },
                         ));
                     }
@@ -1575,7 +1727,9 @@ impl<'a> Expr<'a> {
                     // TODO maybe we should allow naming unnamed fields, for example
                     // { 1: "world", 0: "hello" } would be the same as { "hello", "world" }
                     // Something to consider.
-                    let name = next_option!(Ident::parse(&field[0]), errors);
+                    //
+                    // No need to set EOF because `Ident::parse` doesn't produce EOF
+                    let name = next_option!(Ident::parse(&field[0]), errors, |errs| errs);
 
                     // Try to parse the expression
                     let expr_tokens = &field[2..];
@@ -1583,10 +1737,12 @@ impl<'a> Expr<'a> {
                         Some(expr_pr) => expr_pr,
                         None => {
                             // Error if there was not an expression
+                            // FIXME: This error will be garbage if the user has accidentally
+                            // written a comma following the colon
                             errors.push(Error {
                                 kind: ErrorKind::MalformedStructField,
                                 context: ErrorContext::StructExpr,
-                                source: Some(&field[2]),
+                                source: ErrorSource::Range(&field[2..]),
                             });
                             return Some(ParseRet::with_soft_errs(
                                 Expr::malformed(expr_tokens),
@@ -1594,7 +1750,9 @@ impl<'a> Expr<'a> {
                             ));
                         }
                     };
-                    let expr = next_option!(expr_pr, errors);
+                    // FIXME: This has the same issue as above; we need more information to be able
+                    // to set EOF to what it should be
+                    let expr = next_option!(expr_pr, errors, |errs| errs);
 
                     (name, expr)
                 }

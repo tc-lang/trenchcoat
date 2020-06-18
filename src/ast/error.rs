@@ -5,19 +5,29 @@ use crate::tokens::Token;
 
 /// Errors each have a kind and a context in which it occured. These can be combined with the
 /// source token to create a hopefully ok error message.
-/// The source may not be given in some error cases, for example when there's an unexpected EOF.
 #[derive(Debug, Clone)]
 pub struct Error<'a> {
     pub kind: Kind,
     pub context: Context,
-    pub source: Option<&'a Token<'a>>,
+    pub source: Source<'a>,
+}
+
+/// The source for a parsing error; either a single token or a range
+#[derive(Debug, Copy, Clone)]
+pub enum Source<'a> {
+    Single(&'a Token<'a>),
+    Range(&'a [Token<'a>]),
+    /// EOF gives the index of the token if the function producing the error was called with a
+    /// slice of tokens. Whenever this may be the case, this should be accounted for and replaced
+    /// with one of the other two
+    EOF,
+    /// Indicates that the source occured at the end of a block token - any of `Parens`, `Curlys`,
+    /// or `ProofLine`.
+    End(&'a Token<'a>),
 }
 
 #[derive(Debug, Clone, Copy)]
 pub enum Kind {
-    /// This error is generated when, during parsing, there are no more tokens when some are
-    /// expected.
-    EOF,
     /// This error is generated when a type ident is given where a name ident should have been.
     /// This didd contain a string, maybe useful for suggesting a valid name later on however now
     /// the Error type contains the token so it can be retrieved from that.
@@ -32,6 +42,8 @@ pub enum Kind {
     ExpectingEquals,
     ExpectingExpr,
     ExpectingStmt,
+    /// When a type is expected, the first token should be any of `TypeIdent`, `Parens`, or
+    /// `Curlys`
     ExpectingType,
     ExpectingIdent,
     ExpectingColon,
@@ -47,8 +59,9 @@ pub enum Kind {
     /// `require` keyword.
     SingleContractCondition,
 
-    /// An error resulting from proof statments. This occurs when two conditions were expected as
-    /// part of a contract, but more than two were given. The number of these conditions is
+    /// An error resulting from proof statments. This occurs when parsing a contract, which has
+    /// conditions separated by `=>` tokens. There should only be two of these (so the value here
+    /// will be ≥ 3)
     TooManyContractConditions(usize),
 
     /// A place where a proof condition expected to have a comparison operator but there was none
@@ -96,6 +109,15 @@ impl<'a> Error<'a> {
             context: ctx,
             ..self
         }
+    }
+
+    pub fn set_eof(mut errs: Vec<Self>, source: Source<'a>) -> Vec<Self> {
+        errs.iter_mut().for_each(|e| {
+            if let Source::EOF = e.source {
+                e.source = source;
+            }
+        });
+        errs
     }
 }
 
