@@ -948,6 +948,7 @@ impl<'a> Scope<'a> {
                     kind: IncorrectNumberOfArgs {
                         given: args.len(),
                         func,
+                        fn_name: name,
                     },
                     context: ExprCtx,
                     source: Node::Args(&args),

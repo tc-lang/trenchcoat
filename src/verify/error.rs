@@ -29,6 +29,7 @@ pub enum Kind<'a> {
     IncorrectNumberOfArgs {
         given: usize,
         func: &'a Func<'a>,
+        fn_name: &'a str,
     },
     VariableNotFound,
     AccessFieldOnNotStruct,
@@ -95,10 +96,7 @@ impl<'a> Error<'a> {
 
 impl PrettyError for Error<'_> {
     fn pretty_format(&self, file_str: &str, file_name: &str) -> String {
-        use Kind::{
-            FailedContract, FailedProofs, FunctionMustBeName, FunctionNotFound, ItemConflict,
-            TypeMismatch,
-        };
+        use Kind::*;
 
         match &self.kind {
             ItemConflict(fst, snd) => Error::format_item_conflict(fst, snd, file_str, file_name),
@@ -108,9 +106,25 @@ impl PrettyError for Error<'_> {
             FunctionMustBeName => {
                 Error::format_function_must_be_name(&self.source, file_str, file_name)
             }
+            IncorrectNumberOfArgs {
+                fn_name,
+                func,
+                given,
+            } => Error::format_incorrect_number_of_args(
+                *given,
+                fn_name,
+                func,
+                &self.source,
+                file_str,
+                file_name,
+            ),
+            VariableNotFound => Error::format_variable_not_found(&self.source, file_str, file_name),
+            // TODO: AccessFieldNotOnStruct
             TypeMismatch { expected, found } => {
                 Error::format_type_mismatch(expected, found, &self.source, file_str, file_name)
             }
+            // TODO: MisplacedReturnIdent
+            // TODO: FeatureNotAllowed
             FailedProofs {
                 fn_name,
                 func_info,
@@ -123,6 +137,7 @@ impl PrettyError for Error<'_> {
                 file_str,
                 file_name,
             ),
+            // TODO: FailedLemma
             FailedContract {
                 fn_name,
                 failed,
@@ -139,7 +154,7 @@ impl PrettyError for Error<'_> {
                 file_str,
                 file_name,
             ),
-            _ => format!("{:?}\n", self),
+            _ => format!("Error message currently unimplemented:\n{:?}\n", self),
         }
     }
 }
@@ -288,6 +303,48 @@ impl Error<'_> {
         format!(
             "{}: function calls must be direct by name\n{}",
             Red.paint("error"),
+            context_lines(source.byte_range(), file_str, file_name)
+        )
+    }
+
+    fn format_incorrect_number_of_args(
+        given: usize,
+        fn_name: &str,
+        func: &Func,
+        source: &Node,
+        file_str: &str,
+        file_name: &str,
+    ) -> String {
+        let mut msg = format!(
+            "{}: incorrect number of arguments to function '{}'\n",
+            Red.paint("error"),
+            fn_name
+        );
+
+        let (context, spacing) =
+            context_lines_and_spacing(source.byte_range(), file_str, file_name);
+
+        writeln!(
+            msg,
+            "{}\n{} {}\n{} {} help: expected {} arguments, found {}",
+            context,
+            spacing,
+            Blue.paint("|"),
+            spacing,
+            Blue.paint("|"),
+            func.params.len(),
+            given,
+        )
+        .unwrap();
+
+        msg
+    }
+
+    fn format_variable_not_found(source: &Node, file_str: &str, file_name: &str) -> String {
+        format!(
+            "{}: variable '{}' not found\n{}",
+            Red.paint("error"),
+            &file_str[source.byte_range()],
             context_lines(source.byte_range(), file_str, file_name)
         )
     }
