@@ -4,7 +4,8 @@ use super::fast_optimiser::{options, options::Options, Maximizer, Minimizer};
 use super::int::Int;
 use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
 
-pub type DefaultProver<'a> = ScopedSimpleProver<'a, Prover<'a, options::DefaultOptions>>;
+pub type DefaultSimpleProver<'a> = Prover<'a, options::DefaultOptions>;
+pub type DefaultProver<'a> = ScopedSimpleProver<'a, DefaultSimpleProver<'a>>;
 
 pub struct Prover<'a, Opt: Options> {
     given: Vec<Expr<'a>>,

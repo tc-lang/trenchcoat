@@ -28,7 +28,7 @@ use std::ops::{Deref, Not};
 /// The standard prover uses the graph method for normal proofs and the bound method for lemma
 /// proofs.
 pub type StandardSimpleProver<'a> =
-    JointSimpleProver<'a, graph::Prover, fast_bound_method::DefaultProver<'a>>;
+    JointSimpleProver<'a, graph::Prover, fast_bound_method::DefaultSimpleProver<'a>>;
 /// Wrapped `StandardSimpleProver`
 pub type StandardProver<'a> = ScopedSimpleProver<'a, StandardSimpleProver<'a>>;
 

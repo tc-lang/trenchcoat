@@ -10,10 +10,7 @@ use crate::proof::fast_bound_method::DefaultProver as InnerProver;
 use crate::proof::graph::FullProver as InnerProver;
 
 #[cfg(not(any(feature = "bounds", feature = "graph")))]
-compile_error!("Either the 'graph' feature or the 'bounds' feature must be enabled");
-
-#[cfg(not(any(feature = "bounds", feature = "graph")))]
-type InnerProver<'a> = ScopedSimpleProver<'a, Dummy>;
+use crate::proof::StandardProver as InnerProver;
 
 pub struct WrappedProver<'a> {
     /// The inner prover
