@@ -325,23 +325,19 @@ macro_rules! find_pg_group_fn {
                                     }
                                     let bound =
                                         bounds_on_ge0(ge0, &var, |x| self.sign_of(x))?.simplify();
-                                    if true || bound.relation_kind() == top_bound.relation_kind() {
-                                        Some((
-                                            bound.clone(),
-                                            Self::sub_bound(
-                                                &self.solving,
-                                                &DescriptiveBound {
-                                                    subject: var.clone(),
-                                                    bound,
-                                                },
-                                                |x| self.sign_of(x),
-                                            )?
-                                            .simplify(),
-                                            given_idx,
-                                        ))
-                                    } else {
-                                        None
-                                    }
+                                    Some((
+                                        bound.clone(),
+                                        Self::sub_bound(
+                                            &self.solving,
+                                            &DescriptiveBound {
+                                                subject: var.clone(),
+                                                bound,
+                                            },
+                                            |x| self.sign_of(x),
+                                        )?
+                                        .simplify(),
+                                        given_idx,
+                                    ))
                                 }
                             })
                             .collect(),
