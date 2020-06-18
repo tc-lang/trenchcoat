@@ -351,6 +351,10 @@ The algorithms for these are fairly trivial.
 
 For the full implementation, see [src/proof/fast_optimiser.rs](https://github.com/tc-lang/trenchcoat/blob/9826856639651b62676cba24e3456c971a42dfa3/src/proof/fast_optimiser.rs#L579).
 
+Since this was written, the method for handling products has been improved to do fast checks on
+signs of variables to allow it to prove more cases. This work is still in progress and this section
+will be updated when complete. The link above links to an older implementation.
+
 #### Rearranging
 
 ##### Relations
@@ -698,8 +702,6 @@ requirement`) then a substitution only needs to be made into one expression per 
 
 This section will describe the current method, based on the optimisations described above.
 
-Many iteration were required to get to this algorithm; they will be briefly discussed afterwards.
-
 ### Input Format
 
 Each requirement (`req`) is converted to an expression (`expr`) such that `req ⇔ expr ≥ 0`.
@@ -730,51 +732,51 @@ Each node has:
 - its children.
 
 (Where this is going: the `solving` value of each node in a *minimizer tree* will be a lower bound
-of its parent; likewise for a *maximizer tree*, each nodes `solving` value will be an upper bound of
+of its parent; likewise for a *maximizer tree*, each node's `solving` value will be an upper bound of
 its parent.)
 
 The root node starts with `solving` created directly from the proposition and `given` created
 directly from the requirements as described above.
 
-If `solving` contains no variables, then this node yields `solving` as a bound.
+If `solving` contains no variables, this node yields `solving` as a bound.
 
-Otherwise, each node chooses a variable from `solving` (*x*) and tried to rearrange each of the
+Otherwise, each node chooses a variable from `solving` (*x*) and tries to rearrange each of the
 requirements (from it's *ge0 expression*) into a bound on *x*. If one is found, the rest of the
 requirements are rearranged to make *x* the subject and bounds with the same relation kind are
 collected to form a *permutation group* (as defined in the [Optimisations](#optimisations) section).
-Otherwise, if none of the requirements specify a computable bound, then a different variable is
-chosen or, if no more choices can be made, the node yields `solving` as a bound.
+Otherwise, if none of the requirements specify a computable bound, a different variable is chosen
+or, if no more choices can be made, the node yields `solving` as a bound.
 
-It should be noted that the method for choosing variables does not particularly matter but the chosen
-method here is to select them in sorted order based on their variable names. This is due to the
-method of removing duplicates from the variables searched and any other order would likely make
-very little or no difference.
+It should be noted that the method for choosing variables does not particularly matter but the
+chosen method here is to select variables in sorted order based on their names. This is due to the
+method of removing duplicates from the variables searched and any other order would likely make very
+little or no difference.
 
 For each `bound` in the *permutation group*, a child is created.
 
 The child's `given` values are created by using the *Maximizer substituter* to substitute the chosen
-bound to produce upper bounds on the current nodes own `given` values.
+bound to produce upper bounds on the current node's own `given` values.
 
 This produces a list of requirements such that `∀j ∃i 0 ≤ new_given[j] ⇐ 0 ≤ given[i] ∧ bound`.
 
-This is due to the fact that given `bound`, `0 ≤ given[i] ≤ new_given[j]`.
+This is due to the fact that `bound`, `0 ≤ given[i] ≤ new_given[j]`.
 
-Then, the child's `solving` value is given by using the optimisers own substituter on its `solving`
+Then, the child's `solving` value is given by using the optimiser's own substituter on its `solving`
 value and the chosen bound. Hence, for a *minimizer tree*, the child's `solving` value is a lower
 bound and for a *maximizer tree* the child's solving value is an upper bound.
 
 In the case of a *minimizer tree*, this gives: `0 ≤ new_solving ⇒ 0 ≤ solving`; in the case of a
 *maximizer tree*, this gives: `new_solving < 0 ⇒ solving < 0` and so if the child yields a bound to
 prove that its expression is the correct side of 0, it is also implied for all of its parents. This
-fact forms the basis for the proof algorithm.
+fact forms the basis of the proof algorithm.
 
 Moreover, the requirements given to the child are the requirements of the current node, excluding
 the requirement that specified the bound being substituted. This stops the same requirement being
 substituted more than once.
 
 If the child's `solving` value is equal to it's parents, then the child is not created and another
-variable selected. If this is the case for one child (so perhaps the first child) it will be true
-for all children and thus the rest shouldn't be generated and the algorithm on this node should
+variable is selected. If this is the case for one child (so perhaps the first child), it will be true
+for all children and thus the rest shouldn't be generated. The algorithm on this node should
 essentially start again, choosing another variable if one exists or yielding if not.
 
 ##### Optimiser Tree Example
@@ -819,7 +821,14 @@ fn prove(proposition: Relation, requirements: [Relation]) -> ProofResult {
 
 #### Time Complexity
 
-TODO
+The running time is maximized when the permutation groups all have the same size. With *g*
+permutation groups, they would have a size of *n*/*g*. The worst case number of nodes is therefore
+(*n*/*g*)^*g*.
+
+The value of *g* to maximizes this is:
+![](assets/bound_method_runtime.png)
+
+This is still not an acceptable time complexity.
 
 #### Budgeting
 
@@ -827,19 +836,19 @@ Like the naive method, this time complexity isn't acceptable in most cases. To s
 budgeting approach is taken to limit the amount of work the algorithm does before it fails. The
 naive budgeting had various pitfalls which this method tries to avoid.
 
-Each node in an optimiser tree is assigned a budget. This budget is roughly speaking the number of
+Each node in an optimiser tree is assigned a budget. This budget is, roughly speaking, the number of
 substitutions it is allowed to make - although to make counting cheaper this isn't overly precise.
 
 A node first spends its budget on making substitutions to the proposition and the requirements to
 generate the values for its children. The budget spent is calculated as the number of children to be
-creates multiplied by the number of requirements (this is approximately the number of substitutions
+created, multiplied by the number of requirements (this is approximately the number of substitutions
 that would be made) and subtracted from the nodes budget. It then splits the remaining budget
 equally between its children which each follow the same process.
 
 The node does not attempt to generate their permutation group and children if they have no budget.
 If they do have any budget, then they complete this process entirely even if this makes its budget
-negative. This is to save complexity in this process since it happens frequently. In this case, its
-children each receive no budget and when the node is given extra budget (see below) it does not
+negative. This is to save complexity in this process as it happens quite frequently. In this case,
+its children each receive no budget and when the node is given extra budget (see below) it does not
 distribute any to its children until it has become positive again.
 
 Budgets must also be recovered. For example, consider a chain:
@@ -863,7 +872,7 @@ Here, the `f-z` child would use no budget since it makes no further substitution
 child makes quite a few and so would spend its budget. If this budget was not high enough then the
 `f-b` node may run out of budget even if the `f-z` node did not spend its. This can be solved.
 
-If all of a nodes children either finish or run out of budget, then the node collects the remaining
+If all of a node's children either finish or run out of budget, then the node collects the remaining
 budget from all its finished children and distributes it evenly to the 'starved' children (the ones
 which would like more budget).
 
@@ -873,10 +882,10 @@ amount of surplus evenly to its children.
 This process repeats until either all nodes finish or there are no finished children to collect
 budget from when the budget runs out.
 
-Also, since budgets can only be spent in integer amounts, they will stored as integers. If a node
-cannot perfectly divide its budget between its children then it distributes the maximum possible
-even amount to each node and retains the left over budget to be added to when it receives extra
-budget which then may be distributed.
+Also, since budgets can only be spent in integer amounts, they will be stored as integers. If a node
+cannot perfectly divide its budget between its children then it distributes the maximum possible,
+even, amount to each node and retains the leftover budget. If extra budget is received, it will be
+added to the retained budget and the new total distributed.
 
 This approach allows budgeting to be effective for both keeping the depth of a wide tree shallow
 and allowing a narrow tree to become deep.
