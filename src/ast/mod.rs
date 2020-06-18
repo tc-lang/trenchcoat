@@ -109,7 +109,7 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
 /// A single AST type, given so that
 #[derive(Debug, Clone)]
 pub enum Node<'a> {
-    Ident(Ident<'a>),
+    Ident(&'a Ident<'a>),
     Item(&'a Item<'a>),
     Stmt(&'a Stmt<'a>),
     Expr(&'a Expr<'a>),
@@ -737,8 +737,8 @@ impl<'a> Block<'a> {
 
 impl<'a> Ident<'a> {
     /// Returns a `Node` containing `self`.
-    pub fn node(&self) -> Node<'a> {
-        Node::Ident(self.clone())
+    pub fn node(&'a self) -> Node<'a> {
+        Node::Ident(self)
     }
 
     /// Parses an identifier from the single token given

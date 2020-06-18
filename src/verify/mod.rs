@@ -232,7 +232,7 @@ impl<'a, 'b> TopLevelScope<'a, 'b> {
         };
 
         fn check_expr<'b>(
-            expr: &ProofExpr<'b>,
+            expr: &'b ProofExpr<'b>,
             allow_return_ident: bool,
             params: &[(&Ident<'b>, &Type<'b>)],
             required_return_int: &mut bool,
@@ -634,7 +634,7 @@ impl<'a, 'b> Scope<'a> {
     }
 
     fn check_bin_op_expr(
-        &self,
+        &'a self,
         provers: &mut Provers<'a, 'b>,
         lhs: &'a Expr<'a>,
         op: BinOp,
@@ -755,7 +755,7 @@ impl<'a, 'b> Scope<'a> {
     }
 
     fn check_prefix_op_expr(
-        &self,
+        &'a self,
         provers: &mut Provers<'a, 'b>,
         op: PrefixOp,
         rhs: &'a Expr<'a>,
@@ -782,7 +782,7 @@ impl<'a, 'b> Scope<'a> {
     /// Returns any errors, the type of the evaluated expression, the variable (either named by the
     /// user or temporary) corresponding to the expression, if it is available.
     fn check_expr(
-        &self,
+        &'a self,
         provers: &mut Provers<'a, 'b>,
         expr: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
@@ -830,8 +830,7 @@ impl<'a, 'b> Scope<'a> {
             Named(name) => match self.get(name.name) {
                 Some(item) => (
                     Vec::new(),
-                    // FIXME transmute
-                    unsafe { transmute(item.typ.clone()) },
+                    item.typ.clone(),
                     Some(name.clone()),
                     Mask::none(provers.size()),
                 ),
@@ -905,7 +904,7 @@ impl<'a, 'b> Scope<'a> {
     /// provers to stop them if there were any errors so significant as to warrant stopping proof
     #[rustfmt::skip]
     fn check_fn_call_expr(
-        &self,
+        &'a self,
         provers: &mut Provers<'a, 'b>,
         fn_expr: &'a Expr<'a>,
         args: &'a FnArgs<'a>,
@@ -1090,7 +1089,7 @@ impl<'a, 'b> Scope<'a> {
     /// Checks an assignment operation, returning any errors encountered and whether any were so
     /// significant as to warrant forgoing further proof checking.
     fn check_assign(
-        &self,
+        &'a self,
         provers: &mut Provers<'a, 'b>,
         ident: &'a Ident<'a>,
         expr: &'a Expr<'a>,
@@ -1101,8 +1100,7 @@ impl<'a, 'b> Scope<'a> {
             Some(item) if item.typ != expr_type => {
                 errors.push(Error {
                     kind: error::Kind::TypeMismatch {
-                        // FIXME transmute
-                        expected: vec![unsafe { transmute(item.typ.clone()) }],
+                        expected: vec![item.typ.clone()],
                         found: expr_type.clone(),
                     },
                     context: error::Context::Assign,
@@ -1138,7 +1136,7 @@ impl<'a, 'b> Scope<'a> {
 
     /// Checks that the given block is valid within its scope
     fn check_block(
-        &self,
+        &'a self,
         provers: &mut Provers<'a, 'b>,
         block: &'a Block<'a>,
         start: usize,
