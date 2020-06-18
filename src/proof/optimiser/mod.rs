@@ -28,8 +28,6 @@ const LAZY_GENERATE_CHILDREN: bool = true;
 const BFS: bool = false;
 /// If true, only make substitutions that don't increase the number of variables.
 // TODO const NO_MORE_VARIABLES: bool = false;
-/// WIP
-const TRIVIAL_SIGN_LIMIT: usize = 1;
 
 const TRY_NO_SUB: bool = NO_SUB_FIRST || NO_SUB_LAST;
 
@@ -255,74 +253,25 @@ fn ge0_sub_and_exclude<'a, Opt: Options, NS: Fn(&Ident<'a>) -> Option<i8> + Copy
     sub: &DescriptiveBound<'a>,
     named_sign: NS,
 ) -> Vec<Expr<'a>> {
-    //println!("Subbing {}", sub);
-    /*for ge0 in ge0s {
-        println!("{}", ge0);
-    }*/
-    //println!("Excluding {}", exclude);
-    let res = ge0s[exclude + 1..]
+    ge0s[exclude + 1..]
         .iter()
         .chain(ge0s[..exclude].iter())
         .map(|expr| {
             Maximizer::<Opt>::sub_bound(expr, sub, named_sign).unwrap_or_else(|| expr.clone())
         })
         .map(|expr| expr.simplify())
-        .collect();
-    /*for ge0 in &res {
-        println!("{}", ge0);
-    }
-    println!("--");*/
-    res
+        .collect()
 }
 
 // Methods on both Maximizer and Minimizer
 macro_rules! find_pg_group_fn {
     () => {
-        // THIS IS A WORK IN PROGRESS
-        fn trivial_sign(&self, x: &Ident<'a>, exclude: &[&Ident]) -> Option<i8> {
-            self.sign_cache.get(x)
-            /*self.sign_cache.get_or_else(x, || {
-                println!("Not cached :(");
-                if exclude.len() >= TRIVIAL_SIGN_LIMIT {
-                    return None;
-                }
-
-                let mut new_exclude_vec;
-                let new_exclude_arr;
-                let new_exclude;
-                if exclude.len() == 0 {
-                    new_exclude_arr = [x];
-                    new_exclude = &new_exclude_arr[..];
-                } else {
-                    // FIXME This can be done without heap allocation
-                    new_exclude_vec = Vec::with_capacity(TRIVIAL_SIGN_LIMIT);
-                    new_exclude_vec.extend_from_slice(exclude);
-                    new_exclude_vec.push(x);
-                    new_exclude = &new_exclude_vec;
-                }
-                let named_sign = |y: &Ident<'a>| {
-                    if new_exclude.contains(&y) {
-                        None
-                    } else {
-                        self.trivial_sign(y, &new_exclude)
-                    }
-                };
-
-                for ge0 in self.given_ge0.iter() {
-                    match bounds_on_ge0(&ge0, x, named_sign) {
-                        Some(Bound::Le(expr)) => match expr.sign(named_sign) {
-                            Some(-1) => return Some(-1),
-                            _ => (),
-                        },
-                        Some(Bound::Ge(expr)) => match expr.sign(named_sign) {
-                            Some(1) => return Some(1),
-                            _ => (),
-                        },
-                        None => (),
-                    }
-                }
+        fn sign_of(&self, x: &Ident<'a>) -> Option<i8> {
+            if self.options.better_sign_handling() {
+                self.sign_cache.get(x)
+            } else {
                 None
-            })*/
+            }
         }
 
         fn find_permutation_group(&mut self) {
@@ -338,7 +287,7 @@ macro_rules! find_pg_group_fn {
                         .filter_map(|(given_idx, expr, var)| {
                             Some((
                                 given_idx,
-                                bounds_on_ge0(expr, var, |x| self.trivial_sign(x, &[]))?.simplify(),
+                                bounds_on_ge0(expr, var, |x| self.sign_of(x))?.simplify(),
                                 var,
                             ))
                         })
@@ -352,7 +301,7 @@ macro_rules! find_pg_group_fn {
                                         subject: var.clone(),
                                         bound,
                                     },
-                                    |x| self.trivial_sign(x, &[]),
+                                    |x| self.sign_of(x),
                                 )?
                                 .simplify(),
                                 given_idx,
@@ -375,8 +324,7 @@ macro_rules! find_pg_group_fn {
                                         return None;
                                     }
                                     let bound =
-                                        bounds_on_ge0(ge0, &var, |x| self.trivial_sign(x, &[]))?
-                                            .simplify();
+                                        bounds_on_ge0(ge0, &var, |x| self.sign_of(x))?.simplify();
                                     if true || bound.relation_kind() == top_bound.relation_kind() {
                                         Some((
                                             bound.clone(),
@@ -386,7 +334,7 @@ macro_rules! find_pg_group_fn {
                                                     subject: var.clone(),
                                                     bound,
                                                 },
-                                                |x| self.trivial_sign(x, &[]),
+                                                |x| self.sign_of(x),
                                             )?
                                             .simplify(),
                                             given_idx,
@@ -465,7 +413,7 @@ macro_rules! find_pg_group_fn {
                                 subject: var.clone(),
                                 bound: bound.clone(),
                             },
-                            |x| self.trivial_sign(x, &[]),
+                            |x| self.sign_of(x),
                         ),
                         self.child_budget,
                         self.sign_cache,
@@ -514,7 +462,7 @@ macro_rules! find_pg_group_fn {
                         subject: var.clone(),
                         bound: bound.clone(),
                     },
-                    |x| self.trivial_sign(x, &[]),
+                    |x| self.sign_of(x),
                 ),
                 self.child_budget,
                 self.sign_cache,

@@ -1,7 +1,5 @@
 use super::expr::{minus_one, one, zero, Atom, Expr};
-use super::optimiser::{
-    bound_sub as _bound_sub, options::DefaultOptions as DefaultOptimiserOptions,
-};
+use super::optimiser::{bound_sub as _bound_sub, options::DefaultMode as OptimiserOptions};
 use super::PrettyFormat;
 use crate::ast::Ident;
 use std::fmt::{self, Display, Formatter};
@@ -11,7 +9,7 @@ fn bound_sub<'a, F: Fn(&Ident<'a>) -> Option<i8> + Copy>(
     sub_bound: &DescriptiveBound<'a>,
     named_sign: F,
 ) -> Option<DescriptiveBound<'a>> {
-    _bound_sub::<DefaultOptimiserOptions, F>(bound, sub_bound, named_sign)
+    _bound_sub::<OptimiserOptions, F>(bound, sub_bound, named_sign)
 }
 
 /// Represents a bound on something.

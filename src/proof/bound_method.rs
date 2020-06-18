@@ -6,14 +6,15 @@ use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
 use crate::ast::Ident;
 use crate::little_cache::Cache as LittleCache;
 
-pub type DefaultSimpleProver<'a> = Prover<'a, options::DefaultOptions>;
+pub type DefaultSimpleProver<'a> = Prover<'a, options::DefaultMode, options::LemmaMode>;
 pub type DefaultProver<'a, 'b> = ScopedSimpleProver<'a, 'b, DefaultSimpleProver<'a>>;
 
-pub struct Prover<'a, Opt: Options> {
+pub struct Prover<'a, Opt: Options, LOpt: Options> {
     given: Vec<Expr<'a>>,
     max_depth: isize,
     sign_cache: LittleCache<Ident<'a>, i8>,
     options: Opt,
+    lemma_options: LOpt,
 }
 
 pub fn default_budget(n: usize) -> isize {
@@ -22,8 +23,8 @@ pub fn default_budget(n: usize) -> isize {
     ni * ni + ni + 1 + 10000000
 }
 
-impl<'a, Opt: Options> SimpleProver<'a> for Prover<'a, Opt> {
-    fn new(reqs: Vec<Requirement<'a>>) -> Prover<'a, Opt> {
+impl<'a, Opt: Options, LOpt: Options> SimpleProver<'a> for Prover<'a, Opt, LOpt> {
+    fn new(reqs: Vec<Requirement<'a>>) -> Prover<'a, Opt, LOpt> {
         let reqs = reqs
             .iter()
             .map(|req| req.ge0().simplify())
@@ -34,13 +35,22 @@ impl<'a, Opt: Options> SimpleProver<'a> for Prover<'a, Opt> {
             max_depth: default_budget(n),
             sign_cache: LittleCache::new(8),
             options: Opt::init(),
+            lemma_options: LOpt::init(),
         };
         out.calc_signs();
         out
     }
 
     fn prove(&self, prop: &Requirement<'a>) -> ProofResult {
-        //println!("Proving {}", prop);
+        self.prove_with_options(prop, self.options.clone())
+    }
+    fn prove_lemma(&self, prop: &Requirement<'a>) -> ProofResult {
+        self.prove_with_options(prop, self.lemma_options.clone())
+    }
+}
+
+impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
+    fn prove_with_options(&self, prop: &Requirement<'a>, options: impl Options) -> ProofResult {
         // prop is true if and only if ge0 >= 0
         // So we will bound ge0 and see if we can prove that it's >= 0 or that it's < 0
         let ge0 = prop.ge0().simplify();
@@ -50,7 +60,7 @@ impl<'a, Opt: Options> SimpleProver<'a> for Prover<'a, Opt> {
             self.given.clone(),
             self.max_depth,
             &self.sign_cache,
-            self.options.clone(),
+            options.clone(),
         );
         if mini.int_bounds().any(|bound| bound >= Int::ZERO) {
             return ProofResult::True;
@@ -61,7 +71,7 @@ impl<'a, Opt: Options> SimpleProver<'a> for Prover<'a, Opt> {
             self.given.clone(),
             self.max_depth,
             &self.sign_cache,
-            self.options.clone(),
+            options,
         );
         if maxi.int_bounds().any(|bound| bound < Int::ZERO) {
             return ProofResult::False;
@@ -91,7 +101,7 @@ macro_rules! help_suggestions {
     };
 }
 
-impl<'a, Opt: Options> Prover<'a, Opt> {
+impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
     pub fn max_depth(&self) -> isize {
         self.max_depth
     }
@@ -117,14 +127,14 @@ impl<'a, Opt: Options> Prover<'a, Opt> {
                             Some(-1) => {
                                 self.sign_cache.set(var.clone(), -1);
                                 continue 'idk;
-                            },
+                            }
                             _ => (),
                         },
                         Some(Bound::Ge(expr)) => match expr.sign(|x| self.sign_cache.get(x)) {
                             Some(1) => {
                                 self.sign_cache.set(var.clone(), 1);
                                 continue 'idk;
-                            },
+                            }
                             _ => (),
                         },
                         None => (),
