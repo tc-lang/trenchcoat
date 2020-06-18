@@ -400,13 +400,11 @@ impl<'a> TopLevelScope<'a> {
 
     /// Verify that each individual item (read: currently only functions) is valid.
     fn check_items(&'a mut self) {
-        for func in self.items.values() {
+        for (name, func) in self.items.iter() {
             if let Ok(func) = func {
-                let (provers, errs) = TopLevelScope::check_fn(func, &self.items);
+                let (provers, errs) = TopLevelScope::check_fn(name, func, &self.items);
                 self.errors.extend(errs);
-                if let Some(ps) = provers {
-                    self.provers.push(ps);
-                }
+                self.provers.push(provers);
             }
         }
     }
@@ -417,9 +415,10 @@ impl<'a> TopLevelScope<'a> {
     /// Note that the returned errors may reference the provers given. As such, it should be
     /// guaranteed by the caller that the errors are dropped first.
     fn check_fn(
+        name: &'a str,
         func: &'a Func<'a>,
         items: &'a HashMap<&'a str, Result<Func<'a>, &'a Item<'a>>>,
-    ) -> (Option<Provers<'a>>, Vec<Error<'a>>) {
+    ) -> (Provers<'a>, Vec<Error<'a>>) {
         let mut prover_set = match (func.reqs.as_ref(), func.contracts.as_ref()) {
             (Some(reqs), Some(contracts)) => {
                 // NOTE: This section could be optimized to group by precondition, which would
@@ -441,17 +440,21 @@ impl<'a> TopLevelScope<'a> {
                     ));
                 }
 
-                Some(Provers::new(provers))
+                Provers::new(provers)
             }
-            _ => None,
+            _ => {
+                let mut ps = Provers::new(vec![ProverSetItem::new(&[], &[], None, &[], None)]);
+                *ps.mask_mut() = Mask::all(ps.size());
+                ps
+            },
         };
 
         // Create a scope containing all the function arguments
         let empty;
         let mut scopes;
-        let provers = prover_set.as_mut();
+        let provers: &mut Provers = &mut prover_set;
 
-        let (mut errors, tail_type, _ret_ident, _stop_proof) = if func.params.is_empty() {
+        let (mut errors, tail_type, ret_ident, mut mask) = if func.params.is_empty() {
             // If there aren't any, then this is just an empty scope.
             empty = Scope {
                 item: None,
@@ -460,7 +463,7 @@ impl<'a> TopLevelScope<'a> {
             };
             // Intentional lifetime shrinking so that the prover doesn't require the scope to have
             // a longer lifetime
-            let provers = unsafe { transmute(provers) };
+            let provers: &mut Provers = unsafe { transmute(provers) };
 
             empty.check_block(provers, func.block, 0)
         } else {
@@ -499,14 +502,10 @@ impl<'a> TopLevelScope<'a> {
 
             // Intentional lifetime shrinking so that the prover doesn't require the scope to have
             // a longer lifetime
-            let provers = unsafe { transmute(provers) };
+            let provers: &mut Provers = unsafe { transmute(provers) };
 
             scopes.last().unwrap().check_block(provers, func.block, 0)
         };
-
-        drop(_ret_ident);
-
-        // And now `scopes` shouldn't be borrowed anymore
 
         if !tail_type.is_poisoned() && tail_type != func.ret.typ {
             errors.push(Error {
@@ -517,6 +516,41 @@ impl<'a> TopLevelScope<'a> {
                 context: error::Context::FnTail,
                 source: func.block.tail.node(),
             })
+        }
+
+        // Finally - assuming we didn't have any serious errors from before, we'll check that the
+        // contracts are upheld.
+        if let (Some(ret_ident), true) = (ret_ident, errors.is_empty()) {
+            mask |= prover_set.get_mask();
+            for (_, p) in prover_set.iter().enumerate().filter(|(i,_)| mask.allows(*i)) {
+                let return_ident = Ident {
+                    name: "_",
+                    source: IdentSource::Token(&FAKE_TOKEN),
+                };
+
+                let failed_reqs = p.post.iter().filter_map(|req| {
+                    let res = p.prove_return(req, ret_ident.clone());
+                    if res == ProofResult::True {
+                        return None;
+                    }
+
+                    Some((res, req.substitute(&return_ident, &ret_ident.clone().into())))
+                }).collect::<Vec<_>>();
+
+                if !failed_reqs.is_empty() {
+                    errors.push(Error {
+                        kind: error::Kind::FailedContract {
+                            fn_name: name,
+                            failed: failed_reqs,
+                            pre_source: p.pre_source.clone(),
+                            post_source: p.post_source.clone().unwrap(),
+                            ret_ident: ret_ident.clone(),
+                        },
+                        context: error::Context::FnTail,
+                        source: func.source.node(),
+                    });
+                }
+            }
         }
 
         // Lifetime extension. This cirucmvents what would be a reliance on borrowed data in
@@ -1019,7 +1053,7 @@ impl<'a> Scope<'a> {
             mask = Mask::all(provers.size());
         }
 
-        if let (true, Some(contracts)) = (did_fail, func.contracts.as_ref()) {
+        if let (false, Some(contracts)) = (did_fail, func.contracts.as_ref()) {
             let mut reqs = vec![Vec::new(); provers.size()];
 
             for c in contracts.iter() {
@@ -1027,7 +1061,7 @@ impl<'a> Scope<'a> {
                 let pre = c.pre.iter().map(|rs| rs.substitute_all(&subs)).collect::<Vec<_>>();
 
                 provers.prove_all(&pre).into_iter().filter(|(_, passed)| *passed).for_each(|(i,_)| {
-                    reqs[i].extend(c.post.iter().cloned());
+                    reqs[i].extend(post.clone());
                 });
             }
 

@@ -1,5 +1,6 @@
 use crate::ast::{self, Ident, IdentSource, Node};
 use crate::proof::{Expr, ProofResult, Prover, Requirement, ScopedSimpleProver, SimpleProver};
+use crate::tokens::FAKE_TOKEN;
 use std::ops::{BitOr, BitOrAssign, Deref, DerefMut};
 use std::pin::Pin;
 
@@ -121,6 +122,48 @@ impl<'a> WrappedProver<'a> {
 
     pub fn prove(&self, req: &Requirement<'a>) -> ProofResult {
         self.prover.as_ref().unwrap().prove(req)
+    }
+
+    pub fn prove_return(&self, req: &Requirement<'a>, ret_ident: Ident<'a>) -> ProofResult {
+        use ScopedSimpleProver::{Defn, Root, Shadow};
+
+        let mut replacement = Expr::from(ret_ident);
+
+        // replace based on the current prover
+        match self.prover.as_ref().unwrap() {
+            Root(_) => (),
+            Defn { x, expr, .. } => replacement = replacement.substitute(x, expr),
+            Shadow { x, .. } => {
+                if replacement.variables().contains(&x) {
+                    return ProofResult::Undetermined;
+                }
+            }
+        }
+
+        for p in self.dependent_provers.iter().rev() {
+            match p.deref() {
+                Root(_) => (),
+                Defn { x, expr, .. } => replacement = replacement.substitute(x, expr),
+                Shadow { x, .. } => {
+                    if replacement.variables().contains(&x) {
+                        return ProofResult::Undetermined;
+                    }
+                }
+            }
+        }
+
+        let return_ident = Ident {
+            name: "_",
+            source: IdentSource::Token(&FAKE_TOKEN),
+        };
+        let base_req = req.substitute(&return_ident, &replacement);
+
+        let root_prover = match self.dependent_provers.deref() {
+            [root, ..] => root,
+            [] => self.prover.as_ref().unwrap(),
+        };
+
+        root_prover.prove(&base_req)
     }
 
     pub fn define(&mut self, x: Ident<'a>, expr: Expr<'a>) {

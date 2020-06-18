@@ -7,9 +7,10 @@ fn hi(x: int) -> int {
 # require x >= 3
 # x <= 2 => 5 >= _
 fn foo(x: int, y: int) -> int {
-    x*2 + y + 2*bar(x, y, 3)
+    bar(x, y, 3)
 }
 
+# x <= 2 => _ <= 2 + z
 fn bar(x: int, y: int, z: int) -> int {
     x * (y + z) + y
 }
