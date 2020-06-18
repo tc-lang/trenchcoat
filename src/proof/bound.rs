@@ -1,5 +1,5 @@
 use super::expr::{minus_one, one, zero, Atom, Expr};
-use super::fast_optimiser::{
+use super::optimiser::{
     bound_sub as _bound_sub, options::DefaultOptions as DefaultOptimiserOptions,
 };
 use super::PrettyFormat;

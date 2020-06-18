@@ -6,20 +6,18 @@
 
 mod bound;
 //mod bound_group;
-//pub mod bound_method;
+pub mod bound_method;
 pub mod expr;
-pub mod fast_bound_method;
-mod fast_optimiser;
 pub mod graph;
 pub mod int;
-//mod optimiser;
+mod optimiser;
 mod term;
 
 #[cfg(test)]
 mod tests;
 
 use crate::ast::{self, proof::Condition as AstCondition, Ident};
-use bound::{Bound, DescriptiveBound, Relation, RelationKind};
+use bound::{Relation, RelationKind};
 pub use expr::Expr;
 use std::fmt::{self, Display, Formatter};
 use std::marker::PhantomData;
@@ -28,7 +26,7 @@ use std::ops::{Deref, Not};
 /// The standard prover uses the graph method for normal proofs and the bound method for lemma
 /// proofs.
 pub type StandardSimpleProver<'a> =
-    JointSimpleProver<'a, graph::Prover, fast_bound_method::DefaultSimpleProver<'a>>;
+    JointSimpleProver<'a, graph::Prover, bound_method::DefaultSimpleProver<'a>>;
 /// Wrapped `StandardSimpleProver`
 pub type StandardProver<'a> = ScopedSimpleProver<'a, StandardSimpleProver<'a>>;
 

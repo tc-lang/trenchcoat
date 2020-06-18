@@ -5,7 +5,7 @@ use std::ops::{BitOr, BitOrAssign, Deref, DerefMut};
 use std::pin::Pin;
 
 #[cfg(feature = "bounds")]
-use crate::proof::fast_bound_method::DefaultProver as InnerProver;
+use crate::proof::bound_method::DefaultProver as InnerProver;
 #[cfg(feature = "graph")]
 use crate::proof::graph::FullProver as InnerProver;
 
