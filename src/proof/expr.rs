@@ -923,7 +923,10 @@ impl<'a> PrettyFormat<'a> for Expr<'a> {
                 "{}",
                 terms
                     .iter()
-                    .map(|term| format!("{}", term.pretty(file_str)))
+                    .map(|term| match term {
+                        Sum(_) => format!("({})", term.pretty(file_str)),
+                        _ => format!("{}", term.pretty(file_str)),
+                    })
                     .collect::<Vec<_>>()
                     .join(" * ")
             ),
