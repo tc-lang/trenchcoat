@@ -1,3 +1,5 @@
+use crate::errors::{self, PrettyError};
+use ansi_term::Color::Red;
 use std::ops::Range;
 
 pub mod auto_sep;
@@ -7,8 +9,8 @@ pub fn tokenize(input: &str) -> Vec<Token> {
 }
 
 /// Produces all of the invalid tokens from a list, recursively
-pub fn collect_invalid<'a>(tokens: &'a [Token<'a>]) -> Vec<&'a Token<'a>> {
-    use TokenKind::{Curlys, InvalidChar, Parens, Squares};
+pub fn collect_invalid<'a>(tokens: &'a [Token<'a>]) -> Vec<InvalidChar> {
+    use TokenKind::{Curlys, Parens, Squares};
 
     // This is inefficient, but that's okay. We don't need this to be industrial grade right now.
     let mut invalids = Vec::new();
@@ -17,7 +19,13 @@ pub fn collect_invalid<'a>(tokens: &'a [Token<'a>]) -> Vec<&'a Token<'a>> {
             Parens(ts) | Curlys(ts) | Squares(ts) => {
                 invalids.extend_from_slice(&collect_invalid(&ts))
             }
-            InvalidChar(_) => invalids.push(&t),
+            &TokenKind::InvalidChar(c) => {
+                let byte_range = t.byte_idx..t.byte_idx + c.len_utf8();
+                invalids.push(InvalidChar {
+                    byte_range,
+                    invalid: c,
+                });
+            }
             _ => (),
         }
     }
@@ -47,6 +55,54 @@ pub struct Token<'a> {
 
     /// The content of the token
     pub kind: TokenKind<'a>,
+}
+
+#[derive(Debug, Clone)]
+pub struct InvalidChar {
+    /// The range of bytes in the source file taken up by the character
+    ///
+    /// For most characters, this will have length exactly equal to one, but some may be longer.
+    pub byte_range: Range<usize>,
+
+    /// The character that was invalid
+    pub invalid: char,
+}
+
+impl PrettyError for InvalidChar {
+    fn pretty_format(&self, file_str: &str, file_name: &str) -> String {
+        // The error message is going to be relatively simple here. It'll look something like:
+        // ```
+        // error: unexpected character '$'
+        //  --> src/test_input.tc:5:11
+        //   |
+        // 5 |     print $foo;
+        //   |           ^
+        // ```
+
+        use crate::ast::{Ident, IdentSource};
+
+        // Because `context_lines` expects an `ast::Node`, we'll just construct a fake identifier
+        // to provide as our node.
+        let text = &file_str[self.byte_range.clone()];
+
+        let fake_token = Token {
+            byte_idx: self.byte_range.start,
+            kind: TokenKind::NameIdent(text),
+        };
+
+        let fake_ident = Ident {
+            name: &file_str[self.byte_range.clone()],
+            source: IdentSource::Token(&fake_token),
+        };
+
+        // And now we finally write the message
+        format!(
+            "{}: unexpected character {:?}\n{}",
+            Red.paint("error"),
+            self.invalid,
+            errors::context_lines(&fake_ident.node(), file_str, file_name)
+        )
+    }
 }
 
 impl Token<'_> {

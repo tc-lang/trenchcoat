@@ -84,7 +84,8 @@ pub fn underline(line: &str, mut range: Range<usize>) -> String {
 /// selection + highlighting of the source. The returned string has a trailing - but no leading
 /// - newline.
 ///
-/// For more information, see the comments inside the function.
+/// For more information, see the comments inside `context_lines_and_spacing`, where a detailed
+/// explanation is given - both of the total message and each component.
 pub fn context_lines(source: &Node, file_str: &str, file_name: &str) -> String {
     context_lines_and_spacing(source, file_str, file_name).0
 }

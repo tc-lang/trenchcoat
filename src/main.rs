@@ -26,7 +26,7 @@ fn main() {
     // which could proudce runtime errors that we'd need to handle, we just do all of the necessary
     // IO at compile-time.
     let input_str = include_str!("test_input.tc");
-    const FULL_INPUT_FILE: &'static str = "src/test_input.tc";
+    static FULL_INPUT_FILE: &'static str = "src/test_input.tc";
 
     // 2. Tokenize
     //
@@ -41,9 +41,10 @@ fn main() {
 
     let invalid_tokens = tokens::collect_invalid(&tokens);
     if !invalid_tokens.is_empty() {
-        for t in invalid_tokens {
-            eprintln!("Invalid token {:?}", t);
-        }
+        // We reverse the tokens, so that the user sees the "first" error at the bottom if there's
+        // far too many to fit within a single screen height.
+        let tokens = invalid_tokens.into_iter().rev().collect::<Vec<_>>();
+        display_errors(input_str, FULL_INPUT_FILE, &tokens, "Could not parse");
         return;
     }
 
