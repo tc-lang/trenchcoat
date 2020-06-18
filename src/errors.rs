@@ -1,6 +1,5 @@
 //! A collection of helper functions and traits for helping to construct and display error messages
 
-use crate::ast::Node;
 use ansi_term::Color::{Blue, Red};
 use std::fmt::Write;
 use std::ops::Range;
@@ -61,7 +60,7 @@ pub fn line_info<'a>(file_str: &'a str, byte_idx: usize) -> (usize, usize, usize
 }
 
 /// Produces a row of caret characters to underline the given byte range of the line. The upper
-/// value on the byte range may be longer than the end of the line - this is quietly ignored.
+/// value on the byte range may be longer than the end of the line, plus one - this is quietly ignored.
 pub fn underline(line: &str, mut range: Range<usize>) -> String {
     range.end = range.end.min(line.len());
 
@@ -70,11 +69,15 @@ pub fn underline(line: &str, mut range: Range<usize>) -> String {
     // values.
 
     // For consistency, we'll double-check that the range is within the bounds of the line
-    assert!(range.start < line.len());
+    assert!(range.start <= line.len());
+
+    if range.end == range.start {
+        range.end += 1;
+    }
 
     let mut pre = " ".repeat(range.start);
     let mid = "^".repeat(range.end - range.start);
-    let post = " ".repeat(line.len() - range.end);
+    let post = " ".repeat(line.len().saturating_sub(range.end));
 
     write!(pre, "{}{}", mid, post).unwrap();
     pre
@@ -86,7 +89,7 @@ pub fn underline(line: &str, mut range: Range<usize>) -> String {
 ///
 /// For more information, see the comments inside `context_lines_and_spacing`, where a detailed
 /// explanation is given - both of the total message and each component.
-pub fn context_lines(source: &Node, file_str: &str, file_name: &str) -> String {
+pub fn context_lines(source: Range<usize>, file_str: &str, file_name: &str) -> String {
     context_lines_and_spacing(source, file_str, file_name).0
 }
 
@@ -96,7 +99,7 @@ pub fn context_lines(source: &Node, file_str: &str, file_name: &str) -> String {
 /// This function is useful in cases where additional information must be displayed after the
 /// context lines - that additional info needs to be aligned in the same manner.
 pub fn context_lines_and_spacing(
-    source: &Node,
+    byte_range: Range<usize>,
     file_str: &str,
     file_name: &str,
 ) -> (String, String) {
@@ -114,7 +117,6 @@ pub fn context_lines_and_spacing(
     // We'll use this particular example to demonstrate what each component supplies to the
     // total set of lines.
 
-    let byte_range = source.byte_range();
     let (line_no, col_no, line_offset, _, line) = line_info(file_str, byte_range.start);
 
     let line_no_str = (line_no + 1).to_string();

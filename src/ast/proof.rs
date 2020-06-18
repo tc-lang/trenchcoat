@@ -1,6 +1,6 @@
 //! Parsing for proof statements
 
-use crate::ast::{Error, ErrorContext, ErrorKind, Ident, IdentSource, Node, ParseRet};
+use crate::ast::{Error, ErrorContext, ErrorKind, ErrorSource, Ident, IdentSource, Node, ParseRet};
 use crate::tokens::{self, split_at_commas, Oper, Token, TokenKind};
 use std::convert::{TryFrom, TryInto};
 
@@ -22,11 +22,11 @@ pub(super) fn consume_proof_lines<'a>(
         let stmt: Option<Stmt> = match Stmt::parse(ts) {
             ParseRet::Ok(s) => s,
             ParseRet::SoftErr(s, es) => {
-                errors.extend(es);
+                errors.extend(Error::set_eof(es, ErrorSource::End(t)));
                 s
             }
             ParseRet::Err(es) => {
-                errors.extend(es);
+                errors.extend(Error::set_eof(es, ErrorSource::End(t)));
                 return (consumed, ParseRet::Err(errors));
             }
         };
@@ -325,23 +325,24 @@ impl<'a> Stmt<'a> {
 
         let proof_statements;
         let stmt;
+        // The index of the token corresponding to either of `LongImplies` or `LongImpliedBy`
+        let imp_idx;
 
-        if let Some(implies_idx) = tokens
-            .iter()
-            .position(|token| token.kind == TokenKind::Oper(Oper::LongImplies))
-        {
+        let implies = TokenKind::Oper(Oper::LongImplies);
+        let implied = TokenKind::Oper(Oper::LongImpliedBy);
+
+        if let Some(idx) = tokens.iter().position(|t| t.kind == implies) {
+            imp_idx = idx;
             // <ps_1>, <ps_2>, ... ==> <stmt>
-            proof_statements = &tokens[..implies_idx];
-            stmt = &tokens[implies_idx + 1..];
-        } else if let Some(implied_idx) = tokens
-            .iter()
-            .position(|token| token.kind == TokenKind::Oper(Oper::LongImpliedBy))
-        {
+            proof_statements = &tokens[..idx];
+            stmt = &tokens[idx + 1..];
+        } else if let Some(idx) = tokens.iter().position(|t| t.kind == implied) {
+            imp_idx = idx;
             // <stmt> <== <ps_1>, <ps_2>, ...
-            stmt = &tokens[..implied_idx];
-            proof_statements = &tokens[implied_idx + 1..];
+            stmt = &tokens[..idx];
+            proof_statements = &tokens[idx + 1..];
         } else {
-            // Unproven lamma; the tokens after 'lemma' is the lemma statement.
+            // Unproven lemma; the tokens after 'lemma' is the lemma statement.
             return Some(Condition::parse(tokens).map(|cond| Stmt {
                 kind: StmtKind::Lemma {
                     stmt: cond,
@@ -350,6 +351,8 @@ impl<'a> Stmt<'a> {
                 source: tokens,
             }));
         }
+
+        let proof_statments = &tokens[..imp_idx];
 
         let mut errors = Vec::new();
 
@@ -361,11 +364,19 @@ impl<'a> Stmt<'a> {
 
         // Unwrap each proof statement
         for res in proof_statements {
-            proof.push(next_option!(res, errors));
+            // FIXME: We need more information in order to be able to set EOF here - which we
+            // should be doing
+            proof.push(next_option!(res, errors, |errs| errs));
         }
 
         // Parse the lemma statement
-        let stmt = next_option!(Condition::parse(stmt), errors);
+        let stmt = next_option!(
+            Condition::parse(stmt),
+            errors,
+            // FIXME: This needs to have EOF set as well. This is currently doable, but not worth
+            // doing without the other work as well
+            |errs| errs
+        );
 
         Some(ParseRet::with_soft_errs(
             Stmt {
@@ -398,12 +409,12 @@ impl<'a> Stmt<'a> {
                 1 => Error {
                     kind: ErrorKind::SingleContractCondition,
                     context: ErrorContext::ProofStmt,
-                    source: tokens.first(),
+                    source: ErrorSource::Range(tokens),
                 },
                 n => Error {
                     kind: ErrorKind::TooManyContractConditions(n),
                     context: ErrorContext::ProofStmt,
-                    source: tokens.first(),
+                    source: ErrorSource::Range(tokens),
                 },
             };
 
@@ -414,10 +425,13 @@ impl<'a> Stmt<'a> {
 
         let pre = match conditions[0].is_empty() {
             true => None,
-            false => Some(next!(Condition::parse(conditions[0]), errors)),
+            // FIXME: We need to modify `conditions` to produce the tokens in between
+            false => Some(next!(Condition::parse(conditions[0]), errors, |errs| errs)),
         };
 
-        let post = next!(Condition::parse(conditions[1]), errors);
+        // No need to set EOF because `conditions[1]` *is* the end of the set of tokens we were
+        // given
+        let post = next!(Condition::parse(conditions[1]), errors, |errs| errs);
 
         ParseRet::with_soft_errs(
             Stmt {
@@ -461,16 +475,21 @@ impl<'a> Condition<'a> {
 
         for op in LOGIC_OP_PRECEDENCE.iter() {
             // Check if there's a token that will give us the operator we want
-            if let Some((idx, _)) = logic_op_indices.iter().find(|(_, o)| o == op) {
+            if let Some(&(idx, _)) = logic_op_indices.iter().find(|(_, o)| o == op) {
                 // We found an operator that'll work, so we'll split and recursively parse
                 let mut errors = Vec::new();
-                let lhs = next!(Condition::parse(&tokens[..*idx]), errors);
+                let lhs = next!(Condition::parse(&tokens[..idx]), errors, |errs| {
+                    Error::set_eof(errs, ErrorSource::Single(&tokens[idx]))
+                });
                 let rhs = next!(
                     Condition::parse(tokens.get(idx + 1..).unwrap_or(&[])),
                     //               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
                     // We need to use `get` here in order to accound for the possibility of a trailing
                     // operator; if idx + 1 = tokens.len, evaluating tokens[idx+1..] will panic.
-                    errors
+                    errors,
+                    // No need to set EOF here because it goes through the end of the tokens we're
+                    // given
+                    |errs| errs
                 );
 
                 let cond = Condition {
@@ -508,7 +527,7 @@ impl<'a> Condition<'a> {
                     vec![Error {
                         kind: ErrorKind::CondWithoutCompareOp,
                         context: ErrorContext::ProofCond,
-                        source: tokens.first(),
+                        source: ErrorSource::Range(tokens),
                     }],
                 )
             }
@@ -521,7 +540,7 @@ impl<'a> Condition<'a> {
                     vec![Error {
                         kind: ErrorKind::ChainedComparison,
                         context: ErrorContext::ProofCond,
-                        source: tokens.first(),
+                        source: ErrorSource::Range(tokens),
                     }],
                 )
             }
@@ -531,8 +550,15 @@ impl<'a> Condition<'a> {
 
         let (op_idx, op) = compare_op_indices[0];
         let mut errors = Vec::new();
-        let lhs = next!(Expr::parse(&tokens[..op_idx]), errors);
-        let rhs = next!(Expr::parse(tokens.get(op_idx + 1..).unwrap_or(&[])), errors);
+        let lhs = next!(Expr::parse(&tokens[..op_idx]), errors, |errs| {
+            Error::set_eof(errs, ErrorSource::Single(&tokens[op_idx]))
+        });
+        let rhs = next!(
+            Expr::parse(tokens.get(op_idx + 1..).unwrap_or(&[])),
+            errors,
+            // No need to set EOF because this goes through the rest of the tokens we have
+            |errs| errs
+        );
 
         let cond = Condition {
             source: tokens,
@@ -565,7 +591,7 @@ impl<'a> Expr<'a> {
                 let err = Error {
                     kind: ErrorKind::ExpectingExpr,
                     context: ErrorContext::ProofExpr,
-                    source: tokens.first(),
+                    source: ErrorSource::Range(tokens),
                 };
 
                 ParseRet::SoftErr(expr, vec![err])
@@ -600,7 +626,7 @@ impl<'a> Expr<'a> {
                         vec![Error {
                             kind: ErrorKind::IntegerValueTooLarge,
                             context: ErrorContext::ProofExpr,
-                            source: Some(t),
+                            source: ErrorSource::Single(t),
                         }],
                     )),
                     Ok(n) => Some(ParseRet::Ok(Expr {
@@ -627,27 +653,34 @@ impl<'a> Expr<'a> {
 
         for ops in ARITH_OP_PRECEDENCE.iter() {
             for &op in ops.iter() {
-                if let Some((idx, _)) = op_indices.iter().find(|(_, o)| *o == op) {
+                if let Some(&(idx, _)) = op_indices.iter().find(|(_, o)| *o == op) {
                     use ParseRet::{Err, Ok, SoftErr};
 
                     let mut errors = Vec::new();
 
-                    let lhs = match Expr::parse(&tokens[..*idx]) {
+                    let lhs = match Expr::parse(&tokens[..idx]) {
                         Ok(expr) => Box::new(expr),
                         SoftErr(expr, es) => {
-                            errors.extend(es);
+                            errors.extend(Error::set_eof(es, ErrorSource::Single(&tokens[idx])));
                             Box::new(expr)
                         }
-                        Err(es) => return Some(Err(es)),
+                        Err(es) => {
+                            errors.extend(Error::set_eof(es, ErrorSource::Single(&tokens[idx])));
+                            return Some(Err(errors));
+                        }
                     };
 
                     let rhs = match Expr::parse(tokens.get(idx + 1..).unwrap_or(&[])) {
                         Ok(expr) => Box::new(expr),
                         SoftErr(expr, es) => {
+                            // We don't need to set EOF here because we parse using the rest of the
+                            // tokens
                             errors.extend(es);
                             Box::new(expr)
                         }
                         Err(es) => {
+                            // We don't need to set EOF here because we parse using the rest of the
+                            // tokens
                             errors.extend(es);
                             return Some(Err(errors));
                         }

@@ -1,5 +1,6 @@
 use crate::errors::{self, PrettyError};
 use ansi_term::Color::Red;
+use std::fmt::{self, Display, Formatter, Write};
 use std::ops::Range;
 
 pub mod auto_sep;
@@ -79,28 +80,12 @@ impl PrettyError for InvalidChar {
         //   |           ^
         // ```
 
-        use crate::ast::{Ident, IdentSource};
-
-        // Because `context_lines` expects an `ast::Node`, we'll just construct a fake identifier
-        // to provide as our node.
-        let text = &file_str[self.byte_range.clone()];
-
-        let fake_token = Token {
-            byte_idx: self.byte_range.start,
-            kind: TokenKind::NameIdent(text),
-        };
-
-        let fake_ident = Ident {
-            name: &file_str[self.byte_range.clone()],
-            source: IdentSource::Token(&fake_token),
-        };
-
         // And now we finally write the message
         format!(
             "{}: unexpected character {:?}\n{}",
             Red.paint("error"),
             self.invalid,
-            errors::context_lines(&fake_ident.node(), file_str, file_name)
+            errors::context_lines(self.byte_range.clone(), file_str, file_name)
         )
     }
 }
@@ -166,90 +151,83 @@ pub enum TokenKind<'a> {
     Fake,
 }
 
-macro_rules! kwd {
-    ($($lit:expr => $variant:ident,)+) => {
-        #[derive(Debug, Copy, Clone, PartialEq)]
-        pub enum Keyword {
+macro_rules! exact {
+    (
+        $(#[$attrs:meta])*
+        pub enum $tyname:ident {
+            $($variant:ident => $lit:expr,)+
+        }
+    ) => {
+        $(#[$attrs])*
+        pub enum $tyname {
             $($variant,)+
         }
 
-        impl Keyword {
-            fn parse(keyword: &str) -> Option<Keyword> {
-                match keyword {
-                    $($lit => Some(Keyword::$variant),)+
+        impl $tyname {
+            fn parse(this: &str) -> Option<$tyname> {
+                match this {
+                    $($lit => Some($tyname::$variant),)+
                     _ => None,
                 }
             }
 
-            /// Returns the length of the keyword, in bytes/chars
+            /// Returns the length in bytes/chars
             fn len(&self) -> usize {
                 match self {
-                    $(Keyword::$variant => $lit.len(),)+
+                    $($tyname::$variant => $lit.len(),)+
+                }
+            }
+        }
+
+        impl Display for $tyname {
+            fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+                match self {
+                    $($tyname::$variant => write!(f, $lit),)+
                 }
             }
         }
     }
 }
 
-kwd! {
-    "fn" => Fn,
-    "if" => If,
-    "let" => Let,
-    "type" => Type,
-    "print" => Print,
-    "return" => Return,
-    "require" => Require,
-    "lemma" => Lemma,
+exact! {
+    #[derive(Debug, Copy, Clone, PartialEq)]
+    pub enum Keyword {
+        Fn => "fn",
+        If => "if",
+        Let => "let",
+        Type => "type",
+        Print => "print",
+        Return => "return",
+        Require => "require",
+        Lemma => "lemma",
+    }
 }
 
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum Oper {
-    Add,
-    Sub,
-    Star,
-    Div,
-    Ref,
-    Assign,
-    Equals,
-    Lt,
-    LtOrEqual,
-    Gt,
-    GtOrEqual,
-    Not,
-    RightArrow,
-    Implies,
-    LongImplies,
-    LongImpliedBy,
-    Or,
-    And,
+exact! {
+    #[derive(Debug, Copy, Clone, PartialEq)]
+    pub enum Oper {
+        Add => "+",
+        Sub => "-",
+        Star => "*",
+        Div => "/",
+        Ref => "&",
+        Assign => "=",
+        Equals => "==",
+        Lt => "<",
+        LtOrEqual => "<=",
+        Gt => ">",
+        GtOrEqual => ">=",
+        Not => "!",
+        RightArrow => "->",
+        Implies => "=>",
+        LongImplies => "==>",
+        LongImpliedBy => "<==",
+        Or => "||",
+        And => "&&",
+    }
 }
 
 impl Oper {
-    fn parse(oper: &str) -> Option<Oper> {
-        use Oper::*;
-        match oper {
-            "+" => Some(Add),
-            "-" => Some(Sub),
-            "*" => Some(Star),
-            "/" => Some(Div),
-            "&" => Some(Ref),
-            "=" => Some(Assign),
-            "==" => Some(Equals),
-            "<" => Some(Lt),
-            "<=" => Some(LtOrEqual),
-            ">" => Some(Gt),
-            ">=" => Some(GtOrEqual),
-            "!" => Some(Not),
-            "->" => Some(RightArrow),
-            "=>" => Some(Implies),
-            "==>" => Some(LongImplies),
-            "<==" => Some(LongImpliedBy),
-            "||" => Some(Or),
-            "&&" => Some(And),
-            _ => None,
-        }
-    }
-
     /// returns true if newlines are allowed before this operator
     fn newline_prefix_allowed(self) -> bool {
         use Oper::*;
@@ -264,15 +242,6 @@ impl Oper {
     fn newline_postfix_allowed(self) -> bool {
         // right now, this is all of them
         true
-    }
-
-    fn len(&self) -> usize {
-        use Oper::*;
-        match self {
-            Add | Sub | Star | Div | Ref | Assign | Lt | Gt | Not => 1,
-            Equals | LtOrEqual | GtOrEqual | RightArrow | Implies | Or | And => 2,
-            LongImplies | LongImpliedBy => 3,
-        }
     }
 }
 
@@ -573,6 +542,19 @@ impl Token<'_> {
                 }
             }
             _ => (),
+        }
+    }
+}
+
+impl Display for Punc {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        use Punc::*;
+        match self {
+            Dot => write!(f, "."),
+            Comma => write!(f, ","),
+            Colon => write!(f, ":"),
+            Semi | Sep => write!(f, ";"),
+            Newline => write!(f, "newline"),
         }
     }
 }
