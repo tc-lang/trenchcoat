@@ -30,9 +30,9 @@ use std::mem::transmute; // :)
 /// This is needed because the errors collected into the top-level scope *can* borrow data stored
 /// within the top-level scope. It's more responsible for us to manage that drop order than to
 /// expect the caller to do it properly.
-pub struct TopLevelErrors<'a>(TopLevelScope<'a>);
+pub struct TopLevelErrors<'a, 'b>(TopLevelScope<'a, 'b>);
 
-pub fn verify<'a>(items: &'a [Item<'a>]) -> TopLevelErrors<'a> {
+pub fn verify<'a, 'b>(items: &'a [Item<'a>]) -> TopLevelErrors<'a, 'b> {
     let mut top_level = TopLevelErrors(TopLevelScope::build(items));
 
     unsafe {
@@ -43,7 +43,7 @@ pub fn verify<'a>(items: &'a [Item<'a>]) -> TopLevelErrors<'a> {
     top_level
 }
 
-impl<'a> std::ops::Deref for TopLevelErrors<'a> {
+impl<'a, 'b> std::ops::Deref for TopLevelErrors<'a, 'b> {
     type Target = Vec<Error<'a>>;
 
     fn deref(&self) -> &Self::Target {
@@ -104,7 +104,7 @@ struct Contract<'a> {
 /// The top level scope consists of named items, currently just functions. Things will be
 /// transitioned out of here as they can be placed in local scopes until everything is under
 /// the `Scope` type. It exists now for simplicity.
-struct TopLevelScope<'a> {
+struct TopLevelScope<'a, 'b> {
     // A map of function names to information about them
     //
     // The information about a function will be an `Err` if there are duplicate definitions. The
@@ -114,10 +114,10 @@ struct TopLevelScope<'a> {
 
     // A set of provers that's stored so that the errors can reference the strings stored in the
     // provers. This *must* be dropped after `errors`.
-    provers: Vec<Provers<'a>>,
+    provers: Vec<Provers<'a, 'b>>,
 }
 
-impl<'a> Drop for TopLevelScope<'a> {
+impl<'a, 'b> Drop for TopLevelScope<'a, 'b> {
     fn drop(&mut self) {
         // Clear out all of the errors before the provers, because the errors might have borrowed
         // some of the content stored in the provers
@@ -148,7 +148,7 @@ struct ScopeItem<'a> {
     source: Option<Node<'a>>,
 }
 
-impl<'a> TopLevelScope<'a> {
+impl<'a, 'b> TopLevelScope<'a, 'b> {
     /// Takes a slice of top-level items and builds a `TopLevelScope` from them.
     ///
     /// The only verification performed is on the proof statements given above functions - that
@@ -232,7 +232,7 @@ impl<'a> TopLevelScope<'a> {
         };
 
         fn check_expr<'b>(
-            expr: &'b ProofExpr<'b>,
+            expr: &ProofExpr<'b>,
             allow_return_ident: bool,
             params: &[(&Ident<'b>, &Type<'b>)],
             required_return_int: &mut bool,
@@ -419,7 +419,7 @@ impl<'a> TopLevelScope<'a> {
         name: &'a str,
         func: &'a Func<'a>,
         items: &'a HashMap<&'a str, Result<Func<'a>, &'a Item<'a>>>,
-    ) -> (Provers<'a>, Vec<Error<'a>>) {
+    ) -> (Provers<'a, 'b>, Vec<Error<'a>>) {
         let mut prover_set = match (func.reqs.as_ref(), func.contracts.as_ref()) {
             (Some(reqs), Some(contracts)) => {
                 // NOTE: This section could be optimized to group by precondition, which would
@@ -435,9 +435,9 @@ impl<'a> TopLevelScope<'a> {
                     provers.push(ProverSetItem::new(
                         reqs,
                         &c.pre,
-                        c.pre_source,
+                        c.pre_source.clone(),
                         &c.post,
-                        Some(c.post_source),
+                        Some(c.post_source.clone()),
                     ));
                 }
 
@@ -573,7 +573,7 @@ impl<'a> TopLevelScope<'a> {
     }
 }
 
-impl<'a> Scope<'a> {
+impl<'a, 'b> Scope<'a> {
     /// Creates a new scope, a child of `self`, containing `item`.
     fn child(&'a self, item: ScopeItem<'a>) -> Scope<'a> {
         Scope {
@@ -584,7 +584,7 @@ impl<'a> Scope<'a> {
     }
 
     /// Finds a scope item with the given name. This bubbles up to parent scopes.
-    fn get(&'a self, name: &str) -> Option<&'a ScopeItem> {
+    fn get(&self, name: &str) -> Option<&'a ScopeItem> {
         match &self.item {
             Some(item) if item.name == name => return Some(item),
             _ => self.parent.and_then(|scope| scope.get(name)),
@@ -592,7 +592,7 @@ impl<'a> Scope<'a> {
     }
 
     /// Finds a function with the given name. This only checks the top level scope.
-    fn get_fn(&'a self, name: &str) -> Option<&'a Result<Func<'a>, &'a Item<'a>>> {
+    fn get_fn(&self, name: &str) -> Option<&'a Result<Func<'a>, &'a Item<'a>>> {
         self.top_level.get(name)
     }
 
@@ -634,8 +634,8 @@ impl<'a> Scope<'a> {
     }
 
     fn check_bin_op_expr(
-        &'a self,
-        provers: &mut Provers<'a>,
+        &self,
+        provers: &mut Provers<'a, 'b>,
         lhs: &'a Expr<'a>,
         op: BinOp,
         rhs: &'a Expr<'a>,
@@ -755,8 +755,8 @@ impl<'a> Scope<'a> {
     }
 
     fn check_prefix_op_expr(
-        &'a self,
-        provers: &mut Provers<'a>,
+        &self,
+        provers: &mut Provers<'a, 'b>,
         op: PrefixOp,
         rhs: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
@@ -782,8 +782,8 @@ impl<'a> Scope<'a> {
     /// Returns any errors, the type of the evaluated expression, the variable (either named by the
     /// user or temporary) corresponding to the expression, if it is available.
     fn check_expr(
-        &'a self,
-        provers: &mut Provers<'a>,
+        &self,
+        provers: &mut Provers<'a, 'b>,
         expr: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
         use ExprKind::{
@@ -830,7 +830,8 @@ impl<'a> Scope<'a> {
             Named(name) => match self.get(name.name) {
                 Some(item) => (
                     Vec::new(),
-                    item.typ.clone(),
+                    // FIXME transmute
+                    unsafe { transmute(item.typ.clone()) },
                     Some(name.clone()),
                     Mask::none(provers.size()),
                 ),
@@ -904,8 +905,8 @@ impl<'a> Scope<'a> {
     /// provers to stop them if there were any errors so significant as to warrant stopping proof
     #[rustfmt::skip]
     fn check_fn_call_expr(
-        &'a self,
-        provers: &mut Provers<'a>,
+        &self,
+        provers: &mut Provers<'a, 'b>,
         fn_expr: &'a Expr<'a>,
         args: &'a FnArgs<'a>,
         enclosing_expr: &'a Expr<'a>,
@@ -1089,8 +1090,8 @@ impl<'a> Scope<'a> {
     /// Checks an assignment operation, returning any errors encountered and whether any were so
     /// significant as to warrant forgoing further proof checking.
     fn check_assign(
-        &'a self,
-        provers: &mut Provers<'a>,
+        &self,
+        provers: &mut Provers<'a, 'b>,
         ident: &'a Ident<'a>,
         expr: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, Mask) {
@@ -1100,7 +1101,8 @@ impl<'a> Scope<'a> {
             Some(item) if item.typ != expr_type => {
                 errors.push(Error {
                     kind: error::Kind::TypeMismatch {
-                        expected: vec![item.typ.clone()],
+                        // FIXME transmute
+                        expected: vec![unsafe { transmute(item.typ.clone()) }],
                         found: expr_type.clone(),
                     },
                     context: error::Context::Assign,
@@ -1136,8 +1138,8 @@ impl<'a> Scope<'a> {
 
     /// Checks that the given block is valid within its scope
     fn check_block(
-        &'a self,
-        provers: &mut Provers<'a>,
+        &self,
+        provers: &mut Provers<'a, 'b>,
         block: &'a Block<'a>,
         start: usize,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {

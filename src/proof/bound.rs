@@ -6,7 +6,7 @@ use super::PrettyFormat;
 use crate::ast::Ident;
 use std::fmt::{self, Display, Formatter};
 
-fn bound_sub<'a, F: Fn(&Ident) -> Option<i8> + Copy>(
+fn bound_sub<'a, F: Fn(&Ident<'a>) -> Option<i8> + Copy>(
     bound: &DescriptiveBound<'a>,
     sub_bound: &DescriptiveBound<'a>,
     named_sign: F,
@@ -102,7 +102,7 @@ impl<'a> Relation<'a> {
     pub fn rearrange_unsafe(
         &self,
         subject: &Ident<'a>,
-        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
     ) -> Option<Relation<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
 
@@ -227,7 +227,7 @@ impl<'a> Relation<'a> {
     pub fn bounds_on_unsafe(
         &self,
         target: &Ident<'a>,
-        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
     ) -> Option<Bound<'a>> {
         use RelationKind::{Ge, Le};
         Some(match self.rearrange_unsafe(target, named_sign)? {
@@ -248,7 +248,7 @@ impl<'a> Relation<'a> {
     pub fn bounds_on(
         &self,
         name: &Ident<'a>,
-        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
     ) -> Option<Bound<'a>> {
         // These will form the Relation that we will solve.
         // This must end up satisfying the preconditions on bounds_on_unsafe.
@@ -291,7 +291,7 @@ impl<'a> Relation<'a> {
     /// Returns a list of all the bounds that can be computed from self.
     pub fn bounds(
         &self,
-        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
     ) -> Vec<DescriptiveBound<'a>> {
         self.variables()
             .iter()
@@ -381,7 +381,7 @@ impl<'a> DescriptiveBound<'a> {
     pub fn sub(
         &self,
         sub: &DescriptiveBound<'a>,
-        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
     ) -> Option<DescriptiveBound<'a>> {
         bound_sub(self, &sub, named_sign)
     }
@@ -391,7 +391,7 @@ impl<'a> DescriptiveBound<'a> {
 pub fn bounds_on_ge0<'a>(
     expr_ge0: &Expr<'a>,
     subject: &Ident<'a>,
-    named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+    named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
 ) -> Option<Bound<'a>> {
     Relation {
         left: expr_ge0.single_x(subject)?,

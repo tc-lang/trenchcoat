@@ -1,15 +1,18 @@
-use super::bound::{Relation, RelationKind};
+use super::bound::{bounds_on_ge0, Bound, Relation, RelationKind};
 use super::expr::{zero, Expr};
-use super::optimiser::{options, options::Options, Maximizer, Minimizer};
 use super::int::Int;
+use super::optimiser::{options, options::Options, Maximizer, Minimizer};
 use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
+use crate::ast::Ident;
+use crate::little_cache::Cache as LittleCache;
 
 pub type DefaultSimpleProver<'a> = Prover<'a, options::DefaultOptions>;
-pub type DefaultProver<'a> = ScopedSimpleProver<'a, DefaultSimpleProver<'a>>;
+pub type DefaultProver<'a, 'b> = ScopedSimpleProver<'a, 'b, DefaultSimpleProver<'a>>;
 
 pub struct Prover<'a, Opt: Options> {
     given: Vec<Expr<'a>>,
     max_depth: isize,
+    sign_cache: LittleCache<Ident<'a>, i8>,
     options: Opt,
 }
 
@@ -26,14 +29,18 @@ impl<'a, Opt: Options> SimpleProver<'a> for Prover<'a, Opt> {
             .map(|req| req.ge0().simplify())
             .collect::<Vec<Expr>>();
         let n = reqs.len();
-        Prover {
+        let mut out = Prover {
             given: reqs,
             max_depth: default_budget(n),
+            sign_cache: LittleCache::new(8),
             options: Opt::init(),
-        }
+        };
+        out.calc_signs();
+        out
     }
 
     fn prove(&self, prop: &Requirement<'a>) -> ProofResult {
+        //println!("Proving {}", prop);
         // prop is true if and only if ge0 >= 0
         // So we will bound ge0 and see if we can prove that it's >= 0 or that it's < 0
         let ge0 = prop.ge0().simplify();
@@ -42,6 +49,7 @@ impl<'a, Opt: Options> SimpleProver<'a> for Prover<'a, Opt> {
             ge0.clone(),
             self.given.clone(),
             self.max_depth,
+            &self.sign_cache,
             self.options.clone(),
         );
         if mini.int_bounds().any(|bound| bound >= Int::ZERO) {
@@ -52,6 +60,7 @@ impl<'a, Opt: Options> SimpleProver<'a> for Prover<'a, Opt> {
             ge0,
             self.given.clone(),
             self.max_depth,
+            &self.sign_cache,
             self.options.clone(),
         );
         if maxi.int_bounds().any(|bound| bound < Int::ZERO) {
@@ -90,6 +99,42 @@ impl<'a, Opt: Options> Prover<'a, Opt> {
         self.max_depth = max_depth
     }
 
+    fn calc_signs(&mut self) {
+        let mut variables = Vec::new();
+        for req in self.given.iter() {
+            variables.extend(req.variables());
+        }
+        variables.sort_unstable();
+        variables.dedup();
+        'idk: loop {
+            for var in variables.iter() {
+                if self.sign_cache.get(&var).is_some() {
+                    continue;
+                }
+                for ge0 in self.given.iter() {
+                    match bounds_on_ge0(&ge0, &var, |x| self.sign_cache.get(x)) {
+                        Some(Bound::Le(expr)) => match expr.sign(|x| self.sign_cache.get(x)) {
+                            Some(-1) => {
+                                self.sign_cache.set(var.clone(), -1);
+                                continue 'idk;
+                            },
+                            _ => (),
+                        },
+                        Some(Bound::Ge(expr)) => match expr.sign(|x| self.sign_cache.get(x)) {
+                            Some(1) => {
+                                self.sign_cache.set(var.clone(), 1);
+                                continue 'idk;
+                            },
+                            _ => (),
+                        },
+                        None => (),
+                    }
+                }
+            }
+            break;
+        }
+    }
+
     /// Returns an iterator of expressions which, if ≥0, with the existing requirements, make
     /// `prop` provably true.
     pub fn implication_bounds(&self, prop: &Requirement<'a>) -> impl Iterator<Item = Expr<'a>> {
@@ -97,6 +142,7 @@ impl<'a, Opt: Options> Prover<'a, Opt> {
             prop.ge0(),
             self.given.clone(),
             self.max_depth,
+            todo!(),
             options::HelpMode::init(),
         )
     }

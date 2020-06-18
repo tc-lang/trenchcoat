@@ -1,10 +1,11 @@
 pub mod options;
 
 use self::options::Options;
-use super::ast::Ident;
 use super::bound::{bounds_on_ge0, Bound, DescriptiveBound, Relation, RelationKind};
 use super::expr::{self, Atom, Expr};
 use super::int::Int;
+use crate::ast::Ident;
+use crate::little_cache::Cache as LittleCache;
 use std::iter::Iterator;
 
 // TODO These types can probably be created with a macro to remove duplication.
@@ -28,7 +29,7 @@ const BFS: bool = false;
 /// If true, only make substitutions that don't increase the number of variables.
 // TODO const NO_MORE_VARIABLES: bool = false;
 /// WIP
-const TRIVIAL_SIGN_LIMIT: usize = 0;
+const TRIVIAL_SIGN_LIMIT: usize = 1;
 
 const TRY_NO_SUB: bool = NO_SUB_FIRST || NO_SUB_LAST;
 
@@ -38,8 +39,7 @@ const TRY_NO_SUB: bool = NO_SUB_FIRST || NO_SUB_LAST;
 /// Note that upper bounds should be rounded up when evaluated.
 /// Rounding down will not lead to incorrect behaviour but can lead to loose bounds.
 /// This is the behaviur of the int_bounds() method.
-#[derive(Clone)]
-pub struct Minimizer<'a, Opt: Options> {
+pub struct Minimizer<'a, 'b, Opt: Options> {
     /// The expression to find bounds on
     /// This must be simplified.
     solving: Expr<'a>,
@@ -58,7 +58,7 @@ pub struct Minimizer<'a, Opt: Options> {
     budget: isize,
 
     /// The currently generated direct children.
-    children: Vec<Minimizer<'a, Opt>>,
+    children: Vec<Minimizer<'a, 'b, Opt>>,
     /// The index in self.children that we should next iterate on.
     child_idx: usize,
     /// The budget to be given to new children. This is used when they are lazily generated.
@@ -71,6 +71,8 @@ pub struct Minimizer<'a, Opt: Options> {
     is_final: bool,
     yielded_self: bool,
 
+    sign_cache: &'b LittleCache<Ident<'a>, i8>,
+
     options: Opt,
     //indent: String,
 }
@@ -80,20 +82,20 @@ pub struct Minimizer<'a, Opt: Options> {
 ///
 /// Note that lower bounds should be down up when evaluated.
 /// This is the behaviur of the int_bounds() method.
-#[derive(Clone)]
-pub struct Maximizer<'a, Opt: Options> {
+pub struct Maximizer<'a, 'b, Opt: Options> {
     solving: Expr<'a>,
     given_ge0: Vec<Expr<'a>>,
     permutation_group: Option<(Ident<'a>, Vec<(Bound<'a>, Expr<'a>, usize)>)>,
     group_idx: usize,
     budget: isize,
     child_idx: usize,
-    children: Vec<Maximizer<'a, Opt>>,
+    children: Vec<Maximizer<'a, 'b, Opt>>,
     state: BudgetState,
     child_budget: isize,
     generated: bool,
     is_final: bool,
     yielded_self: bool,
+    sign_cache: &'b LittleCache<Ident<'a>, i8>,
     options: Opt,
     //indent: String,
 }
@@ -109,7 +111,7 @@ enum BudgetState {
     Stalved,
 }
 
-impl<'a, Opt: Options> Minimizer<'a, Opt> {
+impl<'a, 'b, Opt: Options> Minimizer<'a, 'b, Opt> {
     /// Returns a minimizer for `solve`.
     /// This minimizer will, using the known bounds given by `given`, iterate through expressions
     /// such that `solve` >= `expr` for any valid values of named atoms.
@@ -123,9 +125,10 @@ impl<'a, Opt: Options> Minimizer<'a, Opt> {
         solve: Expr<'a>,
         given_ge0: Vec<Expr<'a>>,
         budget: isize,
+        sign_cache: &'b LittleCache<Ident<'a>, i8>,
         options: Opt,
         //indent: String,
-    ) -> Minimizer<'a, Opt> {
+    ) -> Minimizer<'a, 'b, Opt> {
         // This combination of settings isn't allowed
         assert!(!(BFS && LAZY_GENERATE_CHILDREN));
 
@@ -142,6 +145,7 @@ impl<'a, Opt: Options> Minimizer<'a, Opt> {
             generated: false,
             is_final: false,
             yielded_self: false,
+            sign_cache,
             options,
             //indent,
         }
@@ -156,7 +160,7 @@ impl<'a, Opt: Options> Minimizer<'a, Opt> {
     }
 }
 
-impl<'a, Opt: Options> Maximizer<'a, Opt> {
+impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
     /// Returns a maximizer for `solve`.
     /// This maximizer will, using the known bounds given by `given`, iterate through expressions
     /// such that `solve` <= `expr` for any valid values of named atoms.
@@ -170,9 +174,10 @@ impl<'a, Opt: Options> Maximizer<'a, Opt> {
         solve: Expr<'a>,
         given_ge0: Vec<Expr<'a>>,
         budget: isize,
+        sign_cache: &'b LittleCache<Ident<'a>, i8>,
         options: Opt,
         //indent: String,
-    ) -> Maximizer<'a, Opt> {
+    ) -> Maximizer<'a, 'b, Opt> {
         // This combination of settings isn't allowed
         assert!(!(BFS && LAZY_GENERATE_CHILDREN));
 
@@ -189,6 +194,7 @@ impl<'a, Opt: Options> Maximizer<'a, Opt> {
             generated: false,
             is_final: false,
             yielded_self: false,
+            sign_cache,
             options,
             //indent,
         }
@@ -228,11 +234,11 @@ macro_rules! budget_impl {
     };
 }
 
-impl<'a, Opt: Options> Minimizer<'a, Opt> {
+impl<'a, 'b, Opt: Options> Minimizer<'a, 'b, Opt> {
     budget_impl!();
 }
 
-impl<'a, Opt: Options> Maximizer<'a, Opt> {
+impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
     budget_impl!();
 }
 
@@ -243,66 +249,80 @@ impl<'a, Opt: Options> Maximizer<'a, Opt> {
 /// This is so that if this is passed to a child optimiser, the next requirement checked will be
 /// the one after the one that has just been substituted (possibly reducing the number of failed
 /// rearrangements).
-fn ge0_sub_and_exclude<'a, Opt: Options, NS: Fn(&Ident) -> Option<i8> + Copy>(
+fn ge0_sub_and_exclude<'a, Opt: Options, NS: Fn(&Ident<'a>) -> Option<i8> + Copy>(
     ge0s: &[Expr<'a>],
     exclude: usize,
     sub: &DescriptiveBound<'a>,
     named_sign: NS,
 ) -> Vec<Expr<'a>> {
-    ge0s[exclude + 1..]
+    //println!("Subbing {}", sub);
+    /*for ge0 in ge0s {
+        println!("{}", ge0);
+    }*/
+    //println!("Excluding {}", exclude);
+    let res = ge0s[exclude + 1..]
         .iter()
         .chain(ge0s[..exclude].iter())
         .map(|expr| {
             Maximizer::<Opt>::sub_bound(expr, sub, named_sign).unwrap_or_else(|| expr.clone())
         })
         .map(|expr| expr.simplify())
-        .collect()
+        .collect();
+    /*for ge0 in &res {
+        println!("{}", ge0);
+    }
+    println!("--");*/
+    res
 }
 
 // Methods on both Maximizer and Minimizer
 macro_rules! find_pg_group_fn {
     () => {
         // THIS IS A WORK IN PROGRESS
-        fn trivial_sign(&self, x: &Ident, exclude: &[&Ident]) -> Option<i8> {
-            if exclude.len() >= TRIVIAL_SIGN_LIMIT {
-                return None;
-            }
+        fn trivial_sign(&self, x: &Ident<'a>, exclude: &[&Ident]) -> Option<i8> {
+            self.sign_cache.get(x)
+            /*self.sign_cache.get_or_else(x, || {
+                println!("Not cached :(");
+                if exclude.len() >= TRIVIAL_SIGN_LIMIT {
+                    return None;
+                }
 
-            let mut new_exclude_vec;
-            let new_exclude_arr;
-            let new_exclude;
-            if exclude.len() == 0 {
-                new_exclude_arr = [x];
-                new_exclude = &new_exclude_arr[..];
-            } else {
-                // FIXME This can be done without heap allocation
-                new_exclude_vec = Vec::with_capacity(TRIVIAL_SIGN_LIMIT);
-                new_exclude_vec.extend_from_slice(exclude);
-                new_exclude_vec.push(x);
-                new_exclude = &new_exclude_vec;
-            }
-            let named_sign = |y: &Ident| {
-                if new_exclude.contains(&y) {
-                    None
+                let mut new_exclude_vec;
+                let new_exclude_arr;
+                let new_exclude;
+                if exclude.len() == 0 {
+                    new_exclude_arr = [x];
+                    new_exclude = &new_exclude_arr[..];
                 } else {
-                    self.trivial_sign(y, &new_exclude)
+                    // FIXME This can be done without heap allocation
+                    new_exclude_vec = Vec::with_capacity(TRIVIAL_SIGN_LIMIT);
+                    new_exclude_vec.extend_from_slice(exclude);
+                    new_exclude_vec.push(x);
+                    new_exclude = &new_exclude_vec;
                 }
-            };
-            for ge0 in self.given_ge0.iter() {
-                match bounds_on_ge0(&ge0, x, named_sign) {
-                    //Some(Bound::Le(expr)) => match expr.sign(named_sign) {
-                    Some(Bound::Le(expr)) => match expr.sign(|_| None) {
-                        Some(-1) => return Some(-1),
-                        _ => (),
-                    },
-                    Some(Bound::Ge(expr)) => match expr.sign(|_| None) {
-                        Some(1) => return Some(1),
-                        _ => (),
-                    },
-                    None => (),
+                let named_sign = |y: &Ident<'a>| {
+                    if new_exclude.contains(&y) {
+                        None
+                    } else {
+                        self.trivial_sign(y, &new_exclude)
+                    }
+                };
+
+                for ge0 in self.given_ge0.iter() {
+                    match bounds_on_ge0(&ge0, x, named_sign) {
+                        Some(Bound::Le(expr)) => match expr.sign(named_sign) {
+                            Some(-1) => return Some(-1),
+                            _ => (),
+                        },
+                        Some(Bound::Ge(expr)) => match expr.sign(named_sign) {
+                            Some(1) => return Some(1),
+                            _ => (),
+                        },
+                        None => (),
+                    }
                 }
-            }
-            None
+                None
+            })*/
         }
 
         fn find_permutation_group(&mut self) {
@@ -357,7 +377,7 @@ macro_rules! find_pg_group_fn {
                                     let bound =
                                         bounds_on_ge0(ge0, &var, |x| self.trivial_sign(x, &[]))?
                                             .simplify();
-                                    if bound.relation_kind() == top_bound.relation_kind() {
+                                    if true || bound.relation_kind() == top_bound.relation_kind() {
                                         Some((
                                             bound.clone(),
                                             Self::sub_bound(
@@ -427,6 +447,7 @@ macro_rules! find_pg_group_fn {
                     //self.given.exclude(100000, self.pg_id),
                     todo!(),
                     self.child_budget,
+                    self.sign_cache,
                     self.options.clone(),
                 ));
             }
@@ -447,6 +468,7 @@ macro_rules! find_pg_group_fn {
                             |x| self.trivial_sign(x, &[]),
                         ),
                         self.child_budget,
+                        self.sign_cache,
                         self.options.clone(),
                     )
                 }));
@@ -495,6 +517,7 @@ macro_rules! find_pg_group_fn {
                     |x| self.trivial_sign(x, &[]),
                 ),
                 self.child_budget,
+                self.sign_cache,
                 self.options.clone(),
             ));
 
@@ -503,11 +526,11 @@ macro_rules! find_pg_group_fn {
     };
 }
 
-impl<'a, Opt: Options> Minimizer<'a, Opt> {
+impl<'a, 'b, Opt: Options> Minimizer<'a, 'b, Opt> {
     find_pg_group_fn!();
 }
 
-impl<'a, Opt: Options> Maximizer<'a, Opt> {
+impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
     find_pg_group_fn!();
 }
 
@@ -619,7 +642,7 @@ macro_rules! optimizer_next_body {
 
 /// Substitutes sub_bound in to bound and returns the result.
 /// This uses {Minimizer, Maximizer}::sub_bound
-pub fn bound_sub<'a, Opt: Options, F: Fn(&Ident) -> Option<i8> + Copy>(
+pub fn bound_sub<'a, Opt: Options, F: Fn(&Ident<'a>) -> Option<i8> + Copy>(
     bound: &DescriptiveBound<'a>,
     sub_bound: &DescriptiveBound<'a>,
     named_sign: F,
@@ -664,13 +687,13 @@ pub fn bound_sub<'a, Opt: Options, F: Fn(&Ident) -> Option<i8> + Copy>(
     })
 }
 
-impl<'a, Opt: Options> Iterator for Minimizer<'a, Opt> {
+impl<'a, 'b, Opt: Options> Iterator for Minimizer<'a, 'b, Opt> {
     type Item = Expr<'a>;
     fn next(&mut self) -> Option<Expr<'a>> {
         optimizer_next_body!(self)
     }
 }
-impl<'a, Opt: Options> Iterator for Maximizer<'a, Opt> {
+impl<'a, 'b, Opt: Options> Iterator for Maximizer<'a, 'b, Opt> {
     type Item = Expr<'a>;
     fn next(&mut self) -> Option<Expr<'a>> {
         optimizer_next_body!(self)
@@ -682,7 +705,7 @@ fn sub_bound_into<
     'a,
     SS: Fn(&Expr<'a>, &DescriptiveBound<'a>, NS) -> Option<Expr<'a>>,
     SO: Fn(&Expr<'a>, &DescriptiveBound<'a>, NS) -> Option<Expr<'a>>,
-    NS: Fn(&Ident) -> Option<i8> + Copy,
+    NS: Fn(&Ident<'a>) -> Option<i8> + Copy,
 >(
     expr: &Expr<'a>,
     bound: &DescriptiveBound<'a>,
@@ -810,14 +833,14 @@ fn sub_bound_into<
     }
 }
 
-impl<'a, Opt: Options> Minimizer<'a, Opt> {
+impl<'a, 'b, Opt: Options> Minimizer<'a, 'b, Opt> {
     /// Returns an upper bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
     pub fn sub_bound(
         expr: &Expr<'a>,
         bound: &DescriptiveBound<'a>,
-        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
     ) -> Option<Expr<'a>> {
         // If the expression is x, then an upper bound is given directly.
         if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
@@ -836,14 +859,14 @@ impl<'a, Opt: Options> Minimizer<'a, Opt> {
     }
 }
 
-impl<'a, Opt: Options> Maximizer<'a, Opt> {
+impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
     /// Returns a lower bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
     pub fn sub_bound(
         expr: &Expr<'a>,
         bound: &DescriptiveBound<'a>,
-        named_sign: impl Fn(&Ident) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
     ) -> Option<Expr<'a>> {
         if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
             return match &bound.bound {

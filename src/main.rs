@@ -7,6 +7,7 @@ mod proof;
 mod tokens;
 mod types;
 mod verify;
+mod little_cache;
 
 use ast::try_parse;
 use errors::display_errors;
