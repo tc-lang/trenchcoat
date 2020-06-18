@@ -353,9 +353,8 @@ impl<'a> Stmt<'a> {
         let mut errors = Vec::new();
 
         // Parse each proof statement
-        let proof_statements = split_at_commas(proof_statements)
-            .iter()
-            .map(|stmt| Condition::parse(stmt));
+        let proof_statements = split_at_commas(proof_statements);
+        let proof_statements = proof_statements.iter().map(|stmt| Condition::parse(stmt));
         // To hold the unwrapped proof statements
         let mut proof = Vec::with_capacity(proof_statements.len());
 
@@ -367,13 +366,16 @@ impl<'a> Stmt<'a> {
         // Parse the lemma statement
         let stmt = next_option!(Condition::parse(stmt), errors);
 
-        Some(ParseRet::with_soft_errs(Stmt {
-            kind: StmtKind::Lemma {
-                stmt,
-                proof: Some(proof),
+        Some(ParseRet::with_soft_errs(
+            Stmt {
+                kind: StmtKind::Lemma {
+                    stmt,
+                    proof: Some(proof),
+                },
+                source,
             },
-            source,
-        }, errors))
+            errors,
+        ))
     }
 
     /// Attempts to parse a contract statement from the entire set of tokens

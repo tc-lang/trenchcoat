@@ -228,7 +228,7 @@ impl<'a> TopLevelScope<'a> {
         use crate::ast::proof::{
             Condition, ConditionKind, Expr as ProofExpr,
             ExprKind::{Compound, Literal, Malformed, Named},
-            StmtKind::{self, Contract, Require},
+            StmtKind::{self, Contract, Lemma, Require},
         };
 
         fn check_expr<'b>(
@@ -372,6 +372,7 @@ impl<'a> TopLevelScope<'a> {
                         post_source: post.node(),
                     });
                 }
+                Lemma { .. } => todo!(),
                 &StmtKind::Malformed => panic!("Unexpected malformed proof statment in `verify`"),
             }
         }
@@ -446,7 +447,7 @@ impl<'a> TopLevelScope<'a> {
                 let mut ps = Provers::new(vec![ProverSetItem::new(&[], &[], None, &[], None)]);
                 *ps.mask_mut() = Mask::all(ps.size());
                 ps
-            },
+            }
         };
 
         // Create a scope containing all the function arguments
@@ -522,20 +523,31 @@ impl<'a> TopLevelScope<'a> {
         // contracts are upheld.
         if let (Some(ret_ident), true) = (ret_ident, errors.is_empty()) {
             mask |= prover_set.get_mask();
-            for (_, p) in prover_set.iter().enumerate().filter(|(i,_)| mask.allows(*i)) {
+            for (_, p) in prover_set
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| mask.allows(*i))
+            {
                 let return_ident = Ident {
                     name: "_",
                     source: IdentSource::Token(&FAKE_TOKEN),
                 };
 
-                let failed_reqs = p.post.iter().filter_map(|req| {
-                    let res = p.prove_return(req, ret_ident.clone());
-                    if res == ProofResult::True {
-                        return None;
-                    }
+                let failed_reqs = p
+                    .post
+                    .iter()
+                    .filter_map(|req| {
+                        let res = p.prove_return(req, ret_ident.clone());
+                        if res == ProofResult::True {
+                            return None;
+                        }
 
-                    Some((res, req.substitute(&return_ident, &ret_ident.clone().into())))
-                }).collect::<Vec<_>>();
+                        Some((
+                            res,
+                            req.substitute(&return_ident, &ret_ident.clone().into()),
+                        ))
+                    })
+                    .collect::<Vec<_>>();
 
                 if !failed_reqs.is_empty() {
                     errors.push(Error {
@@ -704,9 +716,7 @@ impl<'a> Scope<'a> {
 
         // Finally, if the types and operator are compatible with doing so, we'll add definitions
         // into the prover in order to account for the basic arithmetic operations.
-        if let (Some(t), Some(lhs), Some(rhs)) =
-            (out_tmp.clone(), lhs_tmp_var, rhs_tmp_var)
-        {
+        if let (Some(t), Some(lhs), Some(rhs)) = (out_tmp.clone(), lhs_tmp_var, rhs_tmp_var) {
             use crate::proof::Expr::{Neg, Prod, Recip, Sum};
 
             match op {
@@ -1030,7 +1040,7 @@ impl<'a> Scope<'a> {
                 }
             }
         }
-        
+
         let did_fail = !failed_reqs.is_empty();
 
         if did_fail {
