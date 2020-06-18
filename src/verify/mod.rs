@@ -1140,7 +1140,7 @@ impl<'a> Scope<'a> {
         block: &'a Block<'a>,
         start: usize,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
-        use StmtKind::{Assign, Eval, Let, Print};
+        use StmtKind::{Assign, Eval, Lemma, Let, Print};
 
         let original_mask = provers.get_mask();
 
@@ -1203,6 +1203,8 @@ impl<'a> Scope<'a> {
 
                     return (errs, end_type, end_tmp_var, end_mask);
                 }
+
+                Lemma(proof_stmt) => todo!(),
             }
         }
 

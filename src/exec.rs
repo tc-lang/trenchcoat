@@ -263,7 +263,7 @@ fn exec_block(block: &Block, containing_scope: Rc<RefCell<LocalScope>>) -> Value
 }
 
 fn exec_stmt<'a>(stmt: &Stmt, scope: Rc<RefCell<LocalScope>>) {
-    use StmtKind::{Assign, Eval, Let, Print};
+    use StmtKind::{Assign, Eval, Lemma, Let, Print};
 
     match &stmt.kind {
         Let(Ident { name, .. }, expr) => {
@@ -280,6 +280,7 @@ fn exec_stmt<'a>(stmt: &Stmt, scope: Rc<RefCell<LocalScope>>) {
         }
         Print(expr) => print_value(exec_expr(expr, scope)),
         Eval(expr) => drop(exec_expr(expr, scope)),
+        Lemma(_) => (),
     }
 }
 

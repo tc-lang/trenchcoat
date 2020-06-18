@@ -270,7 +270,7 @@ impl<'a> Stmt<'a> {
     ///
     /// This function will return `None` if and only if the input set of tokens is empty; this
     /// symbolizes an empty proof line.
-    fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Option<Self>> {
+    pub fn parse(tokens: &'a [Token<'a>]) -> ParseRet<'a, Option<Self>> {
         // For a detailed walkthrough of the types of statments we could parse, refer to the
         // documentation for the variants of `StmtKind`.
 
@@ -280,6 +280,7 @@ impl<'a> Stmt<'a> {
         }
 
         Stmt::parse_require(tokens)
+            .or_else(|| Stmt::parse_lemma(tokens))
             .unwrap_or_else(|| Stmt::parse_contract(tokens))
             // Wrap the inner `Stmt` into an `Option<Stmt>`
             .map(Some)

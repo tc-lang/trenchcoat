@@ -57,6 +57,9 @@ pub enum Kind {
 
     /// A place where a proof condition has multiple comparison operators; e.g. `x < y < 5`
     ChainedComparison,
+
+    /// A proof line was being parsed in a context where only lemmas are allowed
+    ExpectingLemma,
 }
 
 #[derive(Debug, Clone, Copy)]

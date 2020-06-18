@@ -282,6 +282,9 @@ pub enum StmtKind<'a> {
     /// The simple evaluation of a single expression, treated as a statement. This might be
     /// something like: `foo(bar(3));`, where `foo` and `bar` might have side effects.
     Eval(Expr<'a>),
+
+    /// A lemma proof statement. e.g. `# lemma x <= y+z`
+    Lemma(proof::Stmt<'a>),
 }
 
 #[derive(Debug, Clone)]
@@ -960,6 +963,7 @@ impl<'a> Stmt<'a> {
         Stmt::parse_let(tokens)
             .or_else(|| Stmt::parse_print(tokens))
             .or_else(|| Stmt::parse_assign(tokens))
+            .or_else(|| Stmt::parse_lemma(tokens))
             .or_else(|| Stmt::parse_eval(tokens))
             .unwrap_or_else(|| {
                 ParseRet::single_err(Error {
@@ -1148,6 +1152,35 @@ impl<'a> Stmt<'a> {
             Stmt {
                 kind: StmtKind::Assign(name, expr),
                 source: &tokens[..consumed],
+            },
+            errors,
+        ))
+    }
+
+    fn parse_lemma(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Self>> {
+        let proof_line = match &tokens.get(0)?.kind {
+            TokenKind::ProofLine(ts) => ts,
+            _ => return None,
+        };
+        let mut errors = Vec::new();
+        let proof_stmt = next_option!(proof::Stmt::parse(proof_line), errors)?;
+        use proof::StmtKind::{Contract, Lemma, Malformed, Require};
+        // Push an error if the proof statement has the wrong kind
+        match &proof_stmt.kind {
+            Lemma { .. } => (),
+            Require { .. } | Contract { .. } => {
+                errors.push(Error {
+                    kind: ErrorKind::ExpectingLemma,
+                    context: ErrorContext::FnBody,
+                    source: Some(&tokens[0]),
+                });
+            }
+            Malformed => (),
+        }
+        Some(ParseRet::with_soft_errs(
+            Stmt {
+                kind: StmtKind::Lemma(proof_stmt),
+                source: &tokens[..1],
             },
             errors,
         ))
