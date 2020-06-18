@@ -79,28 +79,12 @@ impl PrettyError for InvalidChar {
         //   |           ^
         // ```
 
-        use crate::ast::{Ident, IdentSource};
-
-        // Because `context_lines` expects an `ast::Node`, we'll just construct a fake identifier
-        // to provide as our node.
-        let text = &file_str[self.byte_range.clone()];
-
-        let fake_token = Token {
-            byte_idx: self.byte_range.start,
-            kind: TokenKind::NameIdent(text),
-        };
-
-        let fake_ident = Ident {
-            name: &file_str[self.byte_range.clone()],
-            source: IdentSource::Token(&fake_token),
-        };
-
         // And now we finally write the message
         format!(
             "{}: unexpected character {:?}\n{}",
             Red.paint("error"),
             self.invalid,
-            errors::context_lines(&fake_ident.node(), file_str, file_name)
+            errors::context_lines(self.byte_range.clone(), file_str, file_name)
         )
     }
 }

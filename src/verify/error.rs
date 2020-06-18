@@ -267,7 +267,7 @@ impl Error<'_> {
             "{}: cannot find function `{}`\n{}",
             Red.paint("error"),
             name,
-            context_lines(source, file_str, file_name)
+            context_lines(source.byte_range(), file_str, file_name)
         )
     }
 
@@ -284,7 +284,7 @@ impl Error<'_> {
         format!(
             "{}: function calls must be direct by name\n{}",
             Red.paint("error"),
-            context_lines(source, file_str, file_name)
+            context_lines(source.byte_range(), file_str, file_name)
         )
     }
 
@@ -339,7 +339,7 @@ impl Error<'_> {
             Red.paint("error"),
             expected_types,
             found,
-            context_lines(source, file_str, file_name),
+            context_lines(source.byte_range(), file_str, file_name),
         )
     }
 
@@ -405,7 +405,8 @@ impl Error<'_> {
         //
         // There's already a trailing newline from `context_lines`, so we only use write!, not
         // writeln!
-        let (context_lines, spacing) = context_lines_and_spacing(source, file_str, file_name);
+        let (context_lines, spacing) =
+            context_lines_and_spacing(source.byte_range(), file_str, file_name);
         write!(msg, "{}", context_lines).unwrap();
 
         // The line that says:
