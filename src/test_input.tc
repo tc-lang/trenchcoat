@@ -7,7 +7,6 @@ fn hi(x: int) -> int {
 # require x >= 3
 # x <= 2 => 5 >= _
 fn foo(x: int, y: int) -> int {
-    # lemma 5 <= x
     bar(x, y, 3)
 }
 
@@ -17,7 +16,7 @@ fn bar(x: int, y: int, z: int) -> int {
 }
 
 fn main() {
-    print foo(1, 2);
+    3 +
 }
 
 fn t(my_struct: { hello: int, world: {x: int, y: int, z: bool} }) -> {a: int, b: bool, c: int} {

@@ -60,7 +60,7 @@ pub fn line_info<'a>(file_str: &'a str, byte_idx: usize) -> (usize, usize, usize
 }
 
 /// Produces a row of caret characters to underline the given byte range of the line. The upper
-/// value on the byte range may be longer than the end of the line - this is quietly ignored.
+/// value on the byte range may be longer than the end of the line, plus one - this is quietly ignored.
 pub fn underline(line: &str, mut range: Range<usize>) -> String {
     range.end = range.end.min(line.len());
 
@@ -69,11 +69,15 @@ pub fn underline(line: &str, mut range: Range<usize>) -> String {
     // values.
 
     // For consistency, we'll double-check that the range is within the bounds of the line
-    assert!(range.start < line.len());
+    assert!(range.start <= line.len());
+
+    if range.end == range.start {
+        range.end += 1;
+    }
 
     let mut pre = " ".repeat(range.start);
     let mid = "^".repeat(range.end - range.start);
-    let post = " ".repeat(line.len() - range.end);
+    let post = " ".repeat(line.len().saturating_sub(range.end));
 
     write!(pre, "{}{}", mid, post).unwrap();
     pre

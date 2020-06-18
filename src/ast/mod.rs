@@ -664,7 +664,7 @@ impl<'a> Block<'a> {
                     //
                     // If the expression *is* valid, we'll return because it's the last thing - we
                     // can do this by simply breaking out of the loop
-                    match Expr::parse(&tokens[idx..]) {
+                    match Expr::parse(&tokens[idx..], true) {
                         // expression parsing failed, so we'll go with the original statement
                         // parsing error and return
                         None | Some(ParseRet::Err(_)) => {
@@ -1296,7 +1296,7 @@ impl<'a> Stmt<'a> {
             .find(|(_, t)| t.kind == Punc(Sep))
             .map(|(i, _)| i)?;
 
-        Expr::parse(&tokens[..sep_idx]).map(|ret| match ret {
+        Expr::parse(&tokens[..sep_idx], false).map(|ret| match ret {
             ParseRet::Ok(expr) => ParseRet::Ok(expr),
             ParseRet::SoftErr(expr, errs) => ParseRet::SoftErr(
                 expr,
@@ -1320,13 +1320,18 @@ impl<'a> Expr<'a> {
         self.source.len()
     }
 
-    fn parse(tokens: &'a [Token<'a>]) -> Option<ParseRet<'a, Expr<'a>>> {
+    fn parse(tokens: &'a [Token<'a>], allow_empty: bool) -> Option<ParseRet<'a, Expr<'a>>> {
         if tokens.is_empty() {
-            return Some(ParseRet::Ok(Expr {
-                kind: ExprKind::Empty,
-                source: tokens,
-            }));
+            if allow_empty {
+                return Some(ParseRet::Ok(Expr {
+                    kind: ExprKind::Empty,
+                    source: tokens,
+                }));
+            } else {
+                return None;
+            }
         }
+
         //TODO: We may want to merge the callable parts here since names are going to be much more
         // common than binary operators and are much cheaper to parse first.
         Self::parse_num_expr(tokens)
@@ -1401,7 +1406,7 @@ impl<'a> Expr<'a> {
         let mut out = Vec::with_capacity(expr_sources.len());
 
         for tokens in expr_sources.iter() {
-            match Expr::parse(tokens) {
+            match Expr::parse(tokens, false) {
                 Some(Ok(expr)) => out.push(expr),
                 Some(SoftErr(expr, errs)) => {
                     out.push(expr);
@@ -1541,14 +1546,14 @@ impl<'a> Expr<'a> {
         let mut errors = Vec::new();
 
         let left = r#try!(
-            Expr::parse(left_tokens),
+            Expr::parse(left_tokens, false),
             left_tokens,
             errors,
             ErrorContext::BinOperLeft,
             ErrorSource::Single(op_token),
         );
         let right = r#try!(
-            Expr::parse(right_tokens),
+            Expr::parse(right_tokens, false),
             right_tokens,
             errors,
             ErrorContext::BinOperRight,
@@ -1610,7 +1615,7 @@ impl<'a> Expr<'a> {
             _ => return None,
         };
 
-        let rhs = match Expr::parse(&tokens[1..]) {
+        let rhs = match Expr::parse(&tokens[1..], false) {
             // We don't need to set EOF here because it's already going to the end of the set of
             // tokens we have available.
             Some(res) => res,
@@ -1694,7 +1699,7 @@ impl<'a> Expr<'a> {
         let mut errors = Vec::new();
 
         for field in fields.iter() {
-            let struct_field = match Expr::parse(field) {
+            let struct_field = match Expr::parse(field, false) {
                 // A valid expression was found, so this is an unnamed field
                 Some(expr) => {
                     // FIXME: We should actually set EOF here, but we don't currently have the
@@ -1733,7 +1738,7 @@ impl<'a> Expr<'a> {
 
                     // Try to parse the expression
                     let expr_tokens = &field[2..];
-                    let expr_pr = match Expr::parse(expr_tokens) {
+                    let expr_pr = match Expr::parse(expr_tokens, false) {
                         Some(expr_pr) => expr_pr,
                         None => {
                             // Error if there was not an expression
