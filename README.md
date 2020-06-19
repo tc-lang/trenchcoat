@@ -21,6 +21,9 @@ be noted that the prover tests partially serve to demonstrate the edges of the c
 prover. As such, there are expected failures. These tests can be found in
 [src/proof/tests.rs](src/proof/tests.rs).
 
+The current test\_input.tc file can be proven with the current algorithms but requires
+`--features="bounds, better-sign-handling"` to be passed.
+
 ## More information
 
 Much more information is available about the various pieces of this project:
