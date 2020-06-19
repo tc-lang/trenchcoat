@@ -4,7 +4,7 @@ fn hi(x: int) -> int {
 	x
 }
 
-# require x >= 1 || x <= 1
+# require x >= 1
 # require y >= 0
 # x <= 2 && y <= 2 => _ <= 12
 fn foo(x: int, y: int) -> int {

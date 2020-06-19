@@ -1040,14 +1040,17 @@ impl<'a, 'b> Scope<'a> {
             // of how we originally construct it. We only actually want to prove that it's true
             // with this one, because (1) it'll then be true for all the others and (2) the others
             // will most likely just have duplicate error messages
+            //
+            // We actually only want to check these IF the base prover isn't masked.
             let base_prover = &provers[0];
-
-            // Try to prove all of the requirements
-            for req in reqs {
-                let req = req.substitute_all(&subs);
-                let res = base_prover.prove(&req);
-                if res != ProofResult::True {
-                    failed_reqs.push((res, req));
+            if provers.get_mask().allows(0) {
+                // Try to prove all of the requirements
+                for req in reqs {
+                    let req = req.substitute_all(&subs);
+                    let res = base_prover.prove(&req);
+                    if res != ProofResult::True {
+                        failed_reqs.push((res, req));
+                    }
                 }
             }
         }
