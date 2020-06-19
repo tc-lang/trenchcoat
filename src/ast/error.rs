@@ -39,6 +39,9 @@ pub enum Kind {
     TypeIdent,
     /// This error is generated when a NameIdent token was expected but another kind was given.
     ExpectingName,
+    /// The reserved return identifier '_' was used as a normal identifier, outside of a proof
+    /// statment.
+    ReturnIdent,
     /// This error is generated when a Parens token was expected but another kind was given.
     ExpectingParens,
     /// This error is generated when a Curlys token was expected but another kind was given.
@@ -174,6 +177,10 @@ impl PrettyError for Error<'_> {
         let (main_msg, display_found): (&str, bool) = match (&self.kind, &self.context) {
             (TypeIdent, _) => ("expected type identifier", true),
             (ExpectingName, _) => ("expected idendentifier", true),
+            (ReturnIdent, _) => {
+                help = Some("note: the identifier '_' is only allowed in proof contracts, to represent the return value");
+                ("invalid usage of reserved identifier '_'", false)
+            }
             (ExpectingParens, _) => ("expected parenthetical", true),
             (ExpectingCurlys, _) => ("expected curly braces", true),
             (ExpectingKeyword, _) => ("expected keyword", true),

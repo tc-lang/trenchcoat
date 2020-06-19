@@ -752,6 +752,18 @@ impl<'a> Ident<'a> {
     /// The errors sources will never be EOF
     fn parse(token: &'a Token<'a>) -> ParseRet<'a, Ident> {
         match token.kind {
+            // The return identifier is reserved
+            TokenKind::NameIdent(name @ "_") => ParseRet::single_soft_err(
+                Ident {
+                    name,
+                    source: IdentSource::Token(token),
+                },
+                Error {
+                    kind: ErrorKind::ReturnIdent,
+                    context: ErrorContext::NoContext,
+                    source: ErrorSource::Single(token),
+                },
+            ),
             TokenKind::NameIdent(name) => ParseRet::Ok(Ident {
                 name,
                 source: IdentSource::Token(token),
