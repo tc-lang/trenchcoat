@@ -14,7 +14,7 @@ compile_error!("Only one of the 'graph' feature or the 'bounds' feature can be e
 macro_rules! make_prover {
     ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
         // Option A: Bounds method
-        let bounds_prover = BoundsProver::new($reqs.clone());
+        let bounds_prover = BoundsProver::new(&$reqs);
         $name = FullProver::from(bounds_prover);
     };
 }
@@ -23,7 +23,7 @@ macro_rules! make_prover {
 macro_rules! make_prover {
     ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
         // Option B: Graph method
-        $name = GraphProver::new($reqs.clone())
+        $name = GraphProver::new(&$reqs)
     };
 }
 

@@ -109,7 +109,10 @@ impl<'a, 'p> Drop for WrappedProver<'a, 'p> {
 impl<'a, 'p> WrappedProver<'a, 'p> {
     pub fn new(reqs: Vec<Requirement<'a>>) -> Self {
         Self {
-            prover: Some(InnerProver::new(reqs.clone())),
+            // FIXME @Max are we ok to pass a referencec here?
+            // I think it's fine
+            //prover: Some(InnerProver::new(reqs.clone())),
+            prover: Some(InnerProver::new(&reqs)),
             reqs,
             dependent_provers: Vec::new(),
             temp_vars: Vec::new(),
@@ -273,7 +276,10 @@ impl<'a, 'p> WrappedProver<'a, 'p> {
                 }
                 Root(_) => {
                     base.extend(with);
-                    (Vec::new(), Prover::new(base.clone()), base)
+                    // FIXME @Max I'm assuming we're ok to pass a reference here?
+                    // It shouldn't outlive the function call.
+                    //(Vec::new(), Prover::new(base.clone()), base)
+                    (Vec::new(), Prover::new(&base), base)
                 }
             }
         }
@@ -522,11 +528,15 @@ impl<'a, 'b> DerefMut for ProverSetItem<'a, 'b> {
 struct Dummy;
 
 impl<'a> SimpleProver<'a> for Dummy {
-    fn new(_: Vec<Requirement<'a>>) -> Self {
+    fn new(_: &[Requirement<'a>]) -> Self {
         unreachable!()
     }
 
     fn prove(&self, _: &Requirement) -> ProofResult {
+        unreachable!()
+    }
+
+    fn add_requirements(&mut self, _: &[Requirement<'a>]) {
         unreachable!()
     }
 }

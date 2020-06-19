@@ -171,7 +171,7 @@ impl Not for ProofResult {
 
 pub trait SimpleProver<'a> {
     /// Create a SimpleProver with the given requirements.
-    fn new(reqs: Vec<Requirement<'a>>) -> Self;
+    fn new(reqs: &[Requirement<'a>]) -> Self;
 
     /// Try to prove `proposition`. This will assume that the requirements passed to `new` are true.
     fn prove(&self, proposition: &Requirement<'a>) -> ProofResult;
@@ -183,11 +183,13 @@ pub trait SimpleProver<'a> {
     fn prove_lemma(&self, proposition: &Requirement<'a>) -> ProofResult {
         self.prove(proposition)
     }
+
+    fn add_requirements(&mut self, reqs: &[Requirement<'a>]);
 }
 
 pub trait Prover<'a, 'b> {
     /// Create a Prover with the given requirements.
-    fn new(reqs: Vec<Requirement<'a>>) -> Self;
+    fn new(reqs: &[Requirement<'a>]) -> Self;
 
     /// Try to prove `req`. This will assume that the requirements passed to `new` are true.
     fn prove(&self, req: &Requirement<'a>) -> ProofResult;
@@ -231,7 +233,7 @@ pub struct JointSimpleProver<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> {
 impl<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> SimpleProver<'a>
     for JointSimpleProver<'a, P, LP>
 {
-    fn new(reqs: Vec<Requirement<'a>>) -> Self {
+    fn new(reqs: &[Requirement<'a>]) -> Self {
         // TODO We could lazily generate provers (since prove_lemma isn't going to be used in
         // quite a few cases). This probably isn't super worthwhile because creating a bound prover
         // is pretty cheap.
@@ -249,6 +251,11 @@ impl<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> SimpleProver<'a>
 
     fn prove_lemma(&self, prop: &Requirement<'a>) -> ProofResult {
         self.lemma_prover.prove_lemma(prop)
+    }
+
+    fn add_requirements(&mut self, reqs: &[Requirement<'a>]) {
+        self.prover.add_requirements(reqs);
+        self.lemma_prover.add_requirements(reqs);
     }
 }
 
@@ -273,7 +280,7 @@ pub enum ScopedSimpleProver<'a, 'b, P: SimpleProver<'a>> {
 }
 
 impl<'a, 'b, P: SimpleProver<'a>> Prover<'a, 'b> for ScopedSimpleProver<'a, 'b, P> {
-    fn new(reqs: Vec<Requirement<'a>>) -> Self {
+    fn new(reqs: &[Requirement<'a>]) -> Self {
         Self::Root(P::new(reqs))
     }
 

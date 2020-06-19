@@ -25,7 +25,7 @@ pub fn default_budget(n: usize) -> isize {
 }
 
 impl<'a, Opt: Options, LOpt: Options> SimpleProver<'a> for Prover<'a, Opt, LOpt> {
-    fn new(reqs: Vec<Requirement<'a>>) -> Prover<'a, Opt, LOpt> {
+    fn new(reqs: &[Requirement<'a>]) -> Prover<'a, Opt, LOpt> {
         let reqs = reqs
             .iter()
             .map(|req| req.ge0().simplify())
@@ -38,7 +38,7 @@ impl<'a, Opt: Options, LOpt: Options> SimpleProver<'a> for Prover<'a, Opt, LOpt>
             options: Opt::init(),
             lemma_options: LOpt::init(),
         };
-        out.calc_signs();
+        out.calc_signs(true);
         out
     }
 
@@ -47,6 +47,14 @@ impl<'a, Opt: Options, LOpt: Options> SimpleProver<'a> for Prover<'a, Opt, LOpt>
     }
     fn prove_lemma(&self, prop: &Requirement<'a>) -> ProofResult {
         self.prove_with_options(prop, self.lemma_options.clone())
+    }
+
+    fn add_requirements(&mut self, reqs: &[Requirement<'a>]) {
+        // Push the ge0 expression
+        self.given
+            .extend(reqs.iter().map(|req| req.ge0().simplify()));
+        // Update signs without clearing them
+        self.calc_signs(false);
     }
 }
 
@@ -111,7 +119,7 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
     }
 
     /// Populates self.sign_cache with the known signs of variables
-    fn calc_signs(&mut self) {
+    fn calc_signs(&mut self, clear: bool) {
         // Collect all the variables from the requirements
         let mut variables = Vec::new();
         for req in self.given.iter() {
@@ -120,15 +128,13 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
         variables.sort_unstable();
         variables.dedup();
 
-        // Tell LittleCache how much space we need
-        self.sign_cache = LittleCache::new(variables.len());
+        if clear {
+            // Reset with the correct amount of space
+            self.sign_cache = LittleCache::new(variables.len());
+        }
 
         'outer: loop {
             for var in variables.iter() {
-                // Only calculate signs we don't already know
-                if self.sign_cache.get(&var).is_some() {
-                    continue;
-                }
                 for ge0 in self.given.iter() {
                     macro_rules! named_sign {
                         () => {

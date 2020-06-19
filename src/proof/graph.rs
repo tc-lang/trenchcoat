@@ -496,7 +496,7 @@ impl Prover {
 }
 
 impl<'a> SimpleProver<'a> for Prover {
-    fn new(reqs: Vec<Requirement<'a>>) -> Self {
+    fn new(reqs: &[Requirement<'a>]) -> Self {
         let mut prover = Prover {
             // We add a single node for the empty value in order to ensure that we can still prove
             // trivial things, like `3 <= 4`, for example. Without this, we can have cases where
@@ -543,7 +543,7 @@ impl<'a> SimpleProver<'a> for Prover {
             // already added to the prover, we'll delay adding it until later in the hopes that
             // some more requirements will come along and help (we push it to `tabled` above).
 
-            let (ineq, mut stack) = Inequality::make_stack(req);
+            let (ineq, mut stack) = Inequality::make_stack(req.clone());
             let mut negated = false;
 
             // try to establish all of the inequalities in the stack
@@ -604,5 +604,9 @@ impl<'a> SimpleProver<'a> for Prover {
             true => self.prove(ineq.negate(), true),
             false => self.prove(ineq, true),
         }
+    }
+
+    fn add_requirements(&mut self, _reqs: &[Requirement<'a>]) {
+        todo!()
     }
 }
