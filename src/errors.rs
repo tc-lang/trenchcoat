@@ -134,7 +134,7 @@ pub fn context_lines_and_spacing(
         start..end
     };
 
-    let line = replace_tabs(line, &mut line_range);
+    let line = replace_tabs(line, Some(&mut line_range));
 
     // First, we'll put in the context line. This will tend to look something like:
     // ```
@@ -193,19 +193,15 @@ pub fn context_lines_and_spacing(
     (msg, spacing)
 }
 
-pub fn replace_tabs(line: &str, byte_range: &mut Range<usize>) -> String {
-    let start_offset = line[..byte_range.start]
-        .chars()
-        .filter(|&c| c == '\t')
-        .count();
-    let mid_offset = line[byte_range.clone()]
-        .chars()
-        .filter(|&c| c == '\t')
-        .count();
-    // Because each replacement goes from one tab to four spaces, we actually only add 3
-    // characters.
-    byte_range.start += 3 * start_offset;
-    byte_range.end += 3 * (start_offset + mid_offset);
+pub fn replace_tabs(line: &str, byte_range: Option<&mut Range<usize>>) -> String {
+    if let Some(range) = byte_range {
+        let start_offset = line[..range.start].chars().filter(|&c| c == '\t').count();
+        let mid_offset = line[range.clone()].chars().filter(|&c| c == '\t').count();
+        // Because each replacement goes from one tab to four spaces, we actually only add 3
+        // characters.
+        range.start += 3 * start_offset;
+        range.end += 3 * (start_offset + mid_offset);
+    }
 
     line.replace('\t', "    ")
 }

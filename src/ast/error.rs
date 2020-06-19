@@ -310,7 +310,7 @@ impl PrettyError for Error<'_> {
             None => (line.len()..line.len() + 1),
         };
 
-        let line = errors::replace_tabs(line, &mut line_range);
+        let line = errors::replace_tabs(line, Some(&mut line_range));
 
         writeln!(
             msg,

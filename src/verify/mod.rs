@@ -867,16 +867,19 @@ impl<'a, 'b> Scope<'a> {
 
                 (errors, Type::Struct(field_types), None, mask)
             }
-            FieldAccess(expr, field_ident) => {
+            FieldAccess(struct_expr, field_ident) => {
                 let (mut errors, expr_type, _tmp_ident, stop_proof) =
-                    self.check_expr(provers, expr);
+                    self.check_expr(provers, struct_expr);
                 let fields = match &expr_type {
                     Type::Struct(fields) => fields,
                     _ => {
                         errors.push(Error {
-                            kind: error::Kind::AccessFieldOnNotStruct,
+                            kind: error::Kind::AccessFieldOnNotStruct {
+                                typ: expr_type.clone(),
+                                field_name: field_ident.clone(),
+                            },
                             context: error::Context::FieldAccess,
-                            source: expr.node(),
+                            source: struct_expr.node(),
                         });
                         return (errors, Type::Poisoned, None, stop_proof);
                     }
@@ -885,7 +888,10 @@ impl<'a, 'b> Scope<'a> {
                     Some(t) => t,
                     None => {
                         errors.push(Error {
-                            kind: error::Kind::AccessFieldOnNotStruct,
+                            kind: error::Kind::NoStructFieldWithName {
+                                missing: field_ident.clone(),
+                                typ: expr_type.clone(),
+                            },
                             context: error::Context::FieldAccess,
                             source: expr.node(),
                         });

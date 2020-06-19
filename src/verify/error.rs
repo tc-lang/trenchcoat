@@ -34,7 +34,22 @@ pub enum Kind<'a> {
         fn_name: &'a str,
     },
     VariableNotFound,
-    AccessFieldOnNotStruct,
+    /// A field access was attempted on an expression that was not a struct. The source should be
+    /// the *only* the expression that produced the struct
+    AccessFieldOnNotStruct {
+        /// The type that was expected to be a struct
+        typ: Type<'a>,
+        /// The field that was being accessed
+        field_name: Ident<'a>,
+    },
+    /// A struct did not have a field with the name that was being accessed. The source should be
+    /// the entirety of the expression
+    NoStructFieldWithName {
+        /// The name that wasn't found
+        missing: Ident<'a>,
+        /// The struct type that was expected to have the field
+        typ: Type<'a>,
+    },
     TypeMismatch {
         expected: Vec<Type<'a>>,
         found: Type<'a>,
@@ -121,7 +136,20 @@ impl PrettyError for Error<'_> {
                 file_name,
             ),
             VariableNotFound => Error::format_variable_not_found(&self.source, file_str, file_name),
-            // TODO: AccessFieldNotOnStruct
+            AccessFieldOnNotStruct { typ, field_name } => Error::format_access_field_on_not_struct(
+                typ,
+                field_name,
+                &self.source,
+                file_str,
+                file_name,
+            ),
+            NoStructFieldWithName { missing, typ } => Error::format_no_struct_field_with_name(
+                missing,
+                typ,
+                &self.source,
+                file_str,
+                file_name,
+            ),
             TypeMismatch { expected, found } => {
                 Error::format_type_mismatch(expected, found, &self.source, file_str, file_name)
             }
@@ -200,7 +228,7 @@ impl Error<'_> {
             };
 
             // handle tabs
-            let line = replace_tabs(line, &mut line_range);
+            let line = replace_tabs(line, Some(&mut line_range));
 
             (line_no, col_no, line, line_range)
         };
@@ -310,6 +338,16 @@ impl Error<'_> {
         file_str: &str,
         file_name: &str,
     ) -> String {
+        // This error message looks something like:
+        // ```
+        // error: incorrect number of arguments to function 'foo'
+        //   --> src/test_input.tc:24:10
+        //    |
+        // 24 |     print foo(x);
+        //    |              ^^^
+        //    = help: expected two arguments, found one
+        // ```
+
         let mut msg = format!(
             "{}: incorrect number of arguments to function '{}'\n",
             Red.paint("error"),
@@ -319,16 +357,33 @@ impl Error<'_> {
         let (context, spacing) =
             context_lines_and_spacing(source.byte_range(), file_str, file_name);
 
+        // We'll provide words for the first few cases, but not in general.
+        let expected_args = match func.params.len() {
+            0 => "no arguments".into(),
+            1 => "one argument".into(),
+            2 => "two arguments".into(),
+            3 => "three arguments".into(),
+            4 => "four arguments".into(),
+            n => format!("{} arguments", n),
+        };
+
+        let found_args = match given {
+            0 => "none".into(),
+            1 => "one".into(),
+            2 => "two".into(),
+            3 => "three".into(),
+            4 => "four".into(),
+            n => n.to_string(),
+        };
+
         writeln!(
             msg,
-            "{}\n{} {}\n{} {} help: expected {} arguments, found {}",
+            "{}{} {} help: expected {}, found {}",
             context,
             spacing,
-            Blue.paint("|"),
-            spacing,
-            Blue.paint("|"),
-            func.params.len(),
-            given,
+            Blue.paint("="),
+            expected_args,
+            found_args,
         )
         .unwrap();
 
@@ -336,11 +391,73 @@ impl Error<'_> {
     }
 
     fn format_variable_not_found(source: &Node, file_str: &str, file_name: &str) -> String {
+        // This error message looks like:
+        // ```
+        // error: variable 'w' not found
+        //   --> src/test_input.tc:24:11
+        //    |
+        // 24 |     print foo(w, 2);
+        //    |               ^
+        // ```
+
         format!(
             "{}: variable '{}' not found\n{}",
             Red.paint("error"),
             &file_str[source.byte_range()],
             context_lines(source.byte_range(), file_str, file_name)
+        )
+    }
+
+    fn format_access_field_on_not_struct(
+        typ: &Type,
+        field: &Ident,
+        struct_expr: &Node,
+        file_str: &str,
+        file_name: &str,
+    ) -> String {
+        // FIXME: Actual message
+        //
+        // This error is *really* a type mismatch... most of the time. So we treat it as such.
+        // It looks something like this:
+        // ```
+        // error: type mismatch: expected struct `{ foo: _, .. }`, found `int`
+        //   --> src/test_input.tc:11:1
+        //    |
+        // 11 |     bar(x, y, 3).foo
+        //    |     ^^^^^^^^^^^^
+        // ```
+
+        format!(
+            "{}: type mismatch: expected struct `{{ {}: _, .. }}`, found `{}`\n{}",
+            Red.paint("error"),
+            field.name,
+            typ,
+            context_lines(struct_expr.byte_range(), file_str, file_name),
+        )
+    }
+
+    fn format_no_struct_field_with_name(
+        missing: &Ident,
+        typ: &Type,
+        expr: &Node,
+        file_str: &str,
+        file_name: &str,
+    ) -> String {
+        // This error looks like:
+        // ```
+        // error: no field 'hello' on struct `{ x: int, y: int, z: bool }`
+        //   --> src/test_input.tc:30:4
+        //    |
+        // 30 |         b: my_struct.world.hello,
+        //    |            ^^^^^^^^^^^^^^^^^^^^^
+        // ```
+
+        format!(
+            "{}: no field '{}' on struct `{}`\n{}",
+            Red.paint("error"),
+            missing.name,
+            typ,
+            context_lines(expr.byte_range(), file_str, file_name),
         )
     }
 
@@ -370,7 +487,7 @@ impl Error<'_> {
         //   |           ^^^^^^^^
         // ```
 
-        // A helper string:
+        // A helper string to represent the type(s) that was/were expected:
         //   "`bool`"
         //   "`int` or `uint`"
         let expected_types = match expected.deref() {
@@ -415,7 +532,6 @@ impl Error<'_> {
         //    |
         // 35 |         print x + foo(3);
         //    |                   ^^^^^^
-        //    |
         //    = help: `foo(x)` requires `x >= 5`
         //    = note: `3 >= 5` is false
         // ```
@@ -428,7 +544,6 @@ impl Error<'_> {
         //   |
         // 9 |         print x + foo(3, z);
         //   |                   ^^^^^^^^^
-        //   |
         //   = help: `foo(x, y)` requires `x >= 5`, `y <= 3` and `x + y <= 10`
         //   = note: `3 >= 5` is false
         //   = note: whether `z <= 3` cannot be determined
@@ -617,7 +732,7 @@ impl Error<'_> {
                 start..end
             };
 
-            let line = replace_tabs(line, &mut line_range);
+            let line = replace_tabs(line, Some(&mut line_range));
 
             Info {
                 line_no,
@@ -640,6 +755,7 @@ impl Error<'_> {
 
         let (end_fn_line_no, _, _, _, end_fn_line) =
             line_info(file_str, fn_source.byte_range().end);
+        let end_fn_line = replace_tabs(end_fn_line, None);
 
         let pad_size = (end_fn_line_no + 1).to_string().len();
         let padding = " ".repeat(pad_size);
@@ -779,7 +895,7 @@ impl Error<'_> {
         // ```
         //    = note: the contract assumes that `x <= 4`
         // ```
-        // This  will not be present if the contract has no assumptions
+        // This will not be present if the contract has no assumptions
         if let Some(pre_source) = pre_source {
             writeln!(
                 msg,
