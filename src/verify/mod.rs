@@ -313,7 +313,7 @@ impl<'a, 'b> TopLevelScope<'a, 'b> {
                 }
                 ConditionKind::Compound { op: Or, .. } => vec![Error {
                     kind: error::Kind::FeatureNotAllowed {
-                        description: "Logical OR is currently not allowed in proof statements",
+                        description: "logical OR is currently not allowed in proof statements",
                     },
                     context: error::Context::ProofStmt,
                     source: cond.node(),
@@ -350,8 +350,10 @@ impl<'a, 'b> TopLevelScope<'a, 'b> {
                         params,
                         &mut required_return_int,
                     ));
-                    reqs.extend(Vec::from(cond));
-                    // reqs.push(cond.into());
+
+                    if errors.is_empty() {
+                        reqs.extend(Vec::from(cond));
+                    }
                 }
                 Contract { pre, ref post } => {
                     errors.extend(
@@ -365,12 +367,14 @@ impl<'a, 'b> TopLevelScope<'a, 'b> {
                         params,
                         &mut required_return_int,
                     ));
-                    contracts.push(self::Contract {
-                        pre: pre.as_ref().map(Vec::from).unwrap_or_default(),
-                        pre_source: pre.as_ref().map(|p| p.node()),
-                        post: Vec::from(post),
-                        post_source: post.node(),
-                    });
+                    if errors.is_empty() {
+                        contracts.push(self::Contract {
+                            pre: pre.as_ref().map(Vec::from).unwrap_or_default(),
+                            pre_source: pre.as_ref().map(|p| p.node()),
+                            post: Vec::from(post),
+                            post_source: post.node(),
+                        });
+                    }
                 }
                 Lemma { .. } => todo!(),
                 &StmtKind::Malformed => panic!("Unexpected malformed proof statment in `verify`"),

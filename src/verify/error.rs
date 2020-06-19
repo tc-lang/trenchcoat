@@ -54,7 +54,8 @@ pub enum Kind<'a> {
         expected: Vec<Type<'a>>,
         found: Type<'a>,
     },
-    /// Indicates that the return identifier "_" appeared somewhere it isn't allowed
+    /// Indicates that the return identifier "_" appeared somewhere in a proof statement it wasn't
+    /// allowed
     MisplacedReturnIdent,
     /// Indicates that a certain feature is currently not allowed (even though it may be
     /// syntactically or otherwise valid)
@@ -153,8 +154,12 @@ impl PrettyError for Error<'_> {
             TypeMismatch { expected, found } => {
                 Error::format_type_mismatch(expected, found, &self.source, file_str, file_name)
             }
-            // TODO: MisplacedReturnIdent
-            // TODO: FeatureNotAllowed
+            MisplacedReturnIdent => {
+                Error::format_misplaced_return_ident(&self.source, file_str, file_name)
+            }
+            FeatureNotAllowed { description } => {
+                Error::format_feature_not_allowed(description, &self.source, file_str, file_name)
+            }
             FailedProofs {
                 fn_name,
                 func_info,
@@ -513,6 +518,60 @@ impl Error<'_> {
             expected_types,
             found,
             context_lines(source.byte_range(), file_str, file_name),
+        )
+    }
+
+    fn format_misplaced_return_ident(source: &Node, file_str: &str, file_name: &str) -> String {
+        // This error message looks like:
+        // ```
+        // error: misplaced return identifier
+        //   --> src/test_input.tc:14:20
+        //    |
+        // 14 | # require y >= 0 + _
+        //    |                    ^
+        //    = note: the identifier '_' is used to signify the return value in proof contracts
+        // ```
+
+        let (context, spacing) =
+            context_lines_and_spacing(source.byte_range(), file_str, file_name);
+        let note =
+            "note: the identifier '_' is used to signify the return value in proof contracts";
+        format!(
+            "{}: misplaced return identifier\n{}{} {} {}\n",
+            Red.paint("error"),
+            context,
+            spacing,
+            Blue.paint("="),
+            note,
+        )
+    }
+
+    fn format_feature_not_allowed(
+        description: &str,
+        source: &Node,
+        file_str: &str,
+        file_name: &str,
+    ) -> String {
+        // This error will look something like:
+        // ```
+        // error: misplaced return identifier
+        //  --> src/test_input.tc:7:11
+        //   |
+        // 7 | # require x >= 1 || x <= 1
+        //   |           ^^^^^^^^^^^^^^^^
+        //   = note: logical OR is currently not allowed in proof statements
+        // ```
+        // where `description` is the portion after 'note: '
+
+        let (context, spacing) =
+            context_lines_and_spacing(source.byte_range(), file_str, file_name);
+        format!(
+            "{}: misplaced return identifier\n{}{} {} note: {}\n",
+            Red.paint("error"),
+            context,
+            spacing,
+            Blue.paint("="),
+            description,
         )
     }
 
