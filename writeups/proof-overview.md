@@ -42,17 +42,19 @@ unsuitable levels.
 The result of this is two algorithms which both have a worst-case time complexity of O(n²) but
 drastically different runtimes.
 
-On my laptop, the times to complete the proof tests (averaged over 5 tests) are:
-- Bound method: 187ms;
-- Graph method: 58ms;
+On my laptop, the times to complete the proof tests (averaged over 15 tests) are:
+- Bound method: 209ms;
+- Graph method: 51ms;
 TODO: Further breakdown of test timings to include times for true/false/undetermined results.
+
+These tests can be found at [src/proof/tests.rs](../src/proof/tests.rs).
 
 It should be noted that this time also includes parsing and other tests, making the difference not
 meaningful as a factor. It does, however, illustrate that the bounds method is significantly slower.
 
-On the other hand, out of 658 tests:
-- Bound method passes 652/658 > 99% of tests;
-- Graph method passes 494/658 > 75% of tests;
+On the other hand, out of 786 tests:
+- Bound method passes 768/786 > 97.7% of tests;
+- Graph method passes 568/786 > 72.2% of tests;
 
 Overall, the graph method is lightning fast and can prove the majority of propositions whereas the
 bound method takes a noticeable amount of time but passes almost all the tests.

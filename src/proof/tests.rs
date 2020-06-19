@@ -132,44 +132,6 @@ fn example_test() {
     // We can garentee that this will be worst case O(n^4)
     make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
-    /*
-    let tokens = tokenize("8 - y");
-    let expr = crate::ast::proof::Expr::parse(&tokens).unwrap();
-    let mini = super::optimiser::Minimizer::new(
-        reqs.iter()
-            .map(|req| {
-                req.simplify()
-                    .bounds()
-                    .iter()
-                    .map(|(ident, bound)| (*ident, bound.simplify()))
-                    .collect()
-            })
-            .collect(),
-        super::expr::Expr::from(&expr).simplify(),
-        6,
-    );
-    let mut bounds = mini.collect::<Vec<super::expr::Expr>>();
-    //let mut bounds = mini.int_bounds().collect::<Vec<super::int::Int>>();
-    bounds.dedup();
-    for bound in bounds.iter() {
-        print!("YIELDS {}", bound);
-        match bound.eval() {
-            Some(x) => println!(" = {}", x),
-            None => println!(""),
-        };
-    }
-    */
-    //panic!("Hi");
-
-    //println!("{:?}", prove(&prover, "2*x+y <= 18"));
-    //println!("{:?}", prove(&prover, "x+y <= 10"));
-    //println!("{:?}", prove(&prover, "x <= 10"));
-    //println!("{:?}", prove(&prover, "x <= 9"));
-    //println!("{:?}", prove(&prover, "1 <= y"));
-    //println!("{:?}", prove(&prover, "2*x+y <= 19"));
-    //println!("{:?}", prove(&prover, "x+y <= 9"));
-    //assert!(prove(&prover, "x+y <= 10") == ProofResult::True);
-
     // First off, let's start with the obvious proofs
     prove!("0 <= x" => ProofResult::True);
     prove!("0 <= y" => ProofResult::True);
@@ -384,45 +346,6 @@ fn test_lots_of_variables() {
 
     let tokens = tokenize("y-2*n");
     let expr = crate::ast::proof::Expr::parse(&tokens).unwrap();
-
-    /*
-    let mini = super::optimiser::Minimizer::new(
-        reqs.iter().map(|req| req.bounds()).flatten().collect(),
-        super::expr::Expr::from(&expr).simplify(),
-        5,
-    );
-    println!("{}", mini.enumerate().last().unwrap().0);
-    */
-
-    /*
-    let mini = super::optimiser::Minimizer::new(
-        reqs.iter()
-            .map(|req| {
-                req.simplify()
-                    .bounds()
-                    .iter()
-                    .map(|(ident, bound)| (*ident, bound.simplify()))
-                    .collect()
-            })
-            .collect(),
-        super::expr::Expr::from(&expr).simplify(),
-        6,
-    );
-    let mut bounds = mini.collect::<Vec<super::expr::Expr>>();
-    //let mut bounds = mini.int_bounds().collect::<Vec<super::int::Int>>();
-    bounds.dedup();
-    for bound in bounds.iter() {
-        println!(
-            "YIELDS {} = {}",
-            bound,
-            match bound.eval() {
-                Some(x) => x,
-                None => super::int::EvalInt::from(super::int::Int::Infinity),
-            }
-        );
-    }
-    */
-    //panic!("Hi");
 
     prove!("0 <= n" => ProofResult::True);
     prove!("1 <= n" => ProofResult::True);
@@ -1100,49 +1023,262 @@ fn dont_get_greedy3() {
 }
 
 #[test]
-fn dont_get_greedy_opposite_order() {
+fn sign_consistency_pt1() {
     let prover;
 
     requirements!(let reqs = [
-        "b <= 0-a",
-        "a <= trap",
+        "1 <= x",
+        "y/x <= z", // ==> y <= z*x
     ], prover);
 
     make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
-    prove!("a + b <= 0" => ProofResult::True);
+    prove!("y <= z*x" => ProofResult::True);
 
     cleanup!()
 }
 
 #[test]
-fn dont_get_greedy_opposite_names() {
+fn sign_consistency_pt2() {
     let prover;
 
     requirements!(let reqs = [
-        "b <= trap",
-        "a <= 0-b",
+        "y/x <= z", // ==> y <= z*x
+        "1 <= x",
     ], prover);
 
     make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
-    prove!("a + b <= 0" => ProofResult::True);
+    prove!("y <= z*x" => ProofResult::True);
 
     cleanup!()
 }
 
 #[test]
-fn dont_get_greedy_opposite_names_and_order() {
+fn sign_consistency_pt3() {
     let prover;
 
     requirements!(let reqs = [
-        "a <= 0-b",
-        "b <= trap",
+        "0-1 >= x",
+        "y/x <= z", // ==> y >= z*x
     ], prover);
 
     make_prover!(prover, reqs, max_depth = budget(reqs.len()));
 
-    prove!("a + b <= 0" => ProofResult::True);
+    prove!("y >= z*x" => ProofResult::True);
+
+    cleanup!()
+}
+
+#[test]
+fn sign_consistency_pt4() {
+    let prover;
+
+    requirements!(let reqs = [
+        "y/x <= z", // ==> y >= z*x
+        "0-1 >= x",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+
+    prove!("y >= z*x" => ProofResult::True);
+
+    cleanup!()
+}
+
+macro_rules! multiple_bounds_stmts {
+    () => {
+        prove!("0-1 <= x" => ProofResult::True);
+        prove!("0 <= x" => ProofResult::True);
+        prove!("2 <= x" => ProofResult::True);
+        prove!("3 <= x" => ProofResult::True);
+        prove!("5 <= x" => ProofResult::True);
+        prove!("6 <= x" => ProofResult::Undetermined);
+        prove!("10 <= x" => ProofResult::Undetermined);
+        prove!("50 <= x" => ProofResult::Undetermined);
+        prove!("51 <= x" => ProofResult::False);
+        prove!("x <= 50" => ProofResult::True);
+        prove!("x <= 55" => ProofResult::True);
+        prove!("x <= 60" => ProofResult::True);
+        prove!("x <= 49" => ProofResult::Undetermined);
+        prove!("x <= 30" => ProofResult::Undetermined);
+        prove!("x <= 5" => ProofResult::Undetermined);
+        prove!("x <= 4" => ProofResult::False);
+    };
+}
+
+#[test]
+fn multiple_bounds_order_1() {
+    let prover;
+    requirements!(let reqs = [
+        "2 <= x",
+        "5 <= x",
+        "x <= 50",
+        "x <= 60",
+    ], prover);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+    multiple_bounds_stmts!();
+    cleanup!()
+}
+#[test]
+fn multiple_bounds_order_2() {
+    let prover;
+    requirements!(let reqs = [
+        "5 <= x",
+        "2 <= x",
+        "x <= 60",
+        "x <= 50",
+    ], prover);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+    multiple_bounds_stmts!();
+    cleanup!()
+}
+#[test]
+fn multiple_bounds_order_3() {
+    let prover;
+    requirements!(let reqs = [
+        "x <= 60",
+        "x <= 50",
+        "5 <= x",
+        "2 <= x",
+    ], prover);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+    multiple_bounds_stmts!();
+    cleanup!()
+}
+#[test]
+fn multiple_bounds_order_4() {
+    let prover;
+    requirements!(let reqs = [
+        "x <= 60",
+        "5 <= x",
+        "x <= 50",
+        "2 <= x",
+    ], prover);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+    multiple_bounds_stmts!();
+    cleanup!()
+}
+#[test]
+fn multiple_bounds_order_5() {
+    let prover;
+    requirements!(let reqs = [
+        "x <= 60",
+        "2 <= x",
+        "x <= 50",
+        "5 <= x",
+    ], prover);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+    multiple_bounds_stmts!();
+    cleanup!()
+}
+#[test]
+fn multiple_bounds_order_6() {
+    let prover;
+    requirements!(let reqs = [
+        "x <= 50",
+        "2 <= x",
+        "x <= 60",
+        "5 <= x",
+    ], prover);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+    multiple_bounds_stmts!();
+    cleanup!()
+}
+#[test]
+fn multiple_bounds_order_7() {
+    let prover;
+    requirements!(let reqs = [
+        "x <= 50",
+        "5 <= x",
+        "x <= 60",
+        "2 <= x",
+    ], prover);
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+    multiple_bounds_stmts!();
+    cleanup!()
+}
+
+#[test]
+fn non_linear() {
+    let prover;
+
+    requirements!(let reqs = [
+        "2 <= x",
+        "x <= 5",
+        "0 <= y",
+        "0 <= z",
+        "z <= 10",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+
+    // It's a shame neither method can get 0 <= x*x.
+    // I'm hesitant to add powers though.
+    prove!("0 <= x*x" => ProofResult::True);
+    prove!("4 <= x*x" => ProofResult::True);
+    prove!("5 <= x*x" => ProofResult::Undetermined);
+    prove!("25 <= x*x" => ProofResult::Undetermined);
+    prove!("26 <= x*x" => ProofResult::False);
+    prove!("x*x <= 25" => ProofResult::True);
+    prove!("x*x <= 26" => ProofResult::True);
+    prove!("x*x <= 24" => ProofResult::Undetermined);
+    prove!("x*x <= 4" => ProofResult::Undetermined);
+    prove!("x*x <= 3" => ProofResult::False);
+    prove!("x*y <= 25*y" => ProofResult::True);
+    prove!("x*y <= 26*y" => ProofResult::True);
+    prove!("x*y <= 5*y" => ProofResult::True);
+    prove!("x*y <= 4*y" => ProofResult::Undetermined);
+    prove!("x*y <= 0" => ProofResult::Undetermined);
+    prove!("x*(y+z)+y <= 6*y+5*z" => ProofResult::True);
+    prove!("x*(y+z)+y <= 6*y+4*z" => ProofResult::Undetermined);
+    prove!("x*(y+z)+y <= 5*y+5*z" => ProofResult::Undetermined);
+    prove!("x*(y+z)+y <= 5*y+4*z" => ProofResult::Undetermined);
+    prove!("x*(y+z)+y <= 6*y+50" => ProofResult::True);
+    prove!("x*(y+z)+y <= 6*y+49" => ProofResult::Undetermined);
+    prove!("x*(y+z)+y <= 6*y" => ProofResult::Undetermined);
+    prove!("x*(y+z)+y <= 6*y+51" => ProofResult::True);
+    prove!("0-x*(y+z)-y >= 0-6*y-50" => ProofResult::True);
+    prove!("y-x*(y+z) >= 0-4*y-50" => ProofResult::True);
+    prove!("0-x*(y+z)-y >= 0-6*y-49" => ProofResult::Undetermined);
+    prove!("y-x*(y+z) >= 0-4*y-51" => ProofResult::True);
+    prove!("0 <= x*z" => ProofResult::True);
+    prove!("0-1 <= x*z" => ProofResult::True);
+    prove!("1 <= x*z" => ProofResult::Undetermined);
+    prove!("x*z <= 50" => ProofResult::True);
+    prove!("x*z <= 51" => ProofResult::True);
+    prove!("x*z <= 49" => ProofResult::Undetermined);
+    prove!("x*z <= 0" => ProofResult::Undetermined);
+    prove!("x*z <= 0-1" => ProofResult::False);
+    prove!("x*z-y <= 50" => ProofResult::True);
+    prove!("x*z-y <= 51" => ProofResult::True);
+    prove!("x*z-y <= 49" => ProofResult::Undetermined);
+    prove!("x*z-y >= 0" => ProofResult::Undetermined);
+
+    cleanup!()
+}
+
+#[test]
+fn justify_everything___properly() {
+    let prover;
+
+    requirements!(let reqs = [
+        "0 <= y",
+        "0 <= z",
+        "1 <= x",
+        "x <= 2",
+    ], prover);
+
+    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
+
+    prove!("x*(y+z) + y <= 3*y+2*z" => ProofResult::True);
+    prove!("x*(y+z) + y <= 4*y+2*z" => ProofResult::True);
+    prove!("x*(y+z) + y <= 3*(y+z)" => ProofResult::True);
+    prove!("x*(y+z) + y <= 5*y+3*z" => ProofResult::True);
+    prove!("x*(y+z) + y <= 2*y+2*z" => ProofResult::Undetermined);
+    prove!("x*(y+z) + y <= 2*(y+z)" => ProofResult::Undetermined);
+    prove!("x*(y+z) + y <= 0" => ProofResult::Undetermined);
+    prove!("x*(y+z) + y <= 0-1" => ProofResult::False);
 
     cleanup!()
 }
