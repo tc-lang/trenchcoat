@@ -179,12 +179,14 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
                                 continue 'outer;
                             }
                         }
-                        None => if bound_sign != Sign::UNKNOWN {
-                            // It's new, so add it if it's not unknown!
-                            // Then start again. TODO Make this more efficient by not starting
-                            // again. Above, too.
-                            self.sign_cache.set(var.clone(), bound_sign);
-                            continue 'outer;
+                        None => {
+                            if bound_sign != Sign::UNKNOWN {
+                                // It's new, so add it if it's not unknown!
+                                // Then start again. TODO Make this more efficient by not starting
+                                // again. Above, too.
+                                self.sign_cache.set(var.clone(), bound_sign);
+                                continue 'outer;
+                            }
                         }
                     }
                 }

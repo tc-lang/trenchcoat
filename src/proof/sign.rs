@@ -56,14 +56,14 @@ macro_rules! use_sign {
         const ZERO: Sign = Sign::ZERO;
         const POS: Sign = Sign::POSITIVE;
         const NULL: Sign = Sign::NULL;
-    }
+    };
 }
 macro_rules! use_more_sign {
     (NON_NEG, NON_POS, UNKNOWN) => {
         const NON_NEG: Sign = Sign::NON_NEGATIVE;
         const NON_POS: Sign = Sign::NON_POSITIVE;
         const UNKNOWN: Sign = Sign::UNKNOWN;
-    }
+    };
 }
 
 impl Neg for Sign {
@@ -76,16 +76,23 @@ impl Neg for Sign {
     }
 }
 
-
 impl Mul for Sign {
     type Output = Sign;
     fn mul(self, other: Sign) -> Sign {
         use_sign!(NEG, ZERO, POS, NULL);
-        (if self.maybe_zero() || other.maybe_zero() { ZERO } else { NULL }
-            | if self.maybe_pos() && other.maybe_pos()
-                 || self.maybe_neg() && other.maybe_neg() { POS } else { NULL }
-            | if self.maybe_pos() && other.maybe_neg()
-                 || self.maybe_neg() && other.maybe_pos() { NEG } else { NULL })
+        (if self.maybe_zero() || other.maybe_zero() {
+            ZERO
+        } else {
+            NULL
+        } | if self.maybe_pos() && other.maybe_pos() || self.maybe_neg() && other.maybe_neg() {
+            POS
+        } else {
+            NULL
+        } | if self.maybe_pos() && other.maybe_neg() || self.maybe_neg() && other.maybe_pos() {
+            NEG
+        } else {
+            NULL
+        })
     }
 }
 

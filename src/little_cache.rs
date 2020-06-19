@@ -17,7 +17,7 @@ impl<K: PartialEq + Ord + Clone, V: Clone> Cache<K, V> {
         return match self.entries.binary_search_by_key(&key, |(k, _)| k) {
             Ok(idx) => Some(self.entries[idx].1.clone()),
             Err(_) => None,
-        }
+        };
     }
 
     pub fn set(&mut self, key: K, value: V) {

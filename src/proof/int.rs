@@ -1,8 +1,8 @@
+use super::sign::Sign;
 use std::cmp::{Ord, Ordering, PartialOrd};
 use std::convert::From;
 use std::fmt;
 use std::ops::{Add, Div, Mul, Neg, Rem, Sub};
-use super::sign::Sign;
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum Int {

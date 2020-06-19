@@ -16,18 +16,20 @@ use crate::little_cache::Cache as LittleCache;
 // consider adding a phantom type to Expr and Bound also to garentee this.)
 
 /// Also include a child where no substitution was made as the first child.
+/// Not currently supported.
 const NO_SUB_FIRST: bool = false;
 /// Also include a child where no substitution was made as the last child.
+/// Not currently supported.
 const NO_SUB_LAST: bool = false;
 /// Generate children lazily.
 /// Results: This is slightly faster!
 const LAZY_GENERATE_CHILDREN: bool = true;
 /// Perform BFS rather than DFS
 /// This cannot be done also with LAZY_GENERATE_CHILDREN
-/// Results: This is slightly slower
+/// Results: This is slightly slower.
 const BFS: bool = false;
 /// If true, only make substitutions that don't increase the number of variables.
-// TODO const NO_MORE_VARIABLES: bool = false;
+// NOT SUPPORTED const NO_MORE_VARIABLES: bool = false;
 
 const TRY_NO_SUB: bool = NO_SUB_FIRST || NO_SUB_LAST;
 
@@ -264,8 +266,10 @@ fn ge0_sub_and_exclude<'a, Opt: Options, NS: Fn(&Ident<'a>) -> Sign + Copy>(
 }
 
 // Methods on both Maximizer and Minimizer
-macro_rules! find_pg_group_fn {
+macro_rules! optimiser_misc_methods {
     () => {
+        /// Returns the possible signs of `x`
+        /// This uses self.sign_cache
         fn sign_of(&self, x: &Ident<'a>) -> Sign {
             if self.options.better_sign_handling() {
                 self.sign_cache.get(x).unwrap_or(Sign::UNKNOWN)
@@ -471,11 +475,11 @@ macro_rules! find_pg_group_fn {
 }
 
 impl<'a, 'b, Opt: Options> Minimizer<'a, 'b, Opt> {
-    find_pg_group_fn!();
+    optimiser_misc_methods!();
 }
 
 impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
-    find_pg_group_fn!();
+    optimiser_misc_methods!();
 }
 
 /// Used to construct the body of the Iterator next method for Minimizer and Maximizer.
@@ -700,7 +704,7 @@ fn sub_bound_into<
 
             // We'll start by copying the terms in to out - excluding the term which we can
             // substitute in to which we'll store in sub and then add back in later.
-            // 
+            //
             // As mentioned above, we also can't handle multiple terms containing `x`
             let mut sub = None;
             let mut out = Vec::with_capacity(terms.len());
