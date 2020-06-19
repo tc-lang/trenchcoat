@@ -2,6 +2,7 @@ use std::cmp::{Ord, Ordering, PartialOrd};
 use std::convert::From;
 use std::fmt;
 use std::ops::{Add, Div, Mul, Neg, Rem, Sub};
+use super::sign::Sign;
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub enum Int {
@@ -765,6 +766,16 @@ impl Rational {
 
     pub fn sign_i8(&self) -> i8 {
         self.numerator.sign_i8() * self.denominator.sign_i8()
+    }
+
+    pub fn sign(&self) -> Sign {
+        match self.sign_i8() {
+            1 => Sign::POSITIVE,
+            0 => Sign::ZERO,
+            -1 => Sign::NEGATIVE,
+
+            _ => panic!("unexpected sign_i8 value"),
+        }
     }
 }
 

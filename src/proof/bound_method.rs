@@ -2,6 +2,7 @@ use super::bound::{bounds_on_ge0, Bound, Relation, RelationKind};
 use super::expr::{zero, Expr};
 use super::int::Int;
 use super::optimiser::{options, options::Options, Maximizer, Minimizer};
+use super::sign::Sign;
 use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
 use crate::ast::Ident;
 use crate::little_cache::Cache as LittleCache;
@@ -12,7 +13,7 @@ pub type DefaultProver<'a, 'b> = ScopedSimpleProver<'a, 'b, DefaultSimpleProver<
 pub struct Prover<'a, Opt: Options, LOpt: Options> {
     given: Vec<Expr<'a>>,
     max_depth: isize,
-    sign_cache: LittleCache<Ident<'a>, i8>,
+    sign_cache: LittleCache<Ident<'a>, Sign>,
     options: Opt,
     lemma_options: LOpt,
 }
@@ -33,7 +34,7 @@ impl<'a, Opt: Options, LOpt: Options> SimpleProver<'a> for Prover<'a, Opt, LOpt>
         let mut out = Prover {
             given: reqs,
             max_depth: default_budget(n),
-            sign_cache: LittleCache::new(8),
+            sign_cache: LittleCache::new(0),
             options: Opt::init(),
             lemma_options: LOpt::init(),
         };
@@ -109,35 +110,82 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
         self.max_depth = max_depth
     }
 
+    /// Populates self.sign_cache with the known signs of variables
     fn calc_signs(&mut self) {
+        // Collect all the variables from the requirements
         let mut variables = Vec::new();
         for req in self.given.iter() {
             variables.extend(req.variables());
         }
         variables.sort_unstable();
         variables.dedup();
-        'idk: loop {
+
+        // Tell LittleCache how much space we need
+        self.sign_cache = LittleCache::new(variables.len());
+
+        'outer: loop {
             for var in variables.iter() {
+                // Only calculate signs we don't already know
                 if self.sign_cache.get(&var).is_some() {
                     continue;
                 }
                 for ge0 in self.given.iter() {
-                    match bounds_on_ge0(&ge0, &var, |x| self.sign_cache.get(x)) {
-                        Some(Bound::Le(expr)) => match expr.sign(|x| self.sign_cache.get(x)) {
-                            Some(-1) => {
-                                self.sign_cache.set(var.clone(), -1);
-                                continue 'idk;
+                    macro_rules! named_sign {
+                        () => {
+                            |x| self.sign_cache.get(x).unwrap_or(Sign::UNKNOWN)
+                        };
+                    }
+                    // Try to find the sign of the variable by finding the sign of a bound
+                    let bound_sign = match bounds_on_ge0(&ge0, &var, named_sign!()) {
+                        Some(Bound::Le(expr)) => {
+                            let sign = expr.sign(named_sign!());
+                            if sign == Sign::NEGATIVE {
+                                // bdd above by neg => neg
+                                Sign::NEGATIVE
+                            } else if !sign.maybe_pos() {
+                                // bdd above by non_pos => non_pos
+                                Sign::NEGATIVE | Sign::ZERO
+                            } else {
+                                Sign::UNKNOWN
                             }
-                            _ => (),
-                        },
-                        Some(Bound::Ge(expr)) => match expr.sign(|x| self.sign_cache.get(x)) {
-                            Some(1) => {
-                                self.sign_cache.set(var.clone(), 1);
-                                continue 'idk;
+                        }
+                        Some(Bound::Ge(expr)) => {
+                            let sign = expr.sign(named_sign!());
+                            if sign == Sign::POSITIVE {
+                                // bdd below by pos => pos
+                                Sign::POSITIVE
+                            } else if !sign.maybe_neg() {
+                                // bdd below by non_neg => non_neg
+                                Sign::POSITIVE | Sign::ZERO
+                            } else {
+                                Sign::UNKNOWN
                             }
-                            _ => (),
-                        },
-                        None => (),
+                        }
+                        None => continue,
+                    };
+                    match self.sign_cache.get(&var) {
+                        Some(existing_sign) => {
+                            // Create a new sign
+                            let new_sign = existing_sign & bound_sign;
+                            // If it's NULL then we must have had contradicting requirements!
+                            // FIXME This should be thrown as a proper error but there's not
+                            // currently a way to do this.
+                            if new_sign == Sign::NULL {
+                                panic!("contradicting requirements");
+                            }
+                            // Update the cache and start again if it's changed
+                            if new_sign != existing_sign {
+                                self.sign_cache.set(var.clone(), bound_sign);
+                                continue 'outer;
+                            }
+                        }
+                        None => if bound_sign != Sign::UNKNOWN {
+                            // It's new, so add it if it's not unknown!
+                            // Then start again. TODO Make this more efficient by not starting
+                            // again. Above, too.
+                            self.sign_cache.set(var.clone(), bound_sign);
+                            continue 'outer;
+                        }
                     }
                 }
             }

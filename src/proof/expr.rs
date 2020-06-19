@@ -1,4 +1,5 @@
 use super::int::{EvalInt, Int, Rational};
+use super::sign::Sign;
 use super::PrettyFormat;
 use crate::ast::{self, Ident};
 use std::fmt::{self, Display, Formatter};
@@ -791,32 +792,25 @@ impl<'b, 'a: 'b> Expr<'a> {
     }
 
     /// Returns an i8 with the same sign as the expression or None if this can't be determined.
-    pub fn sign(&self, named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy) -> Option<i8> {
+    pub fn sign(&self, named_sign: impl Fn(&Ident<'a>) -> Sign + Copy) -> Sign {
         match self {
-            Expr::Neg(inner) => Some(-inner.sign(named_sign)?),
-            Expr::Recip(inner, _) => Some(inner.sign(named_sign)?),
+            Expr::Neg(inner) => -inner.sign(named_sign),
+            Expr::Recip(inner, _) => inner.sign(named_sign),
 
             Expr::Prod(terms) => terms
                 .iter()
                 .map(|term| term.sign(named_sign))
-                .fold(Some(1), |sign, term_sign| Some(sign? * term_sign?)),
+                .fold(Sign::POSITIVE, std::ops::Mul::mul),
 
             // 0 signs do not effect the sign of a sum.
             // Otherwise, a sum has a sign of 1 iff all its terms have a sign of 1;
             // likewise, a sum has a sign of -1 iff all its terms have a sign of -1.
-            Expr::Sum(terms) => {
-                terms
-                    .iter()
-                    .map(|term| term.sign(named_sign))
-                    .fold(Some(0), |sign, term_sign| match (sign?, term_sign?) {
-                        (0, term_sign) => Some(term_sign),
-                        (1, 1) => Some(1),
-                        (-1, -1) => Some(-1),
-                        _ => None,
-                    })
-            }
+            Expr::Sum(terms) => terms
+                .iter()
+                .map(|term| term.sign(named_sign))
+                .fold(Sign::ZERO, std::ops::Add::add),
 
-            Expr::Atom(Atom::Literal(x)) => Some(x.sign_i8()),
+            Expr::Atom(Atom::Literal(x)) => x.sign(),
             Expr::Atom(Atom::Named(x)) => named_sign(x),
         }
     }

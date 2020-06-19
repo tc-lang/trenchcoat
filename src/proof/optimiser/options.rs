@@ -17,9 +17,7 @@ impl Options for DefaultMode {
         false
     }
     fn better_sign_handling(&self) -> bool {
-        #[cfg(feature = "better-sign-handling")]
-        return true;
-        false
+        true
     }
 }
 

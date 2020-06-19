@@ -4,9 +4,9 @@ use self::options::Options;
 use super::bound::{bounds_on_ge0, Bound, DescriptiveBound, Relation, RelationKind};
 use super::expr::{self, Atom, Expr};
 use super::int::Int;
+use super::sign::Sign;
 use crate::ast::Ident;
 use crate::little_cache::Cache as LittleCache;
-use std::iter::Iterator;
 
 // TODO These types can probably be created with a macro to remove duplication.
 //
@@ -69,7 +69,7 @@ pub struct Minimizer<'a, 'b, Opt: Options> {
     is_final: bool,
     yielded_self: bool,
 
-    sign_cache: &'b LittleCache<Ident<'a>, i8>,
+    sign_cache: &'b LittleCache<Ident<'a>, Sign>,
 
     options: Opt,
     //indent: String,
@@ -93,7 +93,7 @@ pub struct Maximizer<'a, 'b, Opt: Options> {
     generated: bool,
     is_final: bool,
     yielded_self: bool,
-    sign_cache: &'b LittleCache<Ident<'a>, i8>,
+    sign_cache: &'b LittleCache<Ident<'a>, Sign>,
     options: Opt,
     //indent: String,
 }
@@ -123,7 +123,7 @@ impl<'a, 'b, Opt: Options> Minimizer<'a, 'b, Opt> {
         solve: Expr<'a>,
         given_ge0: Vec<Expr<'a>>,
         budget: isize,
-        sign_cache: &'b LittleCache<Ident<'a>, i8>,
+        sign_cache: &'b LittleCache<Ident<'a>, Sign>,
         options: Opt,
         //indent: String,
     ) -> Minimizer<'a, 'b, Opt> {
@@ -172,7 +172,7 @@ impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
         solve: Expr<'a>,
         given_ge0: Vec<Expr<'a>>,
         budget: isize,
-        sign_cache: &'b LittleCache<Ident<'a>, i8>,
+        sign_cache: &'b LittleCache<Ident<'a>, Sign>,
         options: Opt,
         //indent: String,
     ) -> Maximizer<'a, 'b, Opt> {
@@ -247,7 +247,7 @@ impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
 /// This is so that if this is passed to a child optimiser, the next requirement checked will be
 /// the one after the one that has just been substituted (possibly reducing the number of failed
 /// rearrangements).
-fn ge0_sub_and_exclude<'a, Opt: Options, NS: Fn(&Ident<'a>) -> Option<i8> + Copy>(
+fn ge0_sub_and_exclude<'a, Opt: Options, NS: Fn(&Ident<'a>) -> Sign + Copy>(
     ge0s: &[Expr<'a>],
     exclude: usize,
     sub: &DescriptiveBound<'a>,
@@ -266,11 +266,11 @@ fn ge0_sub_and_exclude<'a, Opt: Options, NS: Fn(&Ident<'a>) -> Option<i8> + Copy
 // Methods on both Maximizer and Minimizer
 macro_rules! find_pg_group_fn {
     () => {
-        fn sign_of(&self, x: &Ident<'a>) -> Option<i8> {
+        fn sign_of(&self, x: &Ident<'a>) -> Sign {
             if self.options.better_sign_handling() {
-                self.sign_cache.get(x)
+                self.sign_cache.get(x).unwrap_or(Sign::UNKNOWN)
             } else {
-                None
+                Sign::UNKNOWN
             }
         }
 
@@ -586,7 +586,7 @@ macro_rules! optimizer_next_body {
 
 /// Substitutes sub_bound in to bound and returns the result.
 /// This uses {Minimizer, Maximizer}::sub_bound
-pub fn bound_sub<'a, Opt: Options, F: Fn(&Ident<'a>) -> Option<i8> + Copy>(
+pub fn bound_sub<'a, Opt: Options, F: Fn(&Ident<'a>) -> Sign + Copy>(
     bound: &DescriptiveBound<'a>,
     sub_bound: &DescriptiveBound<'a>,
     named_sign: F,
@@ -649,7 +649,7 @@ fn sub_bound_into<
     'a,
     SS: Fn(&Expr<'a>, &DescriptiveBound<'a>, NS) -> Option<Expr<'a>>,
     SO: Fn(&Expr<'a>, &DescriptiveBound<'a>, NS) -> Option<Expr<'a>>,
-    NS: Fn(&Ident<'a>) -> Option<i8> + Copy,
+    NS: Fn(&Ident<'a>) -> Sign + Copy,
 >(
     expr: &Expr<'a>,
     bound: &DescriptiveBound<'a>,
@@ -694,84 +694,40 @@ fn sub_bound_into<
         }
 
         Expr::Prod(terms) => {
-            // We now want to minimize a product, for now, we will only simplify products in
-            // the form: [expr]*literal0*literal1*... (expr is optional)
-            // Where all the literals are non-negative (we can assume this since the expression is
-            // simplified).
-            // It is clear that the optimum of an expression with this form is
-            // optimum(expr)*literal0*literal1*...
-            // Other forms would be more complex. TODO Handle non-linear things!
+            // We now want to minimize a product. Currently, we can do this if `x` is only in 1
+            // term and the rest of the terms are known to be non-negative.
+            // If this is the case, then subbed( a*b*c*x ) = a*b*c*subbed(x)
 
+            // We'll start by copying the terms in to out - excluding the term which we can
+            // substitute in to which we'll store in sub and then add back in later.
+            // 
+            // As mentioned above, we also can't handle multiple terms containing `x`
+            let mut sub = None;
             let mut out = Vec::with_capacity(terms.len());
-            // This is to keep track of if we've made a substitution; if we've already made one
-            // when we come to do another then we've encountered more than 1 non-literal expression
-            // so we will return the expression we started with since we don't get have a valid
-            // algorithm for this.
-            let mut made_sub = false;
             for i in 0..terms.len() {
                 let term = &terms[i];
-                out.push(match self_sub(term, bound, named_sign) {
+                match self_sub(term, bound, named_sign) {
                     Some(subbed) => {
-                        if made_sub {
-                            return None;
-                        } else {
-                            made_sub = true;
-                            subbed
-                        }
-                    }
-                    None => match term.sign(named_sign) {
-                        None => return None,
-                        Some(1) | Some(0) => term.clone(),
-                        Some(-1) => todo!(),
-                        Some(_) => panic!("invalid sign"),
-                    },
-                });
-
-                /*
-                out.push(match term {
-                    // We will just copy literals.
-                    // Note that we require only positive literals (which we should have if the
-                    // expression is simplified).
-                    Expr::Atom(Atom::Literal(x)) => {
-                        if *x < Rational::ZERO {
-                            panic!("literal < 0")
-                        } else {
-                            term.clone()
-                        }
-                    }
-                    // TODO Remove since we've got rationals
-                    // We will also treat a recip of a literal as a literal since it's constant.
-                    Expr::Recip(inner_expr, _) => match &**inner_expr {
-                        Expr::Atom(Atom::Literal(x)) => {
-                            if *x < Rational::ZERO {
-                                panic!("literal < 0")
-                            } else {
-                                term.clone()
-                            }
-                        }
-
-                        _ => {
-                            // We can't handle non-linear things yet :(
-                            // See the comment above
-                            if made_sub {
-                                return None;
-                            }
-                            made_sub = true;
-                            self_sub(term, bound, named_sign)?
-                        }
-                    },
-
-                    _ => {
-                        // We can't handle non-linear things yet :(
-                        // See the comment above
-                        if made_sub {
+                        if sub.is_some() {
                             return None;
                         }
-                        made_sub = true;
-                        self_sub(term, bound, named_sign)?
+                        sub = Some(subbed);
                     }
-                });*/
+                    None => out.push(term.clone()),
+                }
             }
+            // Return None now if we've not found anything to substitute!
+            let sub = sub?;
+            // Now check that the rest of the terms can't be negative
+            for term in out.iter() {
+                let sign = term.sign(named_sign);
+                if sign.maybe_neg() {
+                    // We might be able to do more here, but we've probably done enough.
+                    return None;
+                }
+            }
+            // Now push the substituted term
+            out.push(sub);
             Some(Expr::Prod(out))
         }
     }
@@ -784,7 +740,7 @@ impl<'a, 'b, Opt: Options> Minimizer<'a, 'b, Opt> {
     pub fn sub_bound(
         expr: &Expr<'a>,
         bound: &DescriptiveBound<'a>,
-        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
     ) -> Option<Expr<'a>> {
         // If the expression is x, then an upper bound is given directly.
         if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
@@ -810,7 +766,7 @@ impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
     pub fn sub_bound(
         expr: &Expr<'a>,
         bound: &DescriptiveBound<'a>,
-        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
     ) -> Option<Expr<'a>> {
         if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
             return match &bound.bound {

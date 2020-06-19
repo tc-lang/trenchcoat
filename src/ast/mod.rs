@@ -231,6 +231,12 @@ impl<'a> Ord for Ident<'a> {
         self.name.cmp(other.name)
     }
 }
+use std::hash::{Hash, Hasher};
+impl<'a> Hash for Ident<'a> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state)
+    }
+}
 
 impl<'a> fmt::Display for Ident<'a> {
     fn fmt(&self, f: &mut fmt::Formatter) -> Result<(), fmt::Error> {

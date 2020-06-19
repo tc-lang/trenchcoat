@@ -1,10 +1,11 @@
 use super::expr::{minus_one, one, zero, Atom, Expr};
 use super::optimiser::{bound_sub as _bound_sub, options::DefaultMode as OptimiserOptions};
+use super::sign::Sign;
 use super::PrettyFormat;
 use crate::ast::Ident;
 use std::fmt::{self, Display, Formatter};
 
-fn bound_sub<'a, F: Fn(&Ident<'a>) -> Option<i8> + Copy>(
+fn bound_sub<'a, F: Fn(&Ident<'a>) -> Sign + Copy>(
     bound: &DescriptiveBound<'a>,
     sub_bound: &DescriptiveBound<'a>,
     named_sign: F,
@@ -100,7 +101,7 @@ impl<'a> Relation<'a> {
     pub fn rearrange_unsafe(
         &self,
         subject: &Ident<'a>,
-        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
     ) -> Option<Relation<'a>> {
         use Expr::{Neg, Prod, Recip, Sum};
 
@@ -156,25 +157,22 @@ impl<'a> Relation<'a> {
                 // We're going to divide by other_terms so we must check it's sign.
                 // If it's negative, we should flip the relation.
                 let new_kind = match other_terms.sign(named_sign) {
-                    Some(1) => self.kind,
-                    Some(-1) => self.kind.opposite(),
-
-                    // We can't determine the sign so we can't safely divide by it.
-                    None => {
-                        #[cfg(debug_assertions)]
-                        println!("Dropping {} since sign is unknown.", other_terms);
-
-                        return None;
-                    }
+                    Sign::POSITIVE => self.kind,
+                    Sign::NEGATIVE => self.kind.opposite(),
                     // We can't divide by 0!
-                    Some(0) => {
+                    Sign::ZERO => {
                         #[cfg(debug_assertions)]
                         println!("Dropping {} since it is 0.", other_terms);
 
                         return None;
                     }
+                    // We can't determine the sign so we can't safely divide by it.
+                    _ => {
+                        #[cfg(debug_assertions)]
+                        println!("Dropping {} since sign is unknown.", other_terms);
 
-                    Some(_) => panic!("invalid sign"),
+                        return None;
+                    }
                 };
 
                 let new_right = Prod(vec![
@@ -225,7 +223,7 @@ impl<'a> Relation<'a> {
     pub fn bounds_on_unsafe(
         &self,
         target: &Ident<'a>,
-        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
     ) -> Option<Bound<'a>> {
         use RelationKind::{Ge, Le};
         Some(match self.rearrange_unsafe(target, named_sign)? {
@@ -246,7 +244,7 @@ impl<'a> Relation<'a> {
     pub fn bounds_on(
         &self,
         name: &Ident<'a>,
-        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
     ) -> Option<Bound<'a>> {
         // These will form the Relation that we will solve.
         // This must end up satisfying the preconditions on bounds_on_unsafe.
@@ -289,7 +287,7 @@ impl<'a> Relation<'a> {
     /// Returns a list of all the bounds that can be computed from self.
     pub fn bounds(
         &self,
-        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
     ) -> Vec<DescriptiveBound<'a>> {
         self.variables()
             .iter()
@@ -379,7 +377,7 @@ impl<'a> DescriptiveBound<'a> {
     pub fn sub(
         &self,
         sub: &DescriptiveBound<'a>,
-        named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
+        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
     ) -> Option<DescriptiveBound<'a>> {
         bound_sub(self, &sub, named_sign)
     }
@@ -389,7 +387,7 @@ impl<'a> DescriptiveBound<'a> {
 pub fn bounds_on_ge0<'a>(
     expr_ge0: &Expr<'a>,
     subject: &Ident<'a>,
-    named_sign: impl Fn(&Ident<'a>) -> Option<i8> + Copy,
+    named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
 ) -> Option<Bound<'a>> {
     Relation {
         left: expr_ge0.single_x(subject)?,

@@ -12,6 +12,7 @@ pub mod graph;
 pub mod int;
 mod optimiser;
 mod term;
+mod sign;
 
 #[cfg(test)]
 mod tests;
