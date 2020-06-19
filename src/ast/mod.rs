@@ -793,14 +793,21 @@ impl<'a> Type<'a> {
 
 impl<'a> Type<'a> {
     fn parse_struct(inner: &'a [Token<'a>]) -> ParseRet<'a, Type<'a>> {
-        let fields = tokens::split_at_commas(inner);
+        let fields: Vec<(&[Token], Option<&Token>)> = tokens::split_at_commas(inner);
         let mut struct_fields = Vec::with_capacity(fields.len());
         let mut errors = Vec::new();
 
-        for field_tokens in fields.iter() {
-            // FIXME: The wrapping function *should* provide the next token from the commas, but we
-            // currently have no way of getting that.
-            let field = next!(types::StructField::parse(field_tokens), errors, |errs| errs);
+        for (field_tokens, comma) in fields.iter() {
+            // The comma following the set of tokens won't be there, iff it's at the end of the
+            // tokens we were given. So that will properly be EOF if not given
+            let eof = match comma {
+                Some(t) => ErrorSource::Single(t),
+                None => ErrorSource::EOF,
+            };
+
+            let field = next!(types::StructField::parse(field_tokens), errors, |errs| {
+                Error::set_eof(errs, eof)
+            });
             struct_fields.push(field);
         }
 
@@ -949,13 +956,16 @@ fn parse_fn_params<'a>(token: Option<&'a Token<'a>>) -> ParseRet<'a, FnParams<'a
     let mut errors = Vec::new();
     let mut params = Vec::with_capacity(params_tokens.len());
 
-    for tokens in params_tokens {
+    for (tokens, comma) in params_tokens {
+        let eof = match comma {
+            Some(t) => ErrorSource::Single(t),
+            None => ErrorSource::EOF,
+        };
+
         let param = next!(
             parse_single_param(tokens).with_context(ErrorContext::FnParams),
             errors,
-            // FIXME: We currently can't construct the comma tokens between the parameters, but
-            // that's what should go here to replace eof
-            |errs| errs
+            |errs| Error::set_eof(errs, eof)
         );
         params.push(param);
     }
@@ -1408,25 +1418,28 @@ impl<'a> Expr<'a> {
         }
     }
 
-    fn parse_all(expr_sources: Vec<&'a [Token<'a>]>) -> ParseRet<'a, Vec<Expr<'a>>> {
+    fn parse_all(
+        expr_sources: Vec<(&'a [Token<'a>], Option<&'a Token<'a>>)>,
+    ) -> ParseRet<'a, Vec<Expr<'a>>> {
         use ParseRet::{Err, Ok, SoftErr};
 
         let mut errors = Vec::new();
         let mut out = Vec::with_capacity(expr_sources.len());
 
-        for tokens in expr_sources.iter() {
+        for (tokens, delim) in expr_sources.iter() {
+            let eof = match delim {
+                Some(t) => ErrorSource::Single(t),
+                None => ErrorSource::EOF,
+            };
+
             match Expr::parse(tokens, false) {
                 Some(Ok(expr)) => out.push(expr),
                 Some(SoftErr(expr, errs)) => {
                     out.push(expr);
-                    // FIXME: We currently have no way of getting the tokens we need to replace EOF
-                    // here - the argument to this function should be changed
-                    errors.extend(errs);
+                    errors.extend(Error::set_eof(errs, eof));
                 }
                 Some(Err(errs)) => {
-                    // FIXME: We currently have no way of getting the tokens we need to replace EOF
-                    // here - the argument to this function should be changed
-                    errors.extend(errs);
+                    errors.extend(Error::set_eof(errs, eof));
                     return Err(errors);
                 }
                 None => {
@@ -1434,9 +1447,7 @@ impl<'a> Expr<'a> {
                         kind: ErrorKind::ExpectingExpr,
                         context: ErrorContext::ParseAll,
                         source: match tokens {
-                            // FIXME: We currently have no way of getting the tokens we need to
-                            // replace EOF here - the argument to this function should be changed
-                            [] => ErrorSource::EOF,
+                            [] => eof,
                             [range @ ..] => ErrorSource::Range(range),
                         },
                     });
@@ -1475,15 +1486,13 @@ impl<'a> Expr<'a> {
         let args = match Self::parse_all(args) {
             Ok(args) => args,
             SoftErr(args, errs) => {
-                // FIXME: We currently don't have the information to replace EOF here - that will
-                // require a modification to `split_at_commas`.
+                // We don't need to set EOF here because `parse_all` will have already done that
                 errors.extend(errs);
                 args
             }
             Err(errs) => {
                 errors.extend(errs);
-                // FIXME: We currently don't have the information to replace EOF here - that will
-                // require a modification to `split_at_commas`.
+                // We don't need to set EOF here because `parse_all` will have already done that
                 return Some(Err(errors));
             }
         };
@@ -1707,13 +1716,16 @@ impl<'a> Expr<'a> {
         let mut unnamed_idx: u8 = 0;
         let mut errors = Vec::new();
 
-        for field in fields.iter() {
+        for (field, comma) in fields.iter() {
+            let eof = match comma {
+                Some(t) => ErrorSource::Single(t),
+                None => ErrorSource::EOF,
+            };
+
             let struct_field = match Expr::parse(field, false) {
                 // A valid expression was found, so this is an unnamed field
                 Some(expr) => {
-                    // FIXME: We should actually set EOF here, but we don't currently have the
-                    // information that we need to do so
-                    let expr = next_option!(expr, errors, |errs| errs);
+                    let expr = next_option!(expr, errors, |errs| Error::set_eof(errs, eof));
                     // Generate a name based on the index
                     let name = Ident {
                         name: u8_to_str(unnamed_idx),
@@ -1764,9 +1776,8 @@ impl<'a> Expr<'a> {
                             ));
                         }
                     };
-                    // FIXME: This has the same issue as above; we need more information to be able
-                    // to set EOF to what it should be
-                    let expr = next_option!(expr_pr, errors, |errs| errs);
+
+                    let expr = next_option!(expr_pr, errors, |errs| Error::set_eof(errs, eof));
 
                     (name, expr)
                 }

@@ -34,17 +34,22 @@ pub fn collect_invalid<'a>(tokens: &'a [Token<'a>]) -> Vec<InvalidChar> {
     invalids
 }
 
-pub fn split_at_commas<'a>(tokens: &'a [Token<'a>]) -> Vec<&'a [Token<'a>]> {
+/// Returns a comma-separated list of slices of the original given list, each paired with the
+/// trailing comma, if it was in the middle of the list.
+pub fn split_at_commas<'a>(
+    tokens: &'a [Token<'a>],
+) -> Vec<(&'a [Token<'a>], Option<&'a Token<'a>>)> {
     let mut out = Vec::with_capacity(tokens.len() / 2);
     let mut i = 0;
+
     for j in 0..tokens.len() {
         if let TokenKind::Punc(Punc::Comma) = tokens[j].kind {
-            out.push(&tokens[i..j]);
+            out.push((&tokens[i..j], Some(&tokens[j])));
             i = j + 1;
         }
     }
     if i < tokens.len() {
-        out.push(&tokens[i..tokens.len()]);
+        out.push((&tokens[i..tokens.len()], None));
     }
     out
 }

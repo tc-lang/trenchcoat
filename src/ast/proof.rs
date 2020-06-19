@@ -357,16 +357,20 @@ impl<'a> Stmt<'a> {
         let mut errors = Vec::new();
 
         // Parse each proof statement
-        let proof_statements = split_at_commas(proof_statements);
-        let proof_statements = proof_statements.iter().map(|stmt| Condition::parse(stmt));
+        let stmts: Vec<(&[Token], Option<&Token>)> = split_at_commas(proof_statements);
+        let proof_statements = stmts
+            .iter()
+            .map(|(stmt, comma)| (Condition::parse(stmt), comma));
         // To hold the unwrapped proof statements
         let mut proof = Vec::with_capacity(proof_statements.len());
 
         // Unwrap each proof statement
-        for res in proof_statements {
-            // FIXME: We need more information in order to be able to set EOF here - which we
-            // should be doing
-            proof.push(next_option!(res, errors, |errs| errs));
+        for (res, comma) in proof_statements {
+            let eof = match comma {
+                Some(t) => ErrorSource::Single(t),
+                None => ErrorSource::EOF,
+            };
+            proof.push(next_option!(res, errors, |errs| Error::set_eof(errs, eof)));
         }
 
         // Parse the lemma statement
