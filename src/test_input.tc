@@ -14,6 +14,7 @@ fn foo(x: int, y: int) -> int {
 # require y >= 0
 # require z >= 0
 # x <= 2 => _ <= 3*y+2*z
+# lemma x <= 2 ==> x <= 3
 fn bar(x: int, y: int, z: int) -> int {
 	x * (y + z) + y
 }

@@ -376,7 +376,13 @@ impl<'a, 'b> TopLevelScope<'a, 'b> {
                         });
                     }
                 }
-                Lemma { .. } => todo!(),
+                Lemma { .. } => errors.push(Error {
+                    kind: error::Kind::FeatureNotAllowed {
+                        description: "lemmas outside of function bodies are unsupported",
+                    },
+                    context: error::Context::ProofStmt,
+                    source: stmt.node(),
+                }),
                 &StmtKind::Malformed => panic!("Unexpected malformed proof statment in `verify`"),
             }
         }

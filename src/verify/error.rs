@@ -554,7 +554,7 @@ impl Error<'_> {
     ) -> String {
         // This error will look something like:
         // ```
-        // error: misplaced return identifier
+        // error: feature not currently available
         //  --> src/test_input.tc:7:11
         //   |
         // 7 | # require x >= 1 || x <= 1
@@ -566,7 +566,7 @@ impl Error<'_> {
         let (context, spacing) =
             context_lines_and_spacing(source.byte_range(), file_str, file_name);
         format!(
-            "{}: misplaced return identifier\n{}{} {} note: {}\n",
+            "{}: feature not yet available\n{}{} {} note: {}\n",
             Red.paint("error"),
             context,
             spacing,
