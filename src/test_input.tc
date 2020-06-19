@@ -21,7 +21,7 @@ fn bar(x: int, y: int, z: int) -> int {
 
 fn main() {
 	let x = 3;
-	# lemma x >= 3
+	# lemma x >= 4
 	print foo(x, 2);
 }
 

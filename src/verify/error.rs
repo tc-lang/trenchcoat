@@ -1,7 +1,7 @@
 //! Error definitions for verification
 
 use super::Func;
-use crate::ast::{Ident, Item, ItemKind::FnDecl, Node};
+use crate::ast::{proof::Condition, Ident, Item, ItemKind::FnDecl, Node};
 use crate::errors::{
     context_lines, context_lines_and_spacing, line_info, replace_tabs, underline, PrettyError,
 };
@@ -69,8 +69,34 @@ pub enum Kind<'a> {
         func_info: &'a Func<'a>,
         failed: Vec<(ProofResult, Requirement<'a>)>,
     },
+    /// This indicates that the *result* of a lemma could not be proven with whatever was given (or
+    /// not).
     FailedLemma {
+        /// The assumed requirements under which the lemma failed. This will be None if the lemma
+        /// failed under the base prover. The Node should give the source for the requirements.
+        assumption: Option<Node<'a>>,
+
+        /// The "proof" conditions for the lemma, if they were available
+        proof: &'a [Condition<'a>],
+
+        /// For use when `assumption` and `proof` are None/empty - i.e. when the base prover failed
+        /// on a proof with no preconditions. This indicates that there were other provers available
+        /// that *might* have been able to prove this, had the proof been given explicitly
+        /// (i.e. with `proof` non-empty).
+        ///
+        /// This might be changed in the future to explicitly record if other provers *were* able to
+        /// prove it.
+        other_assumptions: bool,
+
+        /// The results of the lemma that we failed to prove, along with their results
         failed: Vec<(ProofResult, Requirement<'a>)>,
+    },
+    /// This indicates that the "proof" portion of a lemma could not be satisfied by any prover
+    InvalidLemmaProof {
+        failed: Vec<(ProofResult, Requirement<'a>)>,
+
+        /// This carries the same meaning as above, for `FailedLemma`
+        other_assumptions: bool,
     },
     /// A collection of proof requirements that didn't pass while attempting to uphold a contract
     /// The source should be the node representing the function definition

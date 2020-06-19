@@ -124,7 +124,10 @@ impl<'a> WrappedProver<'a> {
         self.prover.as_ref().unwrap().prove(req)
     }
 
-    pub fn prove_lemma(&self, req: &Requirement<'a>) -> ProofResult {
+    // TODO: We might want this to only use the conditions given as part of the proof for the
+    // lemma. This should be decided on later, but the placeholder for now is the `_given`
+    // argument.
+    pub fn prove_lemma(&self, _given: &[Requirement<'a>], req: &Requirement<'a>) -> ProofResult {
         self.prover.as_ref().unwrap().prove_lemma(req)
     }
 
@@ -342,16 +345,53 @@ impl<'a> Provers<'a> {
         &mut self.mask
     }
 
+    /// Returns whether the mask prevents some provers from running
+    pub fn masks_some(&self) -> bool {
+        self.mask.masks_some()
+    }
+
     /// Returns the number of provers stored
     pub fn size(&self) -> usize {
         self.provers.len()
     }
 
     /// Attempts to prove the given requirements for all provers simultaneously, returning - for
+    /// each prover *unmasked* prover - its index and all of the requirements that failed. Note
+    /// that the provers will be given in order of their indices.
+    ///
+    /// If no requirements failed, the returned list will be empty.
+    ///
+    /// So: masked provers will not be present, successes will be given by an empty list, and
+    /// failure is given by a list of the results and failing requirement.
+    pub fn prove_all(
+        &self,
+        reqs: &[Requirement<'a>],
+    ) -> Vec<(usize, Vec<(ProofResult, Requirement<'a>)>)> {
+        self.provers
+            .iter()
+            .enumerate()
+            .filter_map(|(i, p)| match self.mask.allows(i) {
+                false => None,
+                true => {
+                    let res = reqs
+                        .iter()
+                        .filter_map(|req| match p.prove(req) {
+                            ProofResult::True => None,
+                            res @ _ => Some((res, req.clone())),
+                        })
+                        .collect();
+
+                    Some((i, res))
+                }
+            })
+            .collect()
+    }
+
+    /// Attempts to prove the given requirements for all provers simultaneously, returning - for
     /// each prover - its index and whether the requirements were all proven true.
     ///
     /// The mask allows individual provers to be ignored - their values will always be true.
-    pub fn prove_all(&self, reqs: &[Requirement<'a>]) -> Vec<(usize, bool)> {
+    pub fn prove_all_passed(&self, reqs: &[Requirement<'a>]) -> Vec<(usize, bool)> {
         self.provers
             .iter()
             .enumerate()
@@ -366,7 +406,11 @@ impl<'a> Provers<'a> {
     /// returning - for each prover - its index and whether the requirement was proven true.
     ///
     /// The mask allows individual provers to be ignored - their values will always be true.
-    pub fn prove_lemma(&self, reqs: &[Requirement<'a>]) -> Vec<(usize, bool)> {
+    pub fn prove_lemma(
+        &self,
+        given: &[Requirement<'a>],
+        reqs: &[Requirement<'a>],
+    ) -> Vec<(usize, bool)> {
         self.provers
             .iter()
             .enumerate()
@@ -374,7 +418,7 @@ impl<'a> Provers<'a> {
                 true => (
                     i,
                     reqs.iter()
-                        .all(|req| p.prove_lemma(req) == ProofResult::True),
+                        .all(|req| p.prove_lemma(given, req) == ProofResult::True),
                 ),
                 false => (i, true),
             })
@@ -450,6 +494,14 @@ impl Mask {
         Mask {
             size,
             repr: MaskType::All,
+        }
+    }
+
+    /// Returns whether the mask prevents some provers from running
+    pub fn masks_some(&self) -> bool {
+        match self.repr {
+            MaskType::All | MaskType::Mix(_, _) => true,
+            MaskType::Nothing => false,
         }
     }
 }

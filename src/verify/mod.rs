@@ -13,6 +13,7 @@ use error::Error;
 use prover::{Mask, ProverSetItem, Provers};
 use std::collections::HashMap;
 use std::mem::transmute; // :)
+use std::ops::Deref;
 
 // Here, I'm using "item" to refer to things that exist in the language, for example variables,
 // function and soon types. Please change the name item to something better.
@@ -286,7 +287,7 @@ impl<'a> TopLevelScope<'a> {
                         }
                     }
                 },
-                Malformed => panic!("Unexpected malformed proof expression in `verify`"),
+                Malformed => panic!("unexpected malformed proof expression in 'verify'"),
             }
         }
 
@@ -330,7 +331,7 @@ impl<'a> TopLevelScope<'a> {
                     lhs_errs
                 }
                 ConditionKind::Malformed => {
-                    panic!("Unexpected malformed proof condition in `verify`")
+                    panic!("unexpected malformed proof condition in 'verify'");
                 }
             }
         }
@@ -1090,7 +1091,7 @@ impl<'a> Scope<'a> {
                 let post = c.post.iter().map(|req| req.substitute_all(&subs)).collect::<Vec<_>>();
                 let pre = c.pre.iter().map(|rs| rs.substitute_all(&subs)).collect::<Vec<_>>();
 
-                provers.prove_all(&pre).into_iter().filter(|(_, passed)| *passed).for_each(|(i,_)| {
+                provers.prove_all_passed(&pre).into_iter().filter(|(_, passed)| *passed).for_each(|(i,_)| {
                     reqs[i].extend(post.clone());
                 });
             }
@@ -1225,39 +1226,7 @@ impl<'a> Scope<'a> {
                 }
 
                 Lemma(proof_stmt) => {
-                    let (lemma_stmt, proof) = match &proof_stmt.kind {
-                        ProofStmtKind::Lemma { stmt, proof } => (stmt, proof),
-                        _ => panic!("incorrect proof statement kind in Lemma statement"),
-                    };
-
-                    // We want to apply the lemma to only those provers that can satisfy it. We'll
-                    // create an error only if none of them can.
-                    //
-                    // Note that this is *only* available if a proof (or partial proof) is
-                    // provided.
-
-                    let lemma: Vec<Requirement> = lemma_stmt.into();
-                    let base_prover = &provers[0];
-                    match proof {
-                        None => {
-                            let res = lemma.iter().map(|req| (base_prover.prove_lemma(req), req));
-                            let failed_reqs = res
-                                .filter(|(res, _)| *res != ProofResult::True)
-                                .map(|(res, req)| (res, req.clone()))
-                                .collect::<Vec<_>>();
-                            if !failed_reqs.is_empty() {
-                                errors.push(Error {
-                                    kind: error::Kind::FailedLemma {
-                                        failed: failed_reqs,
-                                    },
-                                    context: error::Context::LemmaStmt,
-                                    source: stmt.node(),
-                                });
-                            }
-                        }
-                        Some(proof_stmts) => todo!(),
-                    };
-                    provers.add_reqs(lemma);
+                    errors.extend(self.check_lemma(provers, proof_stmt));
                 }
             }
         }
@@ -1270,5 +1239,336 @@ impl<'a> Scope<'a> {
         *provers.mask_mut() = original_mask;
 
         (errors, tail_type, tail_tmp_var, mask)
+    }
+
+    // This function is unique in that it is allowed to directly set the mask on the provers.
+    fn check_lemma(
+        &'a self,
+        provers: &mut Provers<'a>,
+        proof_stmt: &'a ProofStmt<'a>,
+    ) -> Vec<Error<'a>> {
+        // We're given that the statement should be a lemma, so we're free to destructure it
+        // like this.
+        let (lemma_stmt, proof) = match &proof_stmt.kind {
+            ProofStmtKind::Lemma { stmt, proof } => (stmt, proof),
+            _ => panic!("incorrect proof statement kind in Lemma statement"),
+        };
+
+        use crate::ast::proof::{
+            Condition, ConditionKind, Expr,
+            ExprKind::{Compound, Literal, Malformed, Named},
+            LogicOp::{And, Or},
+        };
+        use error::Kind::{FailedLemma, InvalidLemmaProof, TypeMismatch, VariableNotFound};
+
+        // The first thing we'll do is to check that all of the variables used in the lemma are in
+        // scope. If they aren't, we'll return a single error for each of them and cancel the rest
+        // of the proof available for this prover.
+        //
+        // This list of errors will only be used here; everywhere later in this function will just
+        // return a single error if it's needed.
+        let mut errors = Vec::new();
+
+        // We'll define a couple helper functions here find any variables that aren't in scope. The
+        // reason we use separate functions and not `Requirement::variables` to produce a simple
+        // list is that `variables()` gives type `Ident`, not `&Ident` - we can't put a reference
+        // to it in an error (via `Node::Ident`) because that would reference locally-owned data.
+        fn check_expr<'b>(this: &'b Scope<'b>, expr: &'b Expr<'b>, errors: &mut Vec<Error<'b>>) {
+            match &expr.kind {
+                Malformed => panic!("unexpected malformed proof expression in 'verify'"),
+                Literal(_) => (),
+                Compound { lhs, rhs, .. } => {
+                    // recurse on both sides
+                    check_expr(this, lhs, errors);
+                    check_expr(this, rhs, errors);
+                }
+                // With identifiers, we want to check two things: (1) that the identifier is in-scope,
+                // and (2) that it's an integer
+                Named(ident) => match this.get(ident.name) {
+                    // Identifier not in scope
+                    None => errors.push(Error {
+                        kind: VariableNotFound,
+                        context: error::Context::LemmaStmt,
+                        source: ident.node(),
+                    }),
+                    // Identifier in scope; the type needs to be an integer
+                    Some(scope_item) => {
+                        if scope_item.typ != Type::Int && scope_item.typ != Type::UInt {
+                            errors.push(Error {
+                                kind: TypeMismatch {
+                                    expected: vec![Type::Int, Type::UInt],
+                                    found: scope_item.typ.clone(),
+                                },
+                                context: error::Context::LemmaStmt,
+                                source: ident.node(),
+                            });
+                        }
+                    }
+                },
+            }
+        }
+
+        fn check_condition<'b>(
+            this: &'b Scope<'b>,
+            cond: &'b Condition<'b>,
+            errors: &mut Vec<Error<'b>>,
+        ) {
+            match &cond.kind {
+                ConditionKind::Compound {
+                    ref lhs,
+                    op: And,
+                    ref rhs,
+                } => {
+                    check_condition(this, lhs, errors);
+                    check_condition(this, rhs, errors);
+                }
+                ConditionKind::Simple {
+                    ref lhs, ref rhs, ..
+                } => {
+                    check_expr(this, lhs, errors);
+                    check_expr(this, rhs, errors);
+                }
+                ConditionKind::Compound { op: Or, .. } => errors.push(Error {
+                    kind: error::Kind::FeatureNotAllowed {
+                        description: "logical OR is currently not allowed in proof statements",
+                    },
+                    context: error::Context::ProofStmt,
+                    source: cond.node(),
+                }),
+                ConditionKind::Malformed => {
+                    panic!("unexpected malformed proof condition in 'verify'");
+                }
+            }
+        }
+
+        check_condition(self, lemma_stmt, &mut errors);
+        if let Some(conds) = proof.as_ref() {
+            conds
+                .iter()
+                .for_each(|c| check_condition(self, c, &mut errors));
+        }
+
+        // If there are errors, cancel all further proofs and return.
+        if !errors.is_empty() {
+            *provers.mask_mut() = Mask::all(provers.size());
+            return errors;
+        }
+
+        // Basic verification of the lemma has now been completed.
+        //
+        // There are a few different modes available here. If the lemma has no 'proof' field, it
+        // must be valid in all contexts - i.e. with no assumptions. We'll use the base prover for
+        // that.
+        //
+        // If there are additional 'proof' conditions, we'll prove those. In practice, this will
+        // nearly always be trivial, but *is* something we need to take into account. If this set
+        // of conditions is valid in all contexts, then we - again - only need to use the base
+        // prover. If it isn't, we'll only prove it with the provers for which it can be verified.
+        //
+        // From a design perspective, we have two options for carrying out a proof with input
+        // conditions. We can either: (1) Only ever use the input conditions, or (2) try the input
+        // conditions first, then use everything as a backup if those fail. The current procedure
+        // is to use former, but we may switch this at some point.
+
+        // The set of proof statments that we're trying to show are true
+        let goals: Vec<Requirement> = lemma_stmt.into();
+
+        // A value explicitly for error messages. This indicates that there are *some* provers with
+        // assumptions
+        //
+        // TODO: Something to consider is that this doesn't take masked provers into account
+        let other_assumptions = provers[1..].iter().any(|p| !p.pre.is_empty());
+
+        if let Some(proof_conds) = proof {
+            let proof_reqs = proof_conds
+                .iter()
+                .map(<Vec<Requirement>>::from)
+                .flatten()
+                .collect::<Vec<_>>();
+
+            // Because we have some proof conditions available, we don't necessarily require that
+            // the base prover passes. We *do*, however, require that at least one does.
+
+            // Contains the indices as the first index in the tuple
+            let mut all_results: Vec<(usize, Vec<_>)> = provers.prove_all(&proof_reqs);
+
+            // Results from masked provers are not given, so we should just exit if there isn't
+            // anything - that means that all provers were masked, so we weren't meant to do this
+            // proof anyways.
+            if all_results.is_empty() {
+                return Vec::new();
+            }
+
+            // Note that the second element in the pair (the Vec) only includes the values that
+            // failed. We'll collect these for use here - to check that we had at least *one*
+            // prover that passed - and then later.
+            let pass_pre_idxs = all_results
+                .iter()
+                .filter(|(_, fails)| fails.is_empty())
+                .collect::<Vec<_>>();
+
+            // If no provers were able to establish the preconditions, we might want to give an
+            // error - but only under certain circumstances.
+            if pass_pre_idxs.is_empty() {
+                // If some of the provers were masked, the error might not be *here*, so we'll just
+                // return.
+                if provers.masks_some() {
+                    return Vec::new();
+                }
+
+                // We only really want to generate an error message if the base prover is present.
+                // Because `all_results` is sorted by the index, and the base prover will always be
+                // index zero, we'll get the first one.
+                if all_results.get(0).map(|&(i, _)| i) != Some(0) {
+                    // The base prover isn't present, so we'll just return
+                    return Vec::new();
+                }
+
+                // Otherwise, we'll produce an error message, based on what failed for the base
+                // prover.
+
+                let (_, failed) = all_results.remove(0);
+
+                return vec![Error {
+                    kind: InvalidLemmaProof {
+                        failed,
+                        other_assumptions,
+                    },
+                    context: error::Context::LemmaStmt,
+                    source: lemma_stmt.node(),
+                }];
+            }
+
+            // At this point, we know that at least one of the provers was successful. For all
+            // successful provers, we'll attempt the proof. We'll do this individually based on the
+            // provers that have satistified the preconditions
+            //
+            // All provers that satisfy the preconditions should be able to prove the post. If the
+            // base prover satisfied the preconditions, we'll only give its failure as the error.
+            // If not, then we'll give all other failed provers' errors, because they had distinct
+            // assumptions.
+            //
+            // TODO: There's a minor issue in that we might have duplicate errors if the user has
+            // given multiple contracts for the enclosing function with the same precondition.
+            // Fixing that will involve some sort of deduplication at *some* stage. Perhaps not for
+            // this version.
+
+            let mut failures: Vec<(usize, Vec<(ProofResult, Requirement)>)> = Vec::new();
+            for &(idx, _) in pass_pre_idxs {
+                let p = &mut provers[idx];
+
+                // Attempt to prove the result we want, given the inputs.
+                //
+                // NOTE: This currently does not actually use the inputs - it simply uses what's
+                // already known. As such, we actually need to add the inputs as given first, to
+                // make sure that they *are* known.
+                p.add_reqs(proof_reqs.clone());
+
+                let fails = goals
+                    .iter()
+                    .map(|req| (p.prove_lemma(&proof_reqs, req), req.clone()))
+                    .filter(|&(res, _)| res != ProofResult::True)
+                    .collect::<Vec<_>>();
+                if !fails.is_empty() {
+                    failures.push((idx, fails));
+                } else {
+                    // Success!
+                    //
+                    // We'll add the result of the lemma to the prover
+                    p.add_reqs(goals.clone());
+                }
+            }
+
+            // If there were no failures, we're good! We already added the results, in the earlier
+            // loop, so there isn't anything left for us to do
+            if failures.is_empty() {
+                return Vec::new();
+            }
+
+            // On the other hand, if there *were* errors, we need to deal with them. As we said
+            // before, there's basically two different possibilities here: either (1) the base
+            // prover failed, or (2) the base prover couldn't satisfy the preconditions, but other
+            // provers failed. Because `failures` is still sorted by index, we can simply check the
+            // first value, like before
+            if failures[0].0 == 0 {
+                // Base prover failed, so we'll produce a single error message as detailed
+                let (_, failed) = failures.remove(0);
+
+                return vec![Error {
+                    kind: FailedLemma {
+                        assumption: None,
+                        proof: proof_conds,
+                        other_assumptions: false,
+                        failed,
+                    },
+                    context: error::Context::LemmaStmt,
+                    source: lemma_stmt.node(),
+                }];
+            } else {
+                // We didn't have the base prover failing, so we'll record all of the failures as
+                // separate
+                return failures
+                    .into_iter()
+                    .map(|(i, failed)| Error {
+                        kind: FailedLemma {
+                            assumption: Some(provers[i].pre_source.clone().unwrap()),
+                            proof: proof_conds,
+                            other_assumptions: false,
+                            failed,
+                        },
+                        context: error::Context::LemmaStmt,
+                        source: lemma_stmt.node(),
+                    })
+                    .collect();
+            }
+        } else {
+            // We require that the base prover passes. If it doesn't, we'll produce an error saying
+            // that we were unable to prove the lemma.
+            //
+            // TODO: A better way to handle this could be to try *all* of the provers, and give a
+            // different error message if it's only valid in *some* contexts.
+
+            // The base prover is the prover without any pre- or post-conditions from contracts.
+            // It's always at the 0th index.
+            let base_prover = &provers[0];
+            if !provers.get_mask().allows(0) {
+                // Our proof already got cancelled, but there's no errors *here*, so we'll just
+                // return.
+                return Vec::new();
+            }
+
+            // We'll collect all of the goals that we weren't able to prove, along with the actual
+            // result.
+            let mut failed_goals = Vec::new();
+            for req in &goals {
+                match base_prover.prove_lemma(&[], req) {
+                    ProofResult::True => (),
+                    // If it wasn't true, add the result and the requirement that failed
+                    res @ _ => failed_goals.push((res, req.clone())),
+                }
+            }
+
+            // If we failed to prove it, return an appropriate error
+            //
+            // We don't add any additional masks because it's better that those error *also*
+            // appear - some might be unrelated.
+            if !failed_goals.is_empty() {
+                return vec![Error {
+                    kind: FailedLemma {
+                        assumption: None,
+                        proof: &[],
+                        other_assumptions,
+                        failed: failed_goals,
+                    },
+                    context: error::Context::LemmaStmt,
+                    source: proof_stmt.node(),
+                }];
+            }
+
+            // If we *did* prove it, we'll add the goals to what's known by the prover, and then
+            // we're done!
+            provers.add_reqs(goals);
+            return Vec::new();
+        }
     }
 }
