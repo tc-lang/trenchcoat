@@ -30,9 +30,9 @@ use std::mem::transmute; // :)
 /// This is needed because the errors collected into the top-level scope *can* borrow data stored
 /// within the top-level scope. It's more responsible for us to manage that drop order than to
 /// expect the caller to do it properly.
-pub struct TopLevelErrors<'a, 'b>(TopLevelScope<'a, 'b>);
+pub struct TopLevelErrors<'a>(TopLevelScope<'a>);
 
-pub fn verify<'a, 'b>(items: &'a [Item<'a>]) -> TopLevelErrors<'a, 'b> {
+pub fn verify<'a>(items: &'a [Item<'a>]) -> TopLevelErrors<'a> {
     let mut top_level = TopLevelErrors(TopLevelScope::build(items));
 
     unsafe {
@@ -43,7 +43,7 @@ pub fn verify<'a, 'b>(items: &'a [Item<'a>]) -> TopLevelErrors<'a, 'b> {
     top_level
 }
 
-impl<'a, 'b> std::ops::Deref for TopLevelErrors<'a, 'b> {
+impl<'a> std::ops::Deref for TopLevelErrors<'a> {
     type Target = Vec<Error<'a>>;
 
     fn deref(&self) -> &Self::Target {
@@ -104,7 +104,7 @@ struct Contract<'a> {
 /// The top level scope consists of named items, currently just functions. Things will be
 /// transitioned out of here as they can be placed in local scopes until everything is under
 /// the `Scope` type. It exists now for simplicity.
-struct TopLevelScope<'a, 'b> {
+struct TopLevelScope<'a> {
     // A map of function names to information about them
     //
     // The information about a function will be an `Err` if there are duplicate definitions. The
@@ -114,10 +114,10 @@ struct TopLevelScope<'a, 'b> {
 
     // A set of provers that's stored so that the errors can reference the strings stored in the
     // provers. This *must* be dropped after `errors`.
-    provers: Vec<Provers<'a, 'b>>,
+    provers: Vec<Provers<'a>>,
 }
 
-impl<'a, 'b> Drop for TopLevelScope<'a, 'b> {
+impl<'a> Drop for TopLevelScope<'a> {
     fn drop(&mut self) {
         // Clear out all of the errors before the provers, because the errors might have borrowed
         // some of the content stored in the provers
@@ -148,7 +148,7 @@ struct ScopeItem<'a> {
     source: Option<Node<'a>>,
 }
 
-impl<'a, 'b> TopLevelScope<'a, 'b> {
+impl<'a> TopLevelScope<'a> {
     /// Takes a slice of top-level items and builds a `TopLevelScope` from them.
     ///
     /// The only verification performed is on the proof statements given above functions - that
@@ -429,7 +429,7 @@ impl<'a, 'b> TopLevelScope<'a, 'b> {
         name: &'a str,
         func: &'a Func<'a>,
         items: &'a HashMap<&'a str, Result<Func<'a>, &'a Item<'a>>>,
-    ) -> (Provers<'a, 'b>, Vec<Error<'a>>) {
+    ) -> (Provers<'a>, Vec<Error<'a>>) {
         let mut prover_set = match (func.reqs.as_ref(), func.contracts.as_ref()) {
             (Some(reqs), Some(contracts)) => {
                 // NOTE: This section could be optimized to group by precondition, which would
@@ -583,7 +583,7 @@ impl<'a, 'b> TopLevelScope<'a, 'b> {
     }
 }
 
-impl<'a, 'b> Scope<'a> {
+impl<'a> Scope<'a> {
     /// Creates a new scope, a child of `self`, containing `item`.
     fn child(&'a self, item: ScopeItem<'a>) -> Scope<'a> {
         Scope {
@@ -645,7 +645,7 @@ impl<'a, 'b> Scope<'a> {
 
     fn check_bin_op_expr(
         &'a self,
-        provers: &mut Provers<'a, 'b>,
+        provers: &mut Provers<'a>,
         lhs: &'a Expr<'a>,
         op: BinOp,
         rhs: &'a Expr<'a>,
@@ -766,7 +766,7 @@ impl<'a, 'b> Scope<'a> {
 
     fn check_prefix_op_expr(
         &'a self,
-        provers: &mut Provers<'a, 'b>,
+        provers: &mut Provers<'a>,
         op: PrefixOp,
         rhs: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
@@ -793,7 +793,7 @@ impl<'a, 'b> Scope<'a> {
     /// user or temporary) corresponding to the expression, if it is available.
     fn check_expr(
         &'a self,
-        provers: &mut Provers<'a, 'b>,
+        provers: &mut Provers<'a>,
         expr: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
         use ExprKind::{
@@ -921,7 +921,7 @@ impl<'a, 'b> Scope<'a> {
     #[rustfmt::skip]
     fn check_fn_call_expr(
         &'a self,
-        provers: &mut Provers<'a, 'b>,
+        provers: &mut Provers<'a>,
         fn_expr: &'a Expr<'a>,
         args: &'a FnArgs<'a>,
         enclosing_expr: &'a Expr<'a>,
@@ -1109,7 +1109,7 @@ impl<'a, 'b> Scope<'a> {
     /// significant as to warrant forgoing further proof checking.
     fn check_assign(
         &'a self,
-        provers: &mut Provers<'a, 'b>,
+        provers: &mut Provers<'a>,
         ident: &'a Ident<'a>,
         expr: &'a Expr<'a>,
     ) -> (Vec<Error<'a>>, Mask) {
@@ -1156,7 +1156,7 @@ impl<'a, 'b> Scope<'a> {
     /// Checks that the given block is valid within its scope
     fn check_block(
         &'a self,
-        provers: &mut Provers<'a, 'b>,
+        provers: &mut Provers<'a>,
         block: &'a Block<'a>,
         start: usize,
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
@@ -1229,6 +1229,13 @@ impl<'a, 'b> Scope<'a> {
                         ProofStmtKind::Lemma { stmt, proof } => (stmt, proof),
                         _ => panic!("incorrect proof statement kind in Lemma statement"),
                     };
+
+                    // We want to apply the lemma to only those provers that can satisfy it. We'll
+                    // create an error only if none of them can.
+                    //
+                    // Note that this is *only* available if a proof (or partial proof) is
+                    // provided.
+
                     let lemma: Vec<Requirement> = lemma_stmt.into();
                     let base_prover = &provers[0];
                     match proof {

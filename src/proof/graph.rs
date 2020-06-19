@@ -4,7 +4,7 @@ use super::term::{Inequality, Term};
 use super::{ProofResult, Requirement, ScopedSimpleProver, SimpleProver};
 use std::mem;
 
-pub type FullProver<'a, 'b> = ScopedSimpleProver<'a, 'b, Prover>;
+pub type FullProver<'a> = ScopedSimpleProver<'a, Prover>;
 
 #[derive(Clone, Debug)]
 pub struct Prover {

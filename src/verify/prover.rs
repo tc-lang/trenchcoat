@@ -12,7 +12,7 @@ use crate::proof::graph::FullProver as InnerProver;
 #[cfg(not(any(feature = "bounds", feature = "graph")))]
 use crate::proof::StandardProver as InnerProver;
 
-pub struct WrappedProver<'a, 'b> {
+pub struct WrappedProver<'a> {
     /// The inner prover
     ///
     /// This is stored as an `Option` so that temporary movement in and out of this field can be
@@ -20,7 +20,7 @@ pub struct WrappedProver<'a, 'b> {
     ///
     /// This prover may have been created with borrowed content from the last value in
     /// `dependent_provers`.
-    prover: Option<InnerProver<'a, 'b>>,
+    prover: Option<InnerProver<'a>>,
 
     /// A stored list of the current requirements
     ///
@@ -29,7 +29,7 @@ pub struct WrappedProver<'a, 'b> {
 
     /// The provers used to build the current one. Each value may have borrowed content from the
     /// prover at the previous index.
-    dependent_provers: Vec<Pin<Box<InnerProver<'a, 'b>>>>,
+    dependent_provers: Vec<Pin<Box<InnerProver<'a>>>>,
 
     /// The set of temporary variables used, by name
     ///
@@ -43,14 +43,14 @@ pub struct WrappedProver<'a, 'b> {
 }
 
 /// A wrapper type for maintaining multiple different sets of proofs at the same time
-pub struct Provers<'a, 'b> {
-    provers: Vec<ProverSetItem<'a, 'b>>,
+pub struct Provers<'a> {
+    provers: Vec<ProverSetItem<'a>>,
     mask: Mask,
 }
 
 /// A single item in a prover set
-pub struct ProverSetItem<'a, 'b> {
-    pub prover: WrappedProver<'a, 'b>,
+pub struct ProverSetItem<'a> {
+    pub prover: WrappedProver<'a>,
 
     /// Any *extra* requirements the prover was given, due to the precondition of a contract
     ///
@@ -84,7 +84,7 @@ enum MaskType {
     Mix(Vec<bool>, usize),
 }
 
-impl<'a, 'p> Drop for WrappedProver<'a, 'p> {
+impl<'a> Drop for WrappedProver<'a> {
     fn drop(&mut self) {
         // We provide a manual implementation of `Drop` in order to ensure that the lifetime of any
         // temporary variables in `temp_vars` exceeds where they are used - which could be in
@@ -106,7 +106,7 @@ impl<'a, 'p> Drop for WrappedProver<'a, 'p> {
     }
 }
 
-impl<'a, 'p> WrappedProver<'a, 'p> {
+impl<'a> WrappedProver<'a> {
     pub fn new(reqs: Vec<Requirement<'a>>) -> Self {
         Self {
             // It's okay to pass a reference here because the definition of `SimpleProver::new`
@@ -236,13 +236,13 @@ impl<'a, 'p> WrappedProver<'a, 'p> {
             return;
         }
 
-        fn remake<'b, 'p>(
-            prover: &InnerProver<'b, 'p>,
+        fn remake<'b>(
+            prover: &InnerProver<'b>,
             mut base: Vec<Requirement<'b>>,
             with: Vec<Requirement<'b>>,
         ) -> (
-            Vec<Pin<Box<InnerProver<'b, 'p>>>>,
-            InnerProver<'b, 'p>,
+            Vec<Pin<Box<InnerProver<'b>>>>,
+            InnerProver<'b>,
             Vec<Requirement<'b>>,
         ) {
             use std::mem::transmute;
@@ -303,7 +303,7 @@ impl<'a, 'p> WrappedProver<'a, 'p> {
     }
 }
 
-impl<'a, 'b> ProverSetItem<'a, 'b> {
+impl<'a> ProverSetItem<'a> {
     pub fn new(
         base: &'a [Requirement<'a>],
         pre: &'a [Requirement<'a>],
@@ -324,8 +324,8 @@ impl<'a, 'b> ProverSetItem<'a, 'b> {
     }
 }
 
-impl<'a, 'b> Provers<'a, 'b> {
-    pub fn new(items: Vec<ProverSetItem<'a, 'b>>) -> Self {
+impl<'a> Provers<'a> {
+    pub fn new(items: Vec<ProverSetItem<'a>>) -> Self {
         assert!(!items.is_empty());
 
         Provers {
@@ -495,29 +495,29 @@ impl BitOrAssign for Mask {
     }
 }
 
-impl<'a, 'b> Deref for Provers<'a, 'b> {
-    type Target = [ProverSetItem<'a, 'b>];
+impl<'a> Deref for Provers<'a> {
+    type Target = [ProverSetItem<'a>];
 
     fn deref(&self) -> &Self::Target {
         &self.provers
     }
 }
 
-impl<'a, 'b> DerefMut for Provers<'a, 'b> {
+impl<'a> DerefMut for Provers<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.provers
     }
 }
 
-impl<'a, 'b> Deref for ProverSetItem<'a, 'b> {
-    type Target = WrappedProver<'a, 'b>;
+impl<'a> Deref for ProverSetItem<'a> {
+    type Target = WrappedProver<'a>;
 
     fn deref(&self) -> &Self::Target {
         &self.prover
     }
 }
 
-impl<'a, 'b> DerefMut for ProverSetItem<'a, 'b> {
+impl<'a> DerefMut for ProverSetItem<'a> {
     fn deref_mut(&mut self) -> &mut Self::Target {
         &mut self.prover
     }

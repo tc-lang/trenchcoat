@@ -8,7 +8,7 @@ use crate::ast::Ident;
 use crate::little_cache::Cache as LittleCache;
 
 pub type DefaultSimpleProver<'a> = Prover<'a, options::DefaultMode, options::LemmaMode>;
-pub type DefaultProver<'a, 'b> = ScopedSimpleProver<'a, 'b, DefaultSimpleProver<'a>>;
+pub type DefaultProver<'a> = ScopedSimpleProver<'a, DefaultSimpleProver<'a>>;
 
 pub struct Prover<'a, Opt: Options, LOpt: Options> {
     given: Vec<Expr<'a>>,

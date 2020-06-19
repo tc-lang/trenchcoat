@@ -25,7 +25,7 @@ use std::ops::{Deref, Not};
 pub type StandardSimpleProver<'a> =
     JointSimpleProver<'a, graph::Prover, bound_method::DefaultSimpleProver<'a>>;
 /// Wrapped `StandardSimpleProver`
-pub type StandardProver<'a, 'b> = ScopedSimpleProver<'a, 'b, StandardSimpleProver<'a>>;
+pub type StandardProver<'a> = ScopedSimpleProver<'a, StandardSimpleProver<'a>>;
 
 #[derive(Debug, Clone)]
 pub struct Requirement<'a> {
@@ -188,7 +188,7 @@ pub trait SimpleProver<'a> {
     fn add_requirements(&mut self, reqs: &[Requirement<'a>]);
 }
 
-pub trait Prover<'a, 'b> {
+pub trait Prover<'a> {
     /// Create a Prover with the given requirements.
     fn new(reqs: &[Requirement<'a>]) -> Self;
 
@@ -216,11 +216,11 @@ pub trait Prover<'a, 'b> {
     /// ```
     /// Then you might do `let prover2 = prover1.define(x, x+2)`
     /// then expressions passed to prover2 will map `x` in `prover2` to `x+2` in `prover1`.
-    fn define(&'b self, x: Ident<'a>, expr: Expr<'a>) -> Self;
+    fn define(&'a self, x: Ident<'a>, expr: Expr<'a>) -> Self;
 
     /// Create a new prover whereby `x` is treated as a new identifier even if `x` was an
     /// identifier in self.
-    fn shadow(&'b self, x: Ident<'a>) -> Self;
+    fn shadow(&'a self, x: Ident<'a>) -> Self;
 }
 
 /// A SimpleProver which uses P for standard proofs and LP for lemma proofs.
@@ -228,7 +228,7 @@ pub struct JointSimpleProver<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> {
     prover: P,
     lemma_prover: LP,
 
-    lifetime: PhantomData<&'a ()>,
+    _marker: PhantomData<&'a ()>,
 }
 
 impl<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> SimpleProver<'a>
@@ -241,8 +241,7 @@ impl<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> SimpleProver<'a>
         JointSimpleProver {
             prover: P::new(reqs.clone()),
             lemma_prover: LP::new(reqs),
-
-            lifetime: PhantomData,
+            _marker: PhantomData,
         }
     }
 
@@ -266,21 +265,20 @@ impl<'a, P: SimpleProver<'a>, LP: SimpleProver<'a>> SimpleProver<'a>
 /// The childeren all store definitions and when asked to prove something, substitute their
 /// definition before handing the proof on to their parent.
 #[derive(Debug)]
-pub enum ScopedSimpleProver<'a, 'b, P: SimpleProver<'a>> {
+pub enum ScopedSimpleProver<'a, P: SimpleProver<'a>> {
     Root(P),
     Defn {
         x: Ident<'a>,
         expr: Expr<'a>,
-
-        parent: &'b ScopedSimpleProver<'a, 'b, P>,
+        parent: &'a ScopedSimpleProver<'a, P>,
     },
     Shadow {
         x: Ident<'a>,
-        parent: &'b ScopedSimpleProver<'a, 'b, P>,
+        parent: &'a ScopedSimpleProver<'a, P>,
     },
 }
 
-impl<'a, 'b, P: SimpleProver<'a>> Prover<'a, 'b> for ScopedSimpleProver<'a, 'b, P> {
+impl<'a, P: SimpleProver<'a>> Prover<'a> for ScopedSimpleProver<'a, P> {
     fn new(reqs: &[Requirement<'a>]) -> Self {
         Self::Root(P::new(reqs))
     }
@@ -329,7 +327,7 @@ impl<'a, 'b, P: SimpleProver<'a>> Prover<'a, 'b> for ScopedSimpleProver<'a, 'b, 
         }
     }
 
-    fn define(&'b self, x: Ident<'a>, expr: Expr<'a>) -> Self {
+    fn define(&'a self, x: Ident<'a>, expr: Expr<'a>) -> Self {
         Self::Defn {
             x,
             expr,
@@ -337,12 +335,12 @@ impl<'a, 'b, P: SimpleProver<'a>> Prover<'a, 'b> for ScopedSimpleProver<'a, 'b, 
         }
     }
 
-    fn shadow(&'b self, x: Ident<'a>) -> Self {
+    fn shadow(&'a self, x: Ident<'a>) -> Self {
         Self::Shadow { x, parent: self }
     }
 }
 
-impl<'a, 'b, P: SimpleProver<'a>> ScopedSimpleProver<'a, 'b, P> {
+impl<'a, P: SimpleProver<'a>> ScopedSimpleProver<'a, P> {
     pub fn from(sp: P) -> Self {
         Self::Root(sp)
     }
