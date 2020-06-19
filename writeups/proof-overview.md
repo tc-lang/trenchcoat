@@ -42,12 +42,13 @@ unsuitable levels.
 The result of this is two algorithms which both have a worst-case time complexity of O(n²) but
 drastically different runtimes.
 
-On my laptop, the times to complete the proof tests (averaged over 15 tests) are:
+(The following results are based on the tests in [src/proof/tests.rs](../src/proof/tests.rs))
+
+On my laptop, the times to complete the proof tests (averaged over 15 runs) are:
 - Bound method: 209ms;
 - Graph method: 51ms;
-TODO: Further breakdown of test timings to include times for true/false/undetermined results.
 
-These tests can be found at [src/proof/tests.rs](../src/proof/tests.rs).
+TODO: Further breakdown of test timings to include times for true/false/undetermined results.
 
 It should be noted that this time also includes parsing and other tests, making the difference not
 meaningful as a factor. It does, however, illustrate that the bounds method is significantly slower.
