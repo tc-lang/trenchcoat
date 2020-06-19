@@ -152,7 +152,7 @@ impl<'a> Relation<'a> {
                 let mut other_terms = Vec::with_capacity(terms.len() - 1);
                 other_terms.extend_from_slice(&terms[..x_idx]);
                 other_terms.extend_from_slice(&terms[x_idx + 1..]);
-                let other_terms = Sum(other_terms);
+                let other_terms = Prod(other_terms);
                 // We're going to divide by other_terms so we must check it's sign.
                 // If it's negative, we should flip the relation.
                 let new_kind = match other_terms.sign(named_sign) {
