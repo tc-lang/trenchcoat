@@ -1,6 +1,6 @@
 use crate::errors::{self, PrettyError};
 use ansi_term::Color::Red;
-use std::fmt::{self, Display, Formatter, Write};
+use std::fmt::{self, Display, Formatter};
 use std::ops::Range;
 
 pub mod auto_sep;

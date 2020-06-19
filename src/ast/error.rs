@@ -296,13 +296,22 @@ impl PrettyError for Error<'_> {
                 "{:>width$} {} {}",
                 pre + 1,
                 Blue.paint("|"),
-                &lines[pre],
+                lines[pre].replace('\t', "    "),
                 width = width,
             )
             .unwrap();
         }
 
         let line = lines[line_no];
+        let mut line_range = match byte_range {
+            Some(range) => range,
+            // The selected area will be the end of the file, and this line is the last in the
+            // file. So all we need to do is to give the end of the line as the range
+            None => (line.len()..line.len() + 1),
+        };
+
+        let line = errors::replace_tabs(line, &mut line_range);
+
         writeln!(
             msg,
             "{:>width$} {} {}",
@@ -312,18 +321,12 @@ impl PrettyError for Error<'_> {
             width = width
         )
         .unwrap();
-        let line_range = match byte_range {
-            Some(range) => range,
-            // The selected area will be the end of the file, and this line is the last in the
-            // file. So all we need to do is to give the end of the line as the range
-            None => (line.len()..line.len() + 1),
-        };
         writeln!(
             msg,
             "{} {} {}",
             spacing,
             Blue.paint("|"),
-            Red.paint(errors::underline(line, line_range))
+            Red.paint(errors::underline(&line, line_range))
         )
         .unwrap();
 
@@ -333,7 +336,7 @@ impl PrettyError for Error<'_> {
                 "{:>width$} {} {}",
                 line_no + 2,
                 Blue.paint("|"),
-                post_line,
+                post_line.replace('\t', "    "),
                 width = width
             )
             .unwrap();

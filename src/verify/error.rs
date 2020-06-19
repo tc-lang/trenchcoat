@@ -2,7 +2,9 @@
 
 use super::Func;
 use crate::ast::{Ident, Item, ItemKind::FnDecl, Node};
-use crate::errors::{context_lines, context_lines_and_spacing, line_info, underline, PrettyError};
+use crate::errors::{
+    context_lines, context_lines_and_spacing, line_info, replace_tabs, underline, PrettyError,
+};
 use crate::proof::{ProofResult, Requirement};
 use crate::types::Type;
 use ansi_term::Color::{Blue, Red};
@@ -187,31 +189,24 @@ impl Error<'_> {
             fst_name.name
         );
 
-        let (fst_line_no, fst_col_no, fst_line, fst_line_range) = {
-            let byte_range = fst_name.node().byte_range();
+        let ctx = |node: Node| {
+            let byte_range = node.byte_range();
             let (line_no, col_no, line_offset, _, line) = line_info(file_str, byte_range.start);
 
-            let line_range = {
+            let mut line_range = {
                 let start = byte_range.start - line_offset;
                 let end = byte_range.end - line_offset;
                 start..end
             };
 
-            (line_no, col_no, line, line_range)
-        };
-
-        let (snd_line_no, snd_col_no, snd_line, snd_line_range) = {
-            let byte_range = snd_name.node().byte_range();
-            let (line_no, col_no, line_offset, _, line) = line_info(file_str, byte_range.start);
-
-            let line_range = {
-                let start = byte_range.start - line_offset;
-                let end = byte_range.end - line_offset;
-                start..end
-            };
+            // handle tabs
+            let line = replace_tabs(line, &mut line_range);
 
             (line_no, col_no, line, line_range)
         };
+
+        let (fst_line_no, fst_col_no, fst_line, fst_line_range) = ctx(fst_name.node());
+        let (snd_line_no, snd_col_no, snd_line, snd_line_range) = ctx(snd_name.node());
 
         let (fst_line_no_str, snd_line_no_str, spacing) = {
             let fst = (fst_line_no + 1).to_string();
@@ -238,7 +233,7 @@ impl Error<'_> {
         let highlight = format!(
             "{} {}",
             filler_line,
-            Red.paint(underline(snd_line, snd_line_range))
+            Red.paint(underline(&snd_line, snd_line_range))
         );
         let note = format!(
             "{} {} note: First defined here, at {}:{}:{}:",
@@ -252,7 +247,7 @@ impl Error<'_> {
         let snd_highlight = format!(
             "{} {}",
             filler_line,
-            Blue.paint(underline(fst_line, fst_line_range))
+            Blue.paint(underline(&fst_line, fst_line_range))
         );
 
         writeln!(msg, "{}", context_line).unwrap();
@@ -604,10 +599,10 @@ impl Error<'_> {
             fn_name
         );
 
-        struct Info<'b> {
+        struct Info {
             line_no: usize,
             col_no: usize,
-            line: &'b str,
+            line: String,
             line_range: Range<usize>,
         }
 
@@ -616,11 +611,13 @@ impl Error<'_> {
             let byte_range = node.byte_range();
             let (line_no, col_no, line_offset, _, line) = line_info(file_str, byte_range.start);
 
-            let line_range = {
+            let mut line_range = {
                 let start = byte_range.start - line_offset;
                 let end = byte_range.end - line_offset;
                 start..end
             };
+
+            let line = replace_tabs(line, &mut line_range);
 
             Info {
                 line_no,
@@ -696,7 +693,7 @@ impl Error<'_> {
             msg,
             "{} {}",
             filler_line,
-            Blue.paint(underline(req.line, req.line_range))
+            Blue.paint(underline(&req.line, req.line_range))
         )
         .unwrap();
 
@@ -752,7 +749,7 @@ impl Error<'_> {
             msg,
             "{} {}",
             filler_line,
-            Red.paint(underline(ret.line, ret.line_range))
+            Red.paint(underline(&ret.line, ret.line_range))
         )
         .unwrap();
 
