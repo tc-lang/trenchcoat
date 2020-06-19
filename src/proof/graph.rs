@@ -11,30 +11,45 @@ pub struct Prover {
     /// The set of expression nodes in the graph, each represented by a sum of terms and edges to
     /// the values they are less than.
     nodes: Vec<Node>,
-
-    /// A flag for attempting a different method of proof when we can't find both sides of the
-    /// requirement in the graph.
-    ///
-    /// For example: In a case like `x+y+z <= 5`, we might split this into independently determining
-    /// the upper bounds on each of x, y, and z.
-    ///
-    /// A more complex example could be: `x+y-z <= 5 + w`, which we'd convert into `x+y-z-w <= 5`
-    /// before finding the upper bounds.
-    try_splits: bool,
 }
 
-/// A flag for whether the prover should - by defualt - try to split requirements apart if they are
-/// not present in the graph.
-const DEFAULT_TRY_SPLITS: bool = true;
+/// A flag for whether the prover should try to split requirements apart if normal proof fails.
+///
+/// Splitting is extremely simplified. For example: In a case like `x+y+z <= 5`, we would split
+/// this into independently determining the upper bounds on each of x, y, and z - in relation to
+/// the constant.
+///
+/// For a more complex example, like `x+y-z <= 5+w`, we first convert this into `x+y-z-w <= 5` and
+/// then find the upper bounds on each (including the signs).
+///
+/// This typically means that the average runtime of the failure case is multiplied by two, as we
+/// would be running the standard algorithm once more, checking both whether the requirement is
+/// true and whether is it provably false.
+///
+/// This additional method only really provides a benefit if there's more information given about
+/// the variables, so it's recommended to at least enable `DOUBLE_NEGATE_REQS` and `LINK_MUL_COEFS`
+/// alongside this flag.
+const TRY_SPLITS: bool = true;
 
 /// A flag for whether requirements should be doubled so that their negations are also added (so
 /// that upper bounds on `x` provide lower bounds on `-x`)
 ///
-/// Note that this should be enabled if DEFAULT_TRY_SPLITS is enabled.
+/// This simply duplicates the nodes (and edges) being added to the graph so that we can feed more
+/// information into the algorithm.
 const DOUBLE_NEGATE_REQS: bool = false;
 
+/// An exhaustive version of `DOUBLE_NEGATE_REQS`: If true, this will exhaustively produce all
+/// combinations of terms on either side of the inequality in adding more nodes to the graph.
+///
+/// This - of course - introduces 2^n total edges for each inequality (where n is the number of
+/// terms). In practice, n is exceptionally small, so this is likely not to be an issue.
+///
+/// This flag is available as an alternative to `DOUBLE_NEGATE_REQS` - if both are present this
+/// flag will take priority.
 const EXHAUSTIVE_REQ_SIDES: bool = true;
 
+/// This feature is more difficult to explain in a single doc comment. For an in-depth explanation,
+/// please refer to the writeup.
 const LINK_MUL_COEFS: bool = true;
 
 #[derive(Copy, Clone, Debug)]
@@ -79,13 +94,13 @@ impl Prover {
         // find the starting and ending points of the path through the graph
         let start_node_idx = match self.nodes.iter().position(|n| n.expr == req.lhs) {
             Some(i) => i,
-            None if self.try_splits => return self.prove_splits(req.clone(), true),
+            None if TRY_SPLITS => return self.prove_splits(req.clone(), true),
             None => return ProofResult::Undetermined,
         };
 
         let end_node_idx = match self.nodes.iter().position(|n| n.expr == req.rhs) {
             Some(i) => i,
-            None if self.try_splits => return self.prove_splits(req.clone(), true),
+            None if TRY_SPLITS => return self.prove_splits(req.clone(), true),
             None => return ProofResult::Undetermined,
         };
 
@@ -97,7 +112,7 @@ impl Prover {
             return ProofResult::True;
         }
 
-        if self.try_splits {
+        if TRY_SPLITS {
             let split_res = self.prove_splits(req.clone(), false);
             if split_res != ProofResult::Undetermined {
                 return split_res;
@@ -133,7 +148,7 @@ impl Prover {
 
     /// A dedicated function for attempting to prove via the "split" method
     ///
-    /// This is detailed above, in the doc comment for `Prover.try_splits`.
+    /// This is detailed above, in the doc comment for `TRY_SPLITS`.
     fn prove_splits(&self, req: Inequality, recurse: bool) -> ProofResult {
         // We require that the requirement has all terms on the right-hand side in order to properly
         // break it apart to find the upper bound - that way we can simply start from 0 and find
@@ -506,7 +521,6 @@ impl<'a> SimpleProver<'a> for Prover {
                 expr: Vec::new(),
                 less_than: Vec::new(),
             }],
-            try_splits: DEFAULT_TRY_SPLITS,
         };
 
         // All of the inequalities we would like to have added, but where we need to determine the
@@ -606,7 +620,47 @@ impl<'a> SimpleProver<'a> for Prover {
         }
     }
 
-    fn add_requirements(&mut self, _reqs: &[Requirement<'a>]) {
-        todo!()
+    fn add_requirements(&mut self, reqs: &[Requirement<'a>]) {
+        // The process here is virtually identical to that of `new`, so the comments have not been
+        // duplicated. For an in-depth explanation, see the internals of that function.
+
+        let mut tabled: Vec<(Inequality, Vec<Inequality>, bool)> = vec![];
+
+        for req in reqs {
+            let (ineq, mut stack) = Inequality::make_stack(req.clone());
+            let mut negated = false;
+
+            if !self.establish_stack(&mut stack, &mut negated) {
+                tabled.push((ineq, stack, negated));
+                continue;
+            }
+
+            match negated {
+                true => self.add_req(ineq.negate()),
+                false => self.add_req(ineq),
+            }
+        }
+
+        while !tabled.is_empty() {
+            let mut changed = false;
+
+            for (ineq, mut stack, mut negated) in mem::replace(&mut tabled, vec![]) {
+                if !self.establish_stack(&mut stack, &mut negated) {
+                    tabled.push((ineq, stack, negated));
+                    continue;
+                }
+
+                match negated {
+                    true => self.add_req(ineq.negate()),
+                    false => self.add_req(ineq),
+                }
+
+                changed = true;
+            }
+
+            if !changed {
+                panic!("Failed establish the signs of initial requirements");
+            }
+        }
     }
 }

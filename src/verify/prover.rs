@@ -109,9 +109,9 @@ impl<'a, 'p> Drop for WrappedProver<'a, 'p> {
 impl<'a, 'p> WrappedProver<'a, 'p> {
     pub fn new(reqs: Vec<Requirement<'a>>) -> Self {
         Self {
-            // FIXME @Max are we ok to pass a referencec here?
-            // I think it's fine
-            //prover: Some(InnerProver::new(reqs.clone())),
+            // It's okay to pass a reference here because the definition of `SimpleProver::new`
+            // provides that the reference need not live as long as the type - so the prover
+            // shouldn't access it beyond the end of the function call.
             prover: Some(InnerProver::new(&reqs)),
             reqs,
             dependent_provers: Vec::new(),
@@ -174,8 +174,8 @@ impl<'a, 'p> WrappedProver<'a, 'p> {
         self.dependent_provers
             .push(Pin::new(Box::new(self.prover.take().unwrap())));
 
-        // We extend the lifetime of `last_prover` because the data we know the data we're storing
-        // will be valid later
+        // We extend the lifetime of `last_prover` because we know the data we're storing will be
+        // valid later
         //
         // Should you, oh foolish adventurer, think to abbreviate your incanatations by transmuting
         // before hinting, know that only danger lies down that road. Alas! Those who follow never
@@ -195,8 +195,8 @@ impl<'a, 'p> WrappedProver<'a, 'p> {
         self.dependent_provers
             .push(Pin::new(Box::new(self.prover.take().unwrap())));
 
-        // We extend the lifetime of `last_prover` because the data we know the data we're storing
-        // will be valid later
+        // We extend the lifetime of `last_prover` because we know the data we're storing will be
+        // valid later
         let last_prover: &InnerProver =
             unsafe { std::mem::transmute(self.dependent_provers.last().unwrap()) };
         let new_prover: InnerProver = last_prover.shadow(x);
@@ -276,9 +276,10 @@ impl<'a, 'p> WrappedProver<'a, 'p> {
                 }
                 Root(_) => {
                     base.extend(with);
-                    // FIXME @Max I'm assuming we're ok to pass a reference here?
-                    // It shouldn't outlive the function call.
-                    //(Vec::new(), Prover::new(base.clone()), base)
+                    // It's okay to pass a reference here because the definition of
+                    // `SimpleProver::new` provides that the reference need not live as long as the
+                    // type - so the prover shouldn't access it beyond the end of the function
+                    // call.
                     (Vec::new(), Prover::new(&base), base)
                 }
             }

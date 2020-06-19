@@ -1,8 +1,4 @@
-//! Verification for proof statements
-//!
-//! The high-level operations here are on functions and the global scope, taking the AST as input.
-//! It is assumed here that the AST nodes given as input have passed through the checks in `verify`
-//! without error.
+//! Interfaces for use in verification of proof statments
 
 mod bound;
 //mod bound_group;
@@ -173,17 +169,22 @@ pub trait SimpleProver<'a> {
     /// Create a SimpleProver with the given requirements.
     fn new(reqs: &[Requirement<'a>]) -> Self;
 
-    /// Try to prove `proposition`. This will assume that the requirements passed to `new` are true.
+    /// Try to prove that `proposition` is true
+    ///
+    /// This assume that the requirements passed to `new` and added through `add_requirements` are
+    /// true.
     fn prove(&self, proposition: &Requirement<'a>) -> ProofResult;
 
     /// Like prove, but intended for proving lemmas. This may have a longer runtime and is
     /// hopefully capable of proving more.
     ///
-    /// The default behaviour is to just use self.prove
+    /// The default implementation simply defers to `Self::prove`
     fn prove_lemma(&self, proposition: &Requirement<'a>) -> ProofResult {
         self.prove(proposition)
     }
 
+    /// Adds the list of requirements to the prover, treating them as given - in combination with
+    /// whatever might already be there.
     fn add_requirements(&mut self, reqs: &[Requirement<'a>]);
 }
 
