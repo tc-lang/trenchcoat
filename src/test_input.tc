@@ -6,14 +6,13 @@ fn hi(x: int) -> int {
 
 # require x >= 3
 # require y >= 1
-# x <= 2 => 5 >= _
+# x <= 2 && y <= 2 => _ <= 12
 fn foo(x: int, y: int) -> int {
     bar(x, y, 3)
 }
 
 # require y >= 1
 # require z >= 1
-# require x >= 1
 # x <= 2 => _ <= 3*y+2*z
 fn bar(x: int, y: int, z: int) -> int {
     x * (y + z) + y
