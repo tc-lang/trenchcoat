@@ -249,7 +249,7 @@ impl Oper {
 fn is_oper(ch: char) -> bool {
     is_single_oper(ch)
         || match ch {
-            '+' | '-' | '=' | '/' | '*' | '.' | '<' | '>' => true,
+            '+' | '-' | '=' | '/' | '*' | '.' | '<' | '>' | '&' | '|' => true,
             _ => false,
         }
 }
