@@ -12,6 +12,18 @@ use crate::proof::graph::FullProver as InnerProver;
 #[cfg(not(any(feature = "bounds", feature = "graph")))]
 use crate::proof::StandardProver as InnerProver;
 
+/// A wrapper around the raw prover API that provides certain pieces of additional functionality,
+/// namely: producing and storing temporary variables, defining and shadowing in-line, and
+/// rebuilding with new requirements.
+///
+/// For definitions and shadowing, `proof::ScopedSimpleProver` provides methods that are *almost*
+/// what is needed, but they only borrow the contents, which requires a persistent place to store
+/// the values they reference. The referenced provers are stored here and the drop order is managed
+/// by this type.
+///
+// TODO:
+/// Rebuilding with new requirements *is* supported by the `SimpleProver` API, but was added after
+/// this type was made; it has not been integrated here yet.
 pub struct WrappedProver<'a> {
     /// The inner prover
     ///
@@ -45,11 +57,21 @@ pub struct WrappedProver<'a> {
 /// A wrapper type for maintaining multiple different sets of proofs at the same time
 pub struct Provers<'a> {
     provers: Vec<ProverSetItem<'a>>,
-    mask: Mask,
+
+    /// The mask on none, some, or all of the provers. This can be used to disable further proof
+    /// after critical errors.
+    pub mask: Mask,
 }
 
-/// A single item in a prover set
+/// A single item in a prover set.
+///
+/// These are created from a list of contracts at the top of a function, with an additional one
+/// coming from the "base" prover - the one without any assumptions from contracts.
 pub struct ProverSetItem<'a> {
+    /// The inner prover. A better implementation might have grouped the internals of the
+    /// `WrappedProver` into the outer `Provers` set, but it's not super serious (aside from a bit
+    /// of inefficiency) - the tech debt isn't too severe, and the next version can take this into
+    /// account.
     pub prover: WrappedProver<'a>,
 
     /// Any *extra* requirements the prover was given, due to the precondition of a contract
@@ -58,29 +80,41 @@ pub struct ProverSetItem<'a> {
     /// to it later.
     pub pre: &'a [Requirement<'a>],
 
-    /// The source for the preconditions. This must be `Some(_)` if there are any
-    /// pre-conditions, but having post-conditions does *not* necessarily imply this should exist
+    /// The source for the preconditions. This must be `Some(_)` if there are any pre-conditions,
+    /// but having post-conditions does *not* necessarily imply this will exist
     pub pre_source: Option<Node<'a>>,
 
     /// Any requirements the prover must be able to show at the end of the function, given in terms
-    /// of the function arguments and
+    /// of the function arguments and the return identifier `_`.
     pub post: &'a [Requirement<'a>],
 
     /// The source for post-conditions. This should be `Some(_)` if there are any post-conditions.
     pub post_source: Option<Node<'a>>,
 }
 
+/// A mask for disabling certain provers (but not others) when certain types of failure occur.
+///
+/// This is currently not used beyond the all/nothing dichotomy, but has support for selective
+/// disabling, should that be decided in the future.
 #[derive(Debug, Clone)]
 pub struct Mask {
+    /// The number of items (in this case, provers) in the set available for masking. This is used
+    /// for converting between mask types.
     size: usize,
     repr: MaskType,
 }
 
+/// A way of representing common mask types in a small amount of space
 #[derive(Debug, Clone)]
 enum MaskType {
+    /// All items masked, i.e. all are disabled
     All,
+    /// None of the items are masked, i.e. all are enabled
     Nothing,
-    // The usize is the number of indices not currently masked
+    /// Some items are masked and some are not. The vector records - for each item - whether it is
+    /// masked (`true` = masked). The second value gives the number of indices not currently
+    /// masked, which allows us to switch back to one of the other two simple cases when
+    /// applicable.
     Mix(Vec<bool>, usize),
 }
 
@@ -107,6 +141,7 @@ impl<'a> Drop for WrappedProver<'a> {
 }
 
 impl<'a> WrappedProver<'a> {
+    /// Constructs a new `WrappedProver` from the list of requirements
     pub fn new(reqs: Vec<Requirement<'a>>) -> Self {
         Self {
             // It's okay to pass a reference here because the definition of `SimpleProver::new`
@@ -120,6 +155,7 @@ impl<'a> WrappedProver<'a> {
         }
     }
 
+    /// Attempts to prove the given requiremnt, substituting definitions as needed.
     pub fn prove(&self, req: &Requirement<'a>) -> ProofResult {
         self.prover.as_ref().unwrap().prove(req)
     }
@@ -131,32 +167,47 @@ impl<'a> WrappedProver<'a> {
         self.prover.as_ref().unwrap().prove_lemma(req)
     }
 
+    /// Attempts to prove the given requirement, only substituting definitions in for the return
+    /// identifier `_` as `ret_ident`.
+    ///
+    /// This allows the requirement on a return value to be given at the top of a function and
+    /// checked with whatever definitions or added requirements may have been given during the
+    /// course of the function body.
     pub fn prove_return(&self, req: &Requirement<'a>, ret_ident: Ident<'a>) -> ProofResult {
         use ScopedSimpleProver::{Defn, Root, Shadow};
 
+        // Our plan here is to only expand the definitions for the return identifier, which we're
+        // replacing. That allows us to keep the values separate.
+        //
+        // If part of the return value is shadowed, we'll just return that it was undetermined - in
+        // practice this *should not* happen.
+
         let mut replacement = Expr::from(ret_ident);
 
-        // replace based on the current prover
-        match self.prover.as_ref().unwrap() {
-            Root(_) => (),
-            Defn { x, expr, .. } => replacement = replacement.substitute(x, expr),
-            Shadow { x, .. } => {
-                if replacement.variables().contains(&x) {
-                    return ProofResult::Undetermined;
-                }
-            }
-        }
-
-        for p in self.dependent_provers.iter().rev() {
-            match p.deref() {
-                Root(_) => (),
-                Defn { x, expr, .. } => replacement = replacement.substitute(x, expr),
-                Shadow { x, .. } => {
-                    if replacement.variables().contains(&x) {
-                        return ProofResult::Undetermined;
+        macro_rules! substitute {
+            ($prover:expr) => {
+                match $prover {
+                    Root(_) => (),
+                    Defn { x, expr, .. } => replacement = replacement.substitute(x, expr),
+                    Shadow { x, .. } => {
+                        if replacement.variables().contains(&x) {
+                            // This probably shouldn't have happened, so we'll log a warning
+                            eprintln!(
+                                "warning: `prove_return` ended early from shadowed variable {}",
+                                x.name
+                            );
+                            return ProofResult::Undetermined;
+                        }
                     }
                 }
-            }
+            };
+        }
+
+        substitute!(self.prover.as_ref().unwrap());
+        // We go through the dependent provers backwards because later indices provide
+        // modifications *on top of* earlier indices - we need to apply them first.
+        for p in self.dependent_provers.iter().rev() {
+            substitute!(p.deref());
         }
 
         let return_ident = Ident {
@@ -337,14 +388,6 @@ impl<'a> Provers<'a> {
         }
     }
 
-    pub fn get_mask(&self) -> Mask {
-        self.mask.clone()
-    }
-
-    pub fn mask_mut(&mut self) -> &mut Mask {
-        &mut self.mask
-    }
-
     /// Returns whether the mask prevents some provers from running
     pub fn masks_some(&self) -> bool {
         self.mask.masks_some()
@@ -506,23 +549,35 @@ impl Mask {
     }
 }
 
-impl BitOr for Mask {
+impl<M> BitOr<M> for Mask
+where
+    Mask: BitOrAssign<M>,
+{
     type Output = Mask;
 
-    fn bitor(self, rhs: Mask) -> Mask {
+    fn bitor(mut self, rhs: M) -> Mask {
+        self.bitor_assign(rhs);
+        self
+    }
+}
+
+impl BitOrAssign<&'_ Mask> for Mask {
+    fn bitor_assign(&mut self, that: &Mask) {
         use MaskType::{All, Mix, Nothing};
 
-        assert_eq!(self.size, rhs.size);
+        let this = std::mem::replace(self, Mask::none(1));
 
-        let repr = match (self.repr, rhs.repr) {
+        assert_eq!(this.size, that.size);
+
+        let repr = match (this.repr, that.repr.clone()) {
             (Nothing, Nothing) => Nothing,
             (All, _) | (_, All) => All,
             (Mix(v, n), Nothing) | (Nothing, Mix(v, n)) => Mix(v, n),
             (Mix(xs, _), Mix(ys, _)) => {
                 let v = xs
                     .into_iter()
-                    .zip(ys.into_iter())
-                    .map(|(x, y)| x || y)
+                    .zip(ys.iter())
+                    .map(|(x, &y)| x || y)
                     .collect::<Vec<_>>();
                 let n = v.iter().filter(|&m| !m).count();
 
@@ -533,17 +588,13 @@ impl BitOr for Mask {
             }
         };
 
-        Mask {
-            size: self.size,
-            repr,
-        }
+        *self = Mask { repr, ..this };
     }
 }
 
 impl BitOrAssign for Mask {
     fn bitor_assign(&mut self, that: Mask) {
-        let this = std::mem::replace(self, Mask::none(1));
-        *self = this.bitor(that);
+        self.bitor_assign(&that);
     }
 }
 

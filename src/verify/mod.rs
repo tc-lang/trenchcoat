@@ -13,7 +13,6 @@ use error::Error;
 use prover::{Mask, ProverSetItem, Provers};
 use std::collections::HashMap;
 use std::mem::transmute; // :)
-use std::ops::Deref;
 
 // Here, I'm using "item" to refer to things that exist in the language, for example variables,
 // function and soon types. Please change the name item to something better.
@@ -456,7 +455,7 @@ impl<'a> TopLevelScope<'a> {
             }
             _ => {
                 let mut ps = Provers::new(vec![ProverSetItem::new(&[], &[], None, &[], None)]);
-                *ps.mask_mut() = Mask::all(ps.size());
+                ps.mask = Mask::all(ps.size());
                 ps
             }
         };
@@ -533,7 +532,7 @@ impl<'a> TopLevelScope<'a> {
         // Finally - assuming we didn't have any serious errors from before, we'll check that the
         // contracts are upheld.
         if let (Some(ret_ident), true) = (ret_ident, errors.is_empty()) {
-            mask |= prover_set.get_mask();
+            mask |= prover_set.mask.clone();
             for (_, p) in prover_set
                 .iter()
                 .enumerate()
@@ -1050,7 +1049,7 @@ impl<'a> Scope<'a> {
             //
             // We actually only want to check these IF the base prover isn't masked.
             let base_prover = &provers[0];
-            if provers.get_mask().allows(0) {
+            if provers.mask.allows(0) {
                 // Try to prove all of the requirements
                 for req in reqs {
                     let req = req.substitute_all(&subs);
@@ -1139,7 +1138,6 @@ impl<'a> Scope<'a> {
                     provers.shadow(ident.clone());
                     Mask::none(provers.size())
                 }
-                _ => Mask::none(provers.size()),
             },
             None => {
                 errors.push(Error {
@@ -1163,7 +1161,7 @@ impl<'a> Scope<'a> {
     ) -> (Vec<Error<'a>>, Type<'a>, Option<Ident<'a>>, Mask) {
         use StmtKind::{Assign, Eval, Lemma, Let, Print};
 
-        let original_mask = provers.get_mask();
+        let original_mask = provers.mask.clone();
 
         let mut errors: Vec<Error> = Vec::new();
 
@@ -1175,18 +1173,18 @@ impl<'a> Scope<'a> {
                 Eval(expr) | Print(expr) => {
                     let (errs, _typ, _tmp_var, expr_mask) = self.check_expr(provers, expr);
                     errors.extend(errs);
-                    *provers.mask_mut() |= expr_mask;
+                    provers.mask |= expr_mask;
                 }
                 Assign(name, expr) => {
                     let (errs, ass_mask) = self.check_assign(provers, name, expr);
                     errors.extend(errs);
-                    *provers.mask_mut() |= ass_mask;
+                    provers.mask |= ass_mask;
                 }
 
                 Let(name, expr) => {
                     let (errs, typ, tmp_var, let_mask) = self.check_expr(provers, expr);
                     errors.extend(errs);
-                    *provers.mask_mut() |= let_mask;
+                    provers.mask |= let_mask;
 
                     if let (Some(t), true) = (tmp_var, typ == Type::Int || typ == Type::UInt) {
                         provers.define(name.clone(), t.into());
@@ -1220,7 +1218,7 @@ impl<'a> Scope<'a> {
                     let end_type: Type<'a> = unsafe { transmute(end_type) };
                     let end_tmp_var: Option<Ident<'a>> = unsafe { transmute(end_tmp_var) };
 
-                    *provers.mask_mut() = original_mask;
+                    provers.mask = original_mask;
 
                     return (errs, end_type, end_tmp_var, end_mask);
                 }
@@ -1235,8 +1233,8 @@ impl<'a> Scope<'a> {
             self.check_expr(provers, &block.tail);
         errors.extend(tail_errors);
 
-        let mask = provers.get_mask() | expr_mask;
-        *provers.mask_mut() = original_mask;
+        let mask = expr_mask | &provers.mask;
+        provers.mask = original_mask;
 
         (errors, tail_type, tail_tmp_var, mask)
     }
@@ -1350,7 +1348,7 @@ impl<'a> Scope<'a> {
 
         // If there are errors, cancel all further proofs and return.
         if !errors.is_empty() {
-            *provers.mask_mut() = Mask::all(provers.size());
+            provers.mask = Mask::all(provers.size());
             return errors;
         }
 
@@ -1531,7 +1529,7 @@ impl<'a> Scope<'a> {
             // The base prover is the prover without any pre- or post-conditions from contracts.
             // It's always at the 0th index.
             let base_prover = &provers[0];
-            if !provers.get_mask().allows(0) {
+            if !provers.mask.allows(0) {
                 // Our proof already got cancelled, but there's no errors *here*, so we'll just
                 // return.
                 return Vec::new();
