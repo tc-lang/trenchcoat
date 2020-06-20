@@ -407,14 +407,16 @@ impl<'a> Display for Relation<'a> {
     }
 }
 
-impl<'a> PrettyFormat<'a> for Relation<'a> {
-    fn pretty_format(&'a self, f: &mut Formatter, file_str: &'a str) -> fmt::Result {
+impl<'a> PrettyFormat<()> for Relation<'a> {
+    fn pretty_format(&self, f: &mut Formatter, file_str: &str, _aux: &()) -> fmt::Result {
+        let in_prod = false;
+
         write!(
             f,
             "{} {} {}",
-            self.left.pretty(file_str),
+            self.left.pretty(file_str, in_prod),
             self.kind,
-            self.right.pretty(file_str)
+            self.right.pretty(file_str, in_prod)
         )
     }
 }

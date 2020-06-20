@@ -352,24 +352,26 @@ impl<'a> Display for Requirement<'a> {
     }
 }
 
-struct PrettyFormatter<'a, T: 'a> {
+struct PrettyFormatter<'a, T: 'a, Aux> {
     fmt: &'a T,
     file_str: &'a str,
+    aux: Aux,
 }
 
-impl<'a, T: PrettyFormat<'a> + Sized> Display for PrettyFormatter<'a, T> {
+impl<'a, Aux, T: PrettyFormat<Aux> + Sized> Display for PrettyFormatter<'a, T, Aux> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        self.fmt.pretty_format(f, self.file_str)
+        self.fmt.pretty_format(f, self.file_str, &self.aux)
     }
 }
 
-trait PrettyFormat<'a>: Sized {
-    fn pretty_format(&'a self, f: &mut Formatter, file_str: &'a str) -> fmt::Result;
+trait PrettyFormat<Aux>: Sized {
+    fn pretty_format(&self, f: &mut Formatter, file_str: &str, aux: &Aux) -> fmt::Result;
 
-    fn pretty(&'a self, file_str: &'a str) -> PrettyFormatter<'a, Self> {
+    fn pretty<'a>(&'a self, file_str: &'a str, aux: Aux) -> PrettyFormatter<'a, Self, Aux> {
         PrettyFormatter {
             fmt: self,
             file_str,
+            aux,
         }
     }
 }
@@ -379,6 +381,7 @@ impl<'a> Requirement<'a> {
         PrettyFormatter {
             fmt: &self.relation,
             file_str,
+            aux: (),
         }
     }
 }
