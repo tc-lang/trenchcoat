@@ -215,7 +215,16 @@ impl PrettyError for Error<'_> {
                 file_str,
                 file_name,
             ),
-            // TODO: InvalidLemmaProof
+            InvalidLemmaProof {
+                failed,
+                other_assumptions,
+            } => Error::format_invalid_lemma_proof(
+                failed,
+                *other_assumptions,
+                self.source,
+                file_str,
+                file_name,
+            ),
             FailedContract {
                 fn_name,
                 failed,
@@ -236,6 +245,34 @@ impl PrettyError for Error<'_> {
                 format!("Error message currently unimplemented:\n{:?}\n", self)
             }
         }
+    }
+}
+
+fn write_proof_notes(
+    msg: &mut String,
+    spacing: &str,
+    failed: &[(ProofResult, Requirement)],
+    file_str: &str,
+) {
+    for (res, req) in failed {
+        assert!(res != &ProofResult::True);
+
+        let (before, after) = match res {
+            ProofResult::False => ("", "is false"),
+            // Undetermined
+            _ => ("whether ", "cannot be determined"),
+        };
+
+        writeln!(
+            msg,
+            "{} {} note: {}`{}` {}",
+            spacing,
+            Blue.paint("="),
+            before,
+            req.pretty(file_str),
+            after
+        )
+        .unwrap();
     }
 }
 
@@ -912,26 +949,45 @@ impl Error<'_> {
         }
 
         // Final help messages - these will give the specific results for each requirement
-        for (res, req) in failed {
-            assert!(res != &ProofResult::True);
+        write_proof_notes(&mut msg, &spacing, failed, file_str);
 
-            let (before, after) = match res {
-                ProofResult::False => ("", "is false"),
-                // Undetermined
-                _ => ("whether ", "cannot be determined"),
-            };
+        msg
+    }
 
-            writeln!(
-                msg,
-                "{} {} note: {}`{}` {}",
-                spacing,
-                Blue.paint("="),
-                before,
-                req.pretty(file_str),
-                after
+    fn format_invalid_lemma_proof(
+        failed: &[(ProofResult, Requirement)],
+        other_assumptions: bool,
+        stmt_source: Node,
+        file_str: &str,
+        file_name: &str,
+    ) -> String {
+        let mut msg = if other_assumptions {
+            format!(
+                "{}: lemma conditions cannot be verified under any assumptions\n",
+                Red.paint("error")
             )
-            .unwrap();
-        }
+        } else {
+            format!(
+                "{}: lemma conditions cannot be verified\n",
+                Red.paint("error")
+            )
+        };
+
+        let (context, spacing) =
+            context_lines_and_spacing(stmt_source.byte_range(), file_str, file_name);
+
+        // We only write! not writeln! because `context` is guaranteed to have a trailing newline
+        write!(msg, "{}", context).unwrap();
+
+        writeln!(
+            msg,
+            "{} {} note: lemma conditions must be valid under at least one assumption if present",
+            spacing,
+            Blue.paint("="),
+        )
+        .unwrap();
+
+        write_proof_notes(&mut msg, &spacing, failed, file_str);
 
         msg
     }
@@ -1165,27 +1221,8 @@ impl Error<'_> {
             .unwrap();
         }
 
-        // Trailing notes:
-        for (res, req) in proofs {
-            assert!(res != &ProofResult::True);
-
-            let (before, after) = match res {
-                ProofResult::False => ("", "is false"),
-                // Undetermined
-                _ => ("whether ", "cannot be determined"),
-            };
-
-            writeln!(
-                msg,
-                "{} {} note: {}`{}` {}",
-                padding,
-                Blue.paint("="),
-                before,
-                req.pretty(file_str),
-                after
-            )
-            .unwrap();
-        }
+        // Trailing notes about the proofs:
+        write_proof_notes(&mut msg, &padding, proofs, file_str);
 
         // And then we're done!
 

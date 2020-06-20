@@ -116,6 +116,7 @@ pub enum Node<'a> {
     Args(&'a FnArgs<'a>),
     ProofStmt(&'a proof::Stmt<'a>),
     ProofCond(&'a proof::Condition<'a>),
+    ProofConds(&'a [proof::Condition<'a>]),
 }
 
 /// Most parsing functions return a ParseRet.
@@ -483,7 +484,7 @@ impl<'a> Node<'a> {
             lower.start..upper.end
         }
 
-        use Node::{Args, Expr, Ident, Item, ProofCond, ProofStmt, Stmt};
+        use Node::{Args, Expr, Ident, Item, ProofCond, ProofConds, ProofStmt, Stmt};
 
         match self {
             Ident(id) => match &id.source {
@@ -511,6 +512,10 @@ impl<'a> Node<'a> {
             ProofCond(cond) => join(
                 cond.source[0].byte_range().unwrap(),
                 cond.source.last().unwrap().byte_range().unwrap(),
+            ),
+            ProofConds(conds) => join(
+                conds[0].node().byte_range(),
+                conds[conds.len() - 1].node().byte_range(),
             ),
         }
     }

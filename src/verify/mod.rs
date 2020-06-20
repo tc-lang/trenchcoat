@@ -1433,7 +1433,7 @@ impl<'a> Scope<'a> {
                         other_assumptions,
                     },
                     context: error::Context::LemmaStmt,
-                    source: lemma_stmt.node(),
+                    source: Node::ProofConds(proof_conds),
                 }];
             }
 
