@@ -3,7 +3,8 @@
 use super::Func;
 use crate::ast::{proof::Condition, Ident, Item, ItemKind::FnDecl, Node};
 use crate::errors::{
-    context_lines, context_lines_and_spacing, line_info, replace_tabs, underline, PrettyError,
+    context_lines, context_lines_and_spacing, info_lines, line_info, replace_tabs, underline,
+    PosInfo, PrettyError,
 };
 use crate::proof::{ProofResult, Requirement};
 use crate::types::Type;
@@ -71,6 +72,8 @@ pub enum Kind<'a> {
     },
     /// This indicates that the *result* of a lemma could not be proven with whatever was given (or
     /// not).
+    ///
+    /// The source should give the entirety of the lemma statement.
     FailedLemma {
         /// The assumed requirements under which the lemma failed. This will be None if the lemma
         /// failed under the base prover. The Node should give the source for the requirements.
@@ -198,7 +201,21 @@ impl PrettyError for Error<'_> {
                 file_str,
                 file_name,
             ),
-            // TODO: FailedLemma
+            FailedLemma {
+                assumption,
+                proof,
+                other_assumptions,
+                failed,
+            } => Error::format_failed_lemma(
+                failed,
+                *assumption,
+                proof,
+                *other_assumptions,
+                self.source,
+                file_str,
+                file_name,
+            ),
+            // TODO: InvalidLemmaProof
             FailedContract {
                 fn_name,
                 failed,
@@ -215,7 +232,9 @@ impl PrettyError for Error<'_> {
                 file_str,
                 file_name,
             ),
-            _ => format!("Error message currently unimplemented:\n{:?}\n", self),
+            InvalidLemmaProof { .. } => {
+                format!("Error message currently unimplemented:\n{:?}\n", self)
+            }
         }
     }
 }
@@ -747,6 +766,176 @@ impl Error<'_> {
         msg
     }
 
+    fn format_failed_lemma(
+        failed: &[(ProofResult, Requirement)],
+        assumption: Option<Node>,
+        proof: &[Condition],
+        other_assumptions: bool,
+        stmt_source: Node,
+        file_str: &str,
+        file_name: &str,
+    ) -> String {
+        // This error message has a few different versions, depending on how exactly the lemma
+        // failed.
+        //
+        // `proof` indicates the proof that was used, and - if present - `assumption` gives the
+        // source of the assumption satisfying the proof, if the base prover was unable to.
+
+        let lines = file_str.lines().collect::<Vec<_>>();
+
+        let assumption = assumption.map(|a| info_lines(a.byte_range(), &lines));
+        let stmt = info_lines(stmt_source.byte_range(), &lines);
+
+        let width = (stmt.line_idx + 1).to_string().len();
+        let spacing = " ".repeat(width);
+
+        let mut msg = format!("{}: failed to prove lemma\n", Red.paint("error"));
+
+        // write the context line:
+        writeln!(
+            msg,
+            "{}{} {}:{}:{}",
+            spacing,
+            Blue.paint("-->"),
+            file_name,
+            stmt.line_idx + 1,
+            stmt.col_idx + 1
+        )
+        .unwrap();
+
+        // Just a blank line for looks
+        writeln!(msg, "{} {}", spacing, Blue.paint("|")).unwrap();
+
+        // If there was an assumption, we'll display that bit first
+        if let Some(ass) = assumption.as_ref() {
+            writeln!(
+                msg,
+                "{:>width$} {} {}",
+                ass.line_idx + 1,
+                Blue.paint("|"),
+                ass.line,
+                width = width
+            )
+            .unwrap();
+            writeln!(
+                msg,
+                "{} {} {}",
+                spacing,
+                Blue.paint("|"),
+                Blue.paint(underline(&ass.line, ass.line_range.clone()))
+            )
+            .unwrap();
+        }
+
+        // Now we display the actual lemma that failed
+        writeln!(
+            msg,
+            "{:>width$} {} {}",
+            stmt.line_idx + 1,
+            Blue.paint("|"),
+            stmt.line,
+            width = width
+        )
+        .unwrap();
+        writeln!(
+            msg,
+            "{} {} {}",
+            spacing,
+            Blue.paint("|"),
+            Red.paint(underline(&stmt.line, stmt.line_range.clone()))
+        )
+        .unwrap();
+
+        // And now for the help messages
+        if proof.is_empty() {
+            // If there wasn't a proof supplied, but some assumptions might have been able to prove it,
+            // the user should know that.
+            if other_assumptions {
+                writeln!(
+                    msg,
+                    "{} {} note: lemmas without proof must have valid preconditions in all cases",
+                    spacing,
+                    Blue.paint("="),
+                )
+                .unwrap();
+                writeln!(
+                    msg,
+                    "{} {} help: to restrict this only to certain contract assumptions,\n{}   {}",
+                    spacing,
+                    Blue.paint("="),
+                    spacing,
+                    "      add proof elements with `==>`"
+                )
+                .unwrap();
+            } else {
+                // We know that there wasn't an assumption, so there isn't much else we can provide
+                // to the user here.
+                //
+                // It's mostly plain and simple; we just couldn't do the proof. This is a possible
+                // area of improvement for the future.
+            }
+        } else {
+            // There were proof conditions provided, but we still weren't able to prove the lemma
+            if assumption.is_some() {
+                writeln!(
+                    msg,
+                    "{} {} note: the conditions require the assumption given above",
+                    spacing,
+                    Blue.paint("="),
+                )
+                .unwrap();
+            } else {
+                // No assumptions, so we failed to prove the lemma with the main prover
+                writeln!(
+                    msg,
+                    "{} {} note: the conditions were proven without any assumptions,\n{}   {}",
+                    spacing,
+                    Blue.paint("="),
+                    spacing,
+                    "      but the result could not be proven",
+                )
+                .unwrap();
+                if other_assumptions {
+                    // TODO: This could specifically mention the provers that *are* able to solve
+                    // it, if those were added to the information here
+                    writeln!(
+                        msg,
+                        "{} {} help: try making the conditions more restrictive so that it is\n{}   {}",
+                        spacing,
+                        Blue.paint("="),
+                        spacing,
+                        "      only attempted in fully valid contexts",
+                    )
+                    .unwrap();
+                }
+            }
+        }
+
+        // Final help messages - these will give the specific results for each requirement
+        for (res, req) in failed {
+            assert!(res != &ProofResult::True);
+
+            let (before, after) = match res {
+                ProofResult::False => ("", "is false"),
+                // Undetermined
+                _ => ("whether ", "cannot be determined"),
+            };
+
+            writeln!(
+                msg,
+                "{} {} note: {}`{}` {}",
+                spacing,
+                Blue.paint("="),
+                before,
+                req.pretty(file_str),
+                after
+            )
+            .unwrap();
+        }
+
+        msg
+    }
+
     fn format_failed_contract(
         proofs: &[(ProofResult, Requirement)],
         fn_name: &str,
@@ -799,50 +988,33 @@ impl Error<'_> {
             fn_name
         );
 
-        struct Info {
-            line_no: usize,
-            col_no: usize,
-            line: String,
-            line_range: Range<usize>,
-        }
-
-        // A helper function for generating bits of information about the ranges around a given node.
-        let info = |node: Node| -> Info {
-            let byte_range = node.byte_range();
-            let (line_no, col_no, line_offset, _, line) = line_info(file_str, byte_range.start);
-
-            let mut line_range = {
-                let start = byte_range.start - line_offset;
-                let end = byte_range.end - line_offset;
-                start..end
-            };
-
-            let line = replace_tabs(line, Some(&mut line_range));
-
-            Info {
-                line_no,
-                col_no,
-                line,
-                line_range,
-            }
-        };
-
         let lines = file_str.lines().collect::<Vec<_>>();
+        let info = |node: Node| info_lines(node.byte_range(), &lines);
 
         let req = info(post_source);
         let func = info(fn_name_source);
         let ret = info(ret_ident.node());
 
-        let pre_ret_line = match ret.line_no - 1 <= func.line_no {
+        let pre_ret_line = match ret.line_idx - 1 <= func.line_idx {
             true => None,
-            false => Some(lines[ret.line_no - 1]),
+            false => Some(lines[ret.line_idx - 1]),
         };
 
-        let (end_fn_line_no, _, _, _, end_fn_line) =
-            line_info(file_str, fn_source.byte_range().end);
-        let end_fn_line = replace_tabs(end_fn_line, None);
+        let end_fn = {
+            let (line_idx, _, _, _, line) = line_info(file_str, fn_source.byte_range().end);
+            let line = replace_tabs(line, None);
 
-        let pad_size = (end_fn_line_no + 1).to_string().len();
+            // `col_idx` and `line_range` are just filler values because we don't actually need
+            // them.
+            PosInfo {
+                line_idx,
+                col_idx: 0,
+                line,
+                line_range: 0..1,
+            }
+        };
+
+        let pad_size = (end_fn.line_idx + 1).to_string().len();
         let padding = " ".repeat(pad_size);
 
         // Write the first two context lines. In the example at the top of this function, these are
@@ -858,8 +1030,8 @@ impl Error<'_> {
             padding,
             Blue.paint("-->"),
             file_name,
-            req.line_no,
-            req.col_no
+            req.line_idx + 1,
+            req.col_idx + 1
         )
         .unwrap();
         writeln!(
@@ -868,8 +1040,8 @@ impl Error<'_> {
             padding,
             Blue.paint("-->"),
             file_name,
-            ret.line_no,
-            ret.col_no
+            ret.line_idx + 1,
+            ret.col_idx + 1
         )
         .unwrap();
 
@@ -884,7 +1056,7 @@ impl Error<'_> {
         writeln!(
             msg,
             "{:>width$} {} {}",
-            req.line_no,
+            req.line_idx + 1,
             Blue.paint("|"),
             req.line,
             width = pad_size
@@ -900,17 +1072,17 @@ impl Error<'_> {
 
         // Before we print the function definition, we might want to add a `...` before it. We'll
         // do that if the function definition doesn't immediately follow the proof line.
-        if req.line_no + 1 != func.line_no {
+        if req.line_idx + 1 != func.line_idx {
             writeln!(msg, "{}", dots_line).unwrap();
         }
 
         // And now for the function definition. This condition should never be true, but it's good
         // to check anyways.
-        if func.line_no != ret.line_no {
+        if func.line_idx != ret.line_idx {
             writeln!(
                 msg,
                 "{:>width$} {} {}",
-                func.line_no,
+                func.line_idx + 1,
                 Blue.paint("|"),
                 func.line,
                 width = pad_size
@@ -919,7 +1091,7 @@ impl Error<'_> {
         }
 
         // Again with maybe dots between the function definition and return
-        if func.line_no + 2 < ret.line_no {
+        if func.line_idx + 2 < ret.line_idx {
             writeln!(msg, "{}", dots_line).unwrap();
         }
 
@@ -928,7 +1100,8 @@ impl Error<'_> {
             writeln!(
                 msg,
                 "{:>width$} {} {}",
-                ret.line_no - 1,
+                // Exactly `line_idx` because we're one line before and `line_idx` starts at zero.
+                ret.line_idx,
                 Blue.paint("|"),
                 replace_tabs(line, None),
                 width = pad_size
@@ -940,7 +1113,7 @@ impl Error<'_> {
         writeln!(
             msg,
             "{:>width$} {} {}",
-            ret.line_no,
+            ret.line_idx + 1,
             Blue.paint("|"),
             ret.line,
             width = pad_size
@@ -956,18 +1129,18 @@ impl Error<'_> {
 
         // And our final bit of source: The last line of the function. This - once again - might
         // need some dots to connect it
-        if ret.line_no + 1 < end_fn_line_no {
+        if ret.line_idx + 1 < end_fn.line_idx {
             writeln!(msg, "{}", dots_line).unwrap();
         }
 
-        if ret.line_no != end_fn_line_no {
+        if ret.line_idx != end_fn.line_idx {
             // No need to account for width here since this line has the longest number
             writeln!(
                 msg,
                 "{} {} {}",
-                end_fn_line_no,
+                end_fn.line_idx + 1,
                 Blue.paint("|"),
-                end_fn_line,
+                end_fn.line,
             )
             .unwrap();
         }

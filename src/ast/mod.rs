@@ -107,7 +107,7 @@ pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error
 ////////////////////////////////////////////////////////////////////////////////
 
 /// A single AST type, given so that
-#[derive(Debug, Clone)]
+#[derive(Debug, Copy, Clone)]
 pub enum Node<'a> {
     Ident(&'a Ident<'a>),
     Item(&'a Item<'a>),
