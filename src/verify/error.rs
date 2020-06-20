@@ -930,7 +930,7 @@ impl Error<'_> {
                 "{:>width$} {} {}",
                 ret.line_no - 1,
                 Blue.paint("|"),
-                line,
+                replace_tabs(line, None),
                 width = pad_size
             )
             .unwrap();
