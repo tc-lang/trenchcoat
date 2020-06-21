@@ -14,14 +14,14 @@ fn foo(x: int, y: int) -> int {
 # require y >= 0
 # require z >= 0
 # x <= 2 => _ <= 3*y+2*z
-# lemma x <= 2 ==> x <= 3
 fn bar(x: int, y: int, z: int) -> int {
+	# lemma x <= y ==> x*(y+z)+y <= 3*y + 2*z
 	x * (y + z) + y
 }
 
 fn main() {
 	let x = 3;
-	# lemma x >= 3
+	# lemma x >= 4
 	print foo(x, 2);
 }
 

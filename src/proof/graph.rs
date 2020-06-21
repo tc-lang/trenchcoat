@@ -36,7 +36,7 @@ const TRY_SPLITS: bool = true;
 ///
 /// This simply duplicates the nodes (and edges) being added to the graph so that we can feed more
 /// information into the algorithm.
-const DOUBLE_NEGATE_REQS: bool = false;
+const DOUBLE_NEGATE_REQS: bool = true;
 
 /// An exhaustive version of `DOUBLE_NEGATE_REQS`: If true, this will exhaustively produce all
 /// combinations of terms on either side of the inequality in adding more nodes to the graph.
@@ -46,7 +46,10 @@ const DOUBLE_NEGATE_REQS: bool = false;
 ///
 /// This flag is available as an alternative to `DOUBLE_NEGATE_REQS` - if both are present this
 /// flag will take priority.
-const EXHAUSTIVE_REQ_SIDES: bool = true;
+//
+// FIXME: There are some cases where only `DOUBLE_NEGATE_REQS` is able to prove something; not this
+// flag. Those should be investigated.
+const EXHAUSTIVE_REQ_SIDES: bool = false;
 
 /// This feature is more difficult to explain in a single doc comment. For an in-depth explanation,
 /// please refer to the writeup.

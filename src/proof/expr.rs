@@ -4,6 +4,7 @@ use super::PrettyFormat;
 use crate::ast::{self, Ident};
 use std::fmt::{self, Display, Formatter};
 use std::iter;
+use std::ops::Deref;
 
 /// An expression
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -894,25 +895,29 @@ impl<'a> Display for Expr<'a> {
     }
 }
 
-impl<'a> PrettyFormat<'a> for Expr<'a> {
-    fn pretty_format(&'a self, f: &mut Formatter, file_str: &'a str) -> fmt::Result {
+// A marker type for recording whether an expression is within a product
+type InProd = bool;
+
+impl<'a> PrettyFormat<InProd> for Expr<'a> {
+    fn pretty_format(&self, f: &mut Formatter, file_str: &str, in_prod: &InProd) -> fmt::Result {
         use Expr::{Atom, Neg, Prod, Recip, Sum};
+
         match self {
-            Atom(atom) => atom.pretty_format(f, file_str),
-            Neg(expr) => match &**expr {
-                Sum(_) => write!(f, "-({})", expr.pretty(file_str)),
-                _ => write!(f, "-{}", expr.pretty(file_str)),
+            Atom(atom) => atom.pretty_format(f, file_str, in_prod),
+            Neg(expr) => match expr.deref() {
+                Sum(_) => write!(f, "-({})", expr.pretty(file_str, false)),
+                _ => write!(f, "-{}", expr.pretty(file_str, true)),
             },
-            Recip(expr, _) => match &**expr {
-                Atom(_) => write!(f, "1/{}", expr.pretty(file_str)),
-                _ => write!(f, "1/({})", expr.pretty(file_str)),
+            Recip(expr, _) => match expr.deref() {
+                Atom(_) => write!(f, "1/{}", expr.pretty(file_str, true)),
+                _ => write!(f, "1/({})", expr.pretty(file_str, false)),
             },
             Sum(terms) => write!(
                 f,
                 "{}",
                 terms
                     .iter()
-                    .map(|term| format!("{}", term.pretty(file_str)))
+                    .map(|term| format!("{}", term.pretty(file_str, false)))
                     .collect::<Vec<_>>()
                     .join(" + ")
             ),
@@ -922,11 +927,11 @@ impl<'a> PrettyFormat<'a> for Expr<'a> {
                 terms
                     .iter()
                     .map(|term| match term {
-                        Sum(_) => format!("({})", term.pretty(file_str)),
-                        _ => format!("{}", term.pretty(file_str)),
+                        Sum(_) => format!("({})", term.pretty(file_str, true)),
+                        _ => format!("{}", term.pretty(file_str, true)),
                     })
                     .collect::<Vec<_>>()
-                    .join(" * ")
+                    .join("*")
             ),
         }
     }
@@ -941,8 +946,8 @@ impl<'a> Display for Atom<'a> {
     }
 }
 
-impl<'a> PrettyFormat<'a> for Atom<'a> {
-    fn pretty_format(&'a self, f: &mut Formatter, file_str: &'a str) -> fmt::Result {
+impl<'a> PrettyFormat<InProd> for Atom<'a> {
+    fn pretty_format(&self, f: &mut Formatter, file_str: &str, in_prod: &InProd) -> fmt::Result {
         use crate::ast::{ExprKind, IdentSource};
         match self {
             Atom::Named(ident) => {
@@ -952,11 +957,14 @@ impl<'a> PrettyFormat<'a> for Atom<'a> {
                     IdentSource::Expr(ex) => Some(&ex.kind),
                 };
 
+                let raw = &file_str[ident.node().byte_range()];
+
                 match ex_kind {
                     None | Some(ExprKind::Named(_)) | Some(ExprKind::Num(_)) => {
-                        write!(f, "{}", &file_str[ident.node().byte_range()])
+                        write!(f, "{}", raw)
                     }
-                    _ => write!(f, "({})", &file_str[ident.node().byte_range()]),
+                    _ if !in_prod => write!(f, "{}", raw),
+                    _ => write!(f, "({})", raw),
                 }
             }
             Atom::Literal(x) => write!(f, "{}", x),
