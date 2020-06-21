@@ -310,8 +310,7 @@ impl<'b, 'a: 'b> Expr<'a> {
                 // Now, we multiply each term in the sum by the terms left over from the
                 // product!
                 let new_sum = sum_terms.into_iter().map(|term| {
-                    let these_terms = new_terms.clone().into_iter();
-                    let these_terms = these_terms.chain(iter::once(term));
+                    let these_terms = new_terms.clone().into_iter().chain(iter::once(term));
                     let prod = Expr::simplify_simplified_prod_terms(these_terms);
                     if negatives % 2 == 1 {
                         Expr::simplify_simplified_neg_inner(prod)
