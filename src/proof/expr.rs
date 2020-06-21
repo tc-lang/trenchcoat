@@ -3,6 +3,7 @@ use super::sign::Sign;
 use super::PrettyFormat;
 use crate::ast::{self, Ident};
 use std::fmt::{self, Display, Formatter};
+use std::iter;
 
 /// An expression
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -67,15 +68,39 @@ pub fn minus_one<'a>() -> Expr<'a> {
     Expr::Atom(Atom::Literal(Rational::MINUS_ONE))
 }
 
+enum SimplifyResult<'a> {
+    None,
+    Cancel,
+    Combine(Expr<'a>),
+}
+
+impl<'a> std::ops::Neg for Expr<'a> {
+    type Output = Expr<'a>;
+    fn neg(self) -> Expr<'a> {
+        Expr::Neg(Box::new(self))
+    }
+}
+impl<'a> std::ops::Add for Expr<'a> {
+    type Output = Expr<'a>;
+    fn add(self, other: Expr<'a>) -> Expr<'a> {
+        Expr::Sum(vec![self, other])
+    }
+}
+impl<'a> std::ops::Sub for Expr<'a> {
+    type Output = Expr<'a>;
+    fn sub(self, other: Expr<'a>) -> Expr<'a> {
+        self + -other
+    }
+}
+
 impl<'b, 'a: 'b> Expr<'a> {
-    /// Returns true if the expressions are equal or if their simplified values are equal.
-    /// This is a more reliable equals method since, in the standard implementation of ==,
-    /// x + 2 != 2 + x whereas it would be equal with this definition.
-    ///
-    /// This is however much more expensive to compute since if 2 expressions aren't equal, they
-    /// are always simplified.
-    pub fn simplify_eq(&self, other: &Expr<'a>) -> bool {
-        self.eq(other) || self.simplify() == other.simplify()
+    /// Shorthand for `Expr::Recip(Box::new(self), rounding)`
+    pub fn recip(self, rounding: bool) -> Expr<'a> {
+        Expr::Recip(Box::new(self), rounding)
+    }
+    /// Shorthand for `Expr::Atom(Atom::Literal(x))`
+    pub fn literal(x: Rational) -> Expr<'a> {
+        Expr::Atom(Atom::Literal(x))
     }
 
     /// Returns a simplified version of self.
@@ -83,30 +108,32 @@ impl<'b, 'a: 'b> Expr<'a> {
     /// Stable rules will be documented here with other rules documented in the code.
     ///
     /// - Sums and Products are flattened. (i.e.) x*(y*z) becomes x*y*z
+    /// - Sums and Prods of 1 term are unwrapped to become just the term
     /// - Products do not directly contain Neg terms. Instead, they are lifted to enclose the
     ///   product.
     /// - Neg is distributed in sums. i.e. Neg(x+y+z) = Neg(x) + Neg(y) + Neg(z)
     /// - Recip is distributed in products. i.e. Recip(x*y*z) = Recip(x) * Recip(y) * Recip(z)
     /// - Neg(Neg(x)) becomes x
     /// - Recip(Recip(x)) becomes x
-    /// - 0s are removed from sums.
-    /// - 1s are removed from products.
-    /// - Terms in sums and products are sorted (as expressions, see the order of Expr and Atom).
+    /// - 0s are removed from sums
+    /// - 1s are removed from products
+    /// - Calculations between literals are performed. i.e. 1+2 becomes 3 or 4/2 becomes 2
+    /// - Prods containing a 0 are simplified to 0
+    /// - Terms in products are sorted (as expressions, see the order of Expr and Atom).
+    /// - (Terms in sums are no longer sorted)
     pub fn simplify(&self) -> Expr<'a> {
         let simplified = self.simplify_run();
-        {
-            #[cfg(feature = "expr-simplify-debug")]
-            if *self != simplified {
-                let simplified2 = simplified.simplify();
-                if simplified != simplified2 {
-                    // If simplifying again gives us a different result, we should log the error
-                    // since we don't want this to happen.
-                    println!(
-                        "Dodgy simplification: {} -> {} -> {}",
-                        self, simplified, simplified2
-                    );
-                    return simplified2;
-                }
+        #[cfg(feature = "expr-simplify-debug")]
+        if *self != simplified {
+            let simplified2 = simplified.simplify();
+            if simplified != simplified2 {
+                // If simplifying again gives us a different result, we should log the error
+                // since we don't want this to happen.
+                println!(
+                    "Dodgy simplification: {} -> {} -> {}",
+                    self, simplified, simplified2
+                );
+                return simplified2;
             }
         }
         simplified
@@ -124,271 +151,244 @@ impl<'b, 'a: 'b> Expr<'a> {
             // Convert negative literals in to Neg(<positive literal>)
             Expr::Atom(Atom::Literal(x)) => {
                 if *x < Rational::ZERO {
-                    Neg(Box::new(Expr::Atom(Atom::Literal(-*x))))
+                    -Expr::literal(-*x)
                 } else {
                     self.clone()
                 }
             }
 
-            Neg(expr) => match expr.simplify() {
-                // -(-x) = x
-                Neg(inner_expr) => *inner_expr,
+            Sum(terms) => Expr::simplify_sum_terms(terms.iter()),
+            Prod(terms) => Expr::simplify_prod_terms(terms.iter()),
+            Neg(inner_expr) => Expr::simplify_neg_inner(inner_expr),
+            Recip(inner_expr, rounding) => Expr::simplify_recip_inner(inner_expr, *rounding),
+        }
+    }
 
-                // -(a + b + c + ...) = (-a) + (-b) + (-c) + ...
-                Sum(terms) => Sum(terms
-                    .iter()
-                    .map(|term| Neg(Box::new(term.clone())))
-                    .collect())
-                .simplify(),
-                // TODO This calls simplify on the newly created sum to simplify new cases of
-                // Neg(...), for example Neg(Neg(x)) = x.
-                // Just calling simplify will also try to simplify the other, already simplified
-                // terms though. This is inefficient but ok for now.
-                new_expr => {
-                    // -0 = 0
-                    if new_expr == zero() {
-                        zero()
-                    } else {
-                        Neg(Box::new(new_expr))
-                    }
-                }
-            },
+    fn simplify_neg_inner(inner_expr: &Expr<'a>) -> Expr<'a> {
+        Expr::simplify_simplified_neg_inner(inner_expr.simplify())
+    }
 
-            Sum(terms) => {
-                let mut new_terms = terms
-                    .iter()
-                    // Simplify the terms
-                    .map(|term| term.simplify())
-                    // Remove 0s from the sum
-                    .filter(|term| *term != zero())
-                    // Flatten
-                    .flat_map(|term| match term {
-                        Sum(terms) => terms,
-                        _ => vec![term],
-                    })
-                    .collect::<Vec<Expr>>();
+    fn simplify_simplified_neg_inner(inner_expr: Expr<'a>) -> Expr<'a> {
+        use Expr::{Neg, Sum};
+        match inner_expr {
+            // -(-x) = x
+            Neg(inner_expr) => *inner_expr,
 
-                let re_simplify = Self::simplify_terms(Self::add_simplify, &mut new_terms);
+            // -(a + b + c + ...) = (-a) + (-b) + (-c) + ...
+            Sum(terms) => Expr::simplify_simplified_sum_terms(
+                terms.into_iter().map(Expr::simplify_simplified_neg_inner),
+            ),
 
-                // Unwrap the sum if possible
-                let res = match new_terms.len() {
-                    0 => zero(),               // empty sum = 0
-                    1 => new_terms[0].clone(), // a sum of just x = x
-                    _ => Sum(new_terms),
-                };
-
-                if re_simplify {
-                    res.simplify()
+            new_expr => {
+                // -0 = 0
+                if new_expr == zero() {
+                    zero()
                 } else {
-                    res
-                }
-            }
-
-            Prod(terms) => {
-                let mut negatives = 0;
-
-                let mut new_terms = terms
-                    .iter()
-                    // Simplify each term
-                    .map(|term| term.simplify())
-                    // Change all Negs in to just their positive terms and count the number of
-                    // negatives. This will be used later to wrap the whole product in a Neg
-                    // if there were an odd number.
-                    //
-                    // Note that the simplification above converts all negative literals in to
-                    // Neg(Literal(<positive number>)) and removes Neg(Neg(...)) patterns.
-                    .map(|term| {
-                        if let Neg(inner_expr) = term {
-                            negatives += 1;
-                            *inner_expr
-                        } else {
-                            term
-                        }
-                    })
-                    // Remove 1s from the product
-                    .filter(|term| *term != one())
-                    // Flatten
-                    .flat_map(|term| match term {
-                        Prod(terms) => terms,
-                        _ => vec![term],
-                    })
-                    .collect::<Vec<Expr>>();
-
-                // Now, we are going to multiply out products of sums.
-                // To start, we'll find a sum.
-                match new_terms.iter().position(|term| match term {
-                    Sum(_) => true,
-                    _ => false,
-                }) {
-                    // If there wasn't a sum then there's nothing to do.
-                    None => (),
-                    Some(sum_idx) => {
-                        // Otherwise, we will remove the sum from new_terms and store the sums
-                        // terms in sum_terms.
-                        let sum_terms = match new_terms.remove(sum_idx) {
-                            Sum(terms) => terms,
-                            _ => panic!("sum is no longer sum"),
-                        };
-                        // Now, we multiply each term in the sum by the terms left over from the
-                        // product!
-                        let new_sum = sum_terms
-                            .iter()
-                            .map(|term| {
-                                // Clone the terms to multiply with
-                                let mut these_terms = new_terms.clone();
-                                // TODO
-                                /*if let Expr::Neg(_) = term {
-                                    these_terms = these_terms
-                                        .iter()
-                                        // TODO Swith just 1 or all?
-                                        .map(Self::switch_rounding_mode)
-                                        .collect();
-                                }*/
-                                // Multiply with the current term in the sum
-                                these_terms.push(term.clone());
-                                // Produce the expression
-                                if negatives % 2 == 1 {
-                                    // Wrap the output in Neg if there were an odd number of
-                                    // negative terms.
-                                    Neg(Box::new(Prod(these_terms)))
-                                } else {
-                                    Prod(these_terms)
-                                }
-                            })
-                            .collect();
-                        // Simplify the resulting sum
-                        return Sum(new_sum).simplify();
-                    }
-                }
-
-                let re_simplify = Self::simplify_terms(Self::mul_simplify, &mut new_terms);
-
-                // Unwrap the product if possible
-                let new_expr = match new_terms.len() {
-                    0 => one(),                // An empty product = 1
-                    1 => new_terms[0].clone(), // A product of just x = x
-                    _ => {
-                        // A product containing a 0 = 0
-                        let zero = zero();
-                        if new_terms.contains(&zero) {
-                            // We return now since there's no point wrapping 0 in Neg
-                            return zero;
-                        } else {
-                            Prod(new_terms)
-                        }
-                    }
-                };
-
-                let res = if negatives % 2 == 1 {
-                    // Wrap the output in Neg if there were an odd number of negative terms.
-                    // Note that negative terms have all been converted to positive terms.
                     Neg(Box::new(new_expr))
-                } else {
-                    new_expr
-                };
-
-                if re_simplify {
-                    res.simplify()
-                } else {
-                    res
                 }
             }
+        }
+    }
 
-            Recip(expr, rounding) => match expr.simplify() {
-                // 1/(1/x) = x
-                Recip(inner_expr, _) => *inner_expr,
+    fn simplify_recip_inner(inner_expr: &Expr<'a>, rounding: bool) -> Expr<'a> {
+        Expr::simplify_simplified_recip_inner(inner_expr.simplify(), rounding)
+    }
 
-                // 1/(-x) = -(1/x)
-                Neg(inner_expr) => Neg(Box::new(Recip(inner_expr, *rounding).simplify())),
-                // TODO Similar to the TODO in some, calling simplify on the new expression could
-                // be optimised. The same applies to the case below too.
+    fn simplify_simplified_recip_inner(inner_expr: Expr<'a>, rounding: bool) -> Expr<'a> {
+        use Expr::{Neg, Prod, Recip};
+        match inner_expr {
+            // 1/(1/x) = x
+            Recip(inner_expr, _) => *inner_expr,
 
-                // 1/(a*b*c*...) = 1/a * 1/b * 1/c
-                Prod(terms) => Prod(
-                    terms
-                        .iter()
-                        .map(|term| Recip(Box::new(term.clone()), *rounding).simplify())
-                        .collect(),
-                ),
+            // 1/(-x) = -(1/x)
+            Neg(inner_expr) => -Expr::simplify_simplified_recip_inner(*inner_expr, rounding),
 
-                Expr::Atom(Atom::Literal(x)) => Expr::Atom(Atom::Literal(Rational::ONE / x)),
+            // 1/(a*b*c*...) = 1/a * 1/b * 1/c
+            Prod(terms) => Expr::simplify_simplified_prod_terms(
+                terms
+                    .into_iter()
+                    .map(|term| Expr::simplify_simplified_recip_inner(term, rounding)),
+            ),
 
-                new_expr => Recip(Box::new(new_expr), *rounding),
-            },
+            Expr::Atom(Atom::Literal(x)) => Expr::literal(x.recip()),
+
+            new_expr => Recip(Box::new(new_expr), rounding),
+        }
+    }
+
+    fn simplify_sum_terms(terms: impl Iterator<Item = &'b Expr<'a>>) -> Expr<'a> {
+        Expr::simplify_simplified_sum_terms(terms.map(Expr::simplify))
+    }
+
+    fn simplify_simplified_sum_terms(terms: impl Iterator<Item = Expr<'a>>) -> Expr<'a> {
+        use Expr::Sum;
+        let mut new_terms = terms
+            // Remove 0s from the sum
+            .filter(|term| *term != zero())
+            // Flatten
+            .flat_map(|term| match term {
+                Sum(terms) => terms,
+                _ => std::slice::from_ref(&term).to_vec(),
+            })
+            .collect::<Vec<Expr>>();
+
+        // Collect terms and literals
+        Self::simplify_terms_unsorted(Self::add_collect, &mut new_terms);
+
+        // Unwrap the sum if possible
+        let res = match new_terms.len() {
+            0 => zero(),               // empty sum = 0
+            1 => new_terms[0].clone(), // a sum of just x = x
+            _ => Sum(new_terms),
+        };
+
+        res
+    }
+
+    fn simplify_prod_terms(terms: impl Iterator<Item = &'b Expr<'a>>) -> Expr<'a> {
+        Expr::simplify_simplified_prod_terms(terms.map(Expr::simplify))
+    }
+
+    fn simplify_simplified_prod_terms(terms: impl Iterator<Item = Expr<'a>>) -> Expr<'a> {
+        use Expr::{Neg, Prod, Sum};
+
+        let mut negatives = 0;
+
+        let new_terms_iter = terms
+            // Change all Negs in to just their positive terms and count the number of
+            // negatives. This will be used later to wrap the whole product in a Neg
+            // if there were an odd number.
+            //
+            // Note that the simplification above converts all negative literals in to
+            // Neg(Literal(<positive number>)) and removes Neg(Neg(...)) patterns.
+            .map(|term| {
+                if let Neg(inner_expr) = term {
+                    negatives += 1;
+                    *inner_expr
+                } else {
+                    term
+                }
+            })
+            // Remove 1s from the product
+            .filter(|term| *term != one())
+            // Flatten
+            .flat_map(|term| match term {
+                Prod(terms) => terms,
+                _ => std::slice::from_ref(&term).to_vec(),
+            });
+
+        // Collect terms, but stop early if we find a 0.
+        // (Turns out rust seems to always give 0 as the size hint but there's usually at least 2
+        // terms - this causes collect to allocate a Vec of length 1, then 2, then 4 which is
+        // ineffiecient. It's unlikely that we'll get a product of more than 4 terms and
+        // overestimating the size isn't really a problem so we'll allocate enough space for 4
+        // terms to start with)
+        let mut new_terms = Vec::with_capacity(new_terms_iter.size_hint().0.min(4));
+        for term in new_terms_iter {
+            if term == zero() {
+                return zero();
+            }
+            new_terms.push(term);
+        }
+
+        // Now, we are going to multiply out products of sums.
+        // To start, we'll find a sum.
+        match new_terms.iter().position(|term| match term {
+            Sum(_) => true,
+            _ => false,
+        }) {
+            // If there wasn't a sum then there's nothing to do.
+            None => (),
+            Some(sum_idx) => {
+                // Otherwise, we will remove the sum from new_terms and store the sums
+                // terms in sum_terms.
+                let sum_terms = match new_terms.remove(sum_idx) {
+                    Sum(terms) => terms,
+                    _ => panic!("sum is no longer sum"),
+                };
+                // Now, we multiply each term in the sum by the terms left over from the
+                // product!
+                let new_sum = sum_terms.into_iter().map(|term| {
+                    let these_terms = new_terms.clone().into_iter();
+                    let these_terms = these_terms.chain(iter::once(term));
+                    let prod = Expr::simplify_simplified_prod_terms(these_terms);
+                    if negatives % 2 == 1 {
+                        Expr::simplify_simplified_neg_inner(prod)
+                    } else {
+                        prod
+                    }
+                });
+                // Simplify the resulting sum
+                return Expr::simplify_simplified_sum_terms(new_sum);
+            }
+        }
+
+        // Cancel and calculate literals
+        Self::simplify_terms_unsorted(Self::mul_simplify, &mut new_terms);
+        new_terms.sort_unstable();
+
+        // Unwrap the product if possible
+        let new_expr = match new_terms.len() {
+            0 => one(),                // An empty product = 1
+            1 => new_terms[0].clone(), // A product of just x = x
+            _ => Prod(new_terms),
+        };
+
+        if negatives % 2 == 1 {
+            // Wrap the output in Neg if there were an odd number of negative terms.
+            // Note that negative terms have all been converted to positive terms.
+            Neg(Box::new(new_expr))
+        } else {
+            new_expr
         }
     }
 
     /// Tries `simplify` on all pairs of terms, modifying `terms` if a simplification can be made.
     ///
     /// `simplify` must be a simplifier. A simplifier is a function that takes a pair of
-    /// expressions and tries to combine them in to one.
+    /// expressions and tries to combine them in to one or cancel them.
     /// For example, a simplfier for Sum might combine x and -x to 0.
-    /// If a simplifier returns Some(expr), then expr takes the place of both the expressions that
+    /// If a simplifier returns Combine(expr), then expr takes the place of both the expressions that
     /// were passed to it (expr is only inserted once, but both expressions passed are removed).
-    /// Otherwise, if None is returned, no change is made.
+    /// Otherwise, if Cancel is returned, both terms are removed and not replaces;
+    /// otherwise, if None is returned, no change is made.
     ///
-    /// A simplifier may assume that there are no nested Prod or Sums and that their terms are
-    /// sorted.
+    /// A simplifier may assume that there are no nested Prod or Sums.
     ///
     /// This function assumes that there are no nested Prod or Sums (to allow simplifiers to make
     /// the same assumption).
-    ///
-    /// If a term is changed by a simplifier, `simplify` is tried again on it and all other
-    /// (including previous) terms.
-    ///
-    /// It also sorts the terms to ensure that the simplifiers assumption that the terms
-    /// are sorted is true. This sort is unstable.
-    ///
-    /// The bool returned indicates if simplifications were made.
-    fn simplify_terms(
-        simplify: impl Fn(&Expr<'a>, &Expr<'a>) -> Option<Expr<'a>>,
+    fn simplify_terms_unsorted(
+        simplify: impl Fn(&Expr<'a>, &Expr<'a>) -> SimplifyResult<'a>,
         terms: &mut Vec<Expr<'a>>,
-    ) -> bool {
-        // Ensure the terms are sorted since a simplifier is allowed to asssume that.
-        terms.sort_unstable();
-
-        // Track if terms was modified
-        let mut modified = false;
-
+    ) {
         let mut i = 0;
-        while i < terms.len() {
+        'outer: while i < terms.len() {
             // We have already checked this term with all previous terms, so we start at i+1
             let mut j = i + 1;
             while j < terms.len() {
-                // Don't simplify a term with itself (a simplification can cause j == i)
-                if i == j {
-                    j += 1;
-                    continue;
-                }
-
+                use SimplifyResult::{Cancel, Combine, None};
                 match simplify(&terms[i], &terms[j]) {
-                    Some(new_term) => {
-                        modified = true;
-
-                        // Make the simplification
-                        terms[i] = new_term;
-                        terms.remove(j);
-                        // If we removed a term before i, correct the index
-                        if j <= i {
-                            i -= 1;
-                        }
-                        // We should now try the new term with all previous terms too.
-                        j = 0;
-
-                        // FIXME We need to uphold that the vec is sorted to continue in this loop.
-                        // For now, we will just simplify from the begining but this should be
-                        // optimised later.
-                        Self::simplify_terms(simplify, terms);
-                        return true;
-                    }
-
                     // If no simplification was made, advance j
                     None => j += 1,
+
+                    Combine(new_term) => {
+                        // Make the simplification
+                        terms[i] = new_term;
+                        // Remove the furthest right term to reduce shifting.
+                        // Maybe we should simplify right to left?
+                        terms.remove(j);
+                    }
+
+                    Cancel => {
+                        // Make sure to remove j first as removing i would change the position of j
+                        terms.remove(j);
+                        terms.remove(i);
+                        continue 'outer;
+                    }
                 }
             }
             i += 1;
         }
-        modified
     }
 
     /// Extracts a literal coefficient from this expression, or defaults to a coefficient of 1.
@@ -397,132 +397,131 @@ impl<'b, 'a: 'b> Expr<'a> {
     ///   5*x*1/y would yield (5, x*1/y),
     ///   x would yield (1, x),
     ///   -(2*x) would yield (-2, x).
+    ///   5 would yield (5, [])
     ///
     /// This assumes that the terms in any products in self are sorted and that there are no nested
     /// products - these assumptions can be made in the context of a simplifier.
-    fn get_number_and_term(&self) -> (Rational, Expr<'a>) {
+    fn get_number_and_term<'c>(&'c self) -> (Rational, &'c [Expr<'a>]) {
         use Expr::{Neg, Prod};
         match self {
             // Allow for negative coefficients
             Neg(inner_expr) => {
-                let (n, term) = inner_expr.get_number_and_term();
-                (-n, term)
+                let (n, terms) = inner_expr.get_number_and_term();
+                (-n, terms)
             }
 
+            // EXPR ORDER ASSUMED, ATOM ORDER ASSUMED
             // Since the terms within the product are sorted and a product cannot contain another
             // product (simplifiers are allowed to assume no nested products), the literal will be
             // the last item in the product.
+            // Also, since literals are combined in products, there will only be 1 literal.
             Prod(terms) => terms
                 .last()
                 .and_then(|term| match term {
                     Expr::Atom(Atom::Literal(x)) => {
                         // This is x * (expr / x), i.e. x * (expr with x removed from the end)
-                        Some((*x, Prod(terms[..terms.len() - 1].to_vec())))
+                        Some((*x, &terms[..terms.len() - 1]))
                     }
                     _ => None,
                 })
                 // By default, it's just 1 * self
-                .unwrap_or_else(|| (Rational::ONE, self.clone())),
+                .unwrap_or_else(|| (Rational::ONE, &terms)),
 
-            //Again, the default case.
-            _ => (Rational::ONE, self.clone()),
+            Expr::Atom(Atom::Literal(x)) => (*x, &[]),
+
+            _ => (Rational::ONE, std::slice::from_ref(self)),
         }
     }
 
     /// A simplifier that collects terms in addition.
     ///
     /// See also: simplify_terms
-    fn add_collect(&self, other: &Expr<'a>) -> Option<Expr<'a>> {
-        let (n1, expr1) = self.get_number_and_term();
-        let (n2, expr2) = other.get_number_and_term();
-        if expr1.simplify_eq(&expr2) {
-            // (n1+n2) * expr1
-            Some(Expr::Prod(vec![Expr::Atom(Atom::Literal(n1 + n2)), expr1]))
+    fn add_collect(&self, other: &Expr<'a>) -> SimplifyResult<'a> {
+        use SimplifyResult::{Cancel, Combine, None};
+
+        let (n1, terms1) = self.get_number_and_term();
+        let (n2, terms2) = other.get_number_and_term();
+
+        // We can't collect terms if they aren't the same term
+        if terms1 != terms2 {
+            return None;
+        }
+
+        // terms == terms1 == terms2
+        let terms = terms1;
+
+        let n = n1 + n2;
+
+        // Canceling
+        if n == Rational::ZERO {
+            return Cancel;
+        }
+
+        // If we have nothing in the product then we're just a literal
+        if terms.len() == 0 {
+            if n.sign() == Sign::NEGATIVE {
+                return Combine(-Expr::literal(-n));
+            }
+            return Combine(Expr::literal(n));
+        }
+
+        // To stay simplified, we mustn't return with a 1 in the product.
+        if n == Rational::ONE {
+            // We should also not have products of 1 term
+            if terms1.len() == 1 {
+                return Combine(terms1[0].clone());
+            }
+            return Combine(Expr::Prod(terms1.to_vec()));
+        } else if n == -Rational::ONE {
+            // We should also not have products of 1 term
+            if terms1.len() == 1 {
+                return Combine(-terms1[0].clone());
+            }
+            return Combine(-Expr::Prod(terms1.to_vec()));
+        }
+
+        // The returned terms will be the terms of the term and the coefficient (which must be last
+        // to keep it simplified)
+        let mut new_terms = Vec::with_capacity(terms.len() + 1);
+        new_terms.extend_from_slice(terms);
+
+        if n.sign() != Sign::NEGATIVE {
+            new_terms.push(Expr::literal(n));
+            Combine(Expr::Prod(new_terms))
         } else {
-            None
-        }
-    }
-
-    /// A simplifier for addition.
-    ///
-    /// See also: simplify_terms
-    fn add_simplify(&self, other: &Expr<'a>) -> Option<Expr<'a>> {
-        if let Some(expr) = self.add_collect(other) {
-            return Some(expr);
-        }
-
-        use Expr::Neg;
-        match self {
-            Neg(expr) => match &**expr {
-                Expr::Atom(Atom::Literal(x)) => match other {
-                    // -x + y = y-x for literals
-                    Expr::Atom(Atom::Literal(y)) => {
-                        let x = *x;
-                        let y = *y;
-
-                        let res = y - x;
-                        if res < Rational::ZERO {
-                            // Keep literals positive
-                            Some(Neg(Box::new(Expr::Atom(Atom::Literal(-res)))))
-                        } else {
-                            Some(Expr::Atom(Atom::Literal(res)))
-                        }
-                    }
-
-                    Neg(other_expr) => match &**other_expr {
-                        // -x + -y = -(x+y) for literals
-                        Expr::Atom(Atom::Literal(y)) => {
-                            Some(Neg(Box::new(Expr::Atom(Atom::Literal(*x + *y)))))
-                        }
-                        _ => None,
-                    },
-
-                    _ => None,
-                },
-
-                // -x + x = 0
-                expr => {
-                    if *other == *expr {
-                        Some(zero())
-                    } else {
-                        None
-                    }
-                }
-            },
-
-            Expr::Atom(Atom::Literal(x)) => match other {
-                // Calculate x+y for literals
-                Expr::Atom(Atom::Literal(y)) => Some(Expr::Atom(Atom::Literal(*x + *y))),
-                _ => None,
-            },
-
-            _ => None,
+            // Hoist negatives to the outside of the product
+            new_terms.push(Expr::literal(-n));
+            Combine(-Expr::Prod(new_terms))
         }
     }
 
     /// A simplifier for multiplication.
     ///
     /// See also: simplify_terms
-    fn mul_simplify(&self, other: &Expr<'a>) -> Option<Expr<'a>> {
+    fn mul_simplify(&self, other: &Expr<'a>) -> SimplifyResult<'a> {
         use Expr::Recip;
-        match self {
-            Recip(expr, _) => {
+        use SimplifyResult::{Cancel, Combine, None};
+        match (self, other) {
+            (Recip(recip_expr, _), expr) | (expr, Recip(recip_expr, _)) => {
                 // (1/x) * x = 1
                 // TODO Consider 0s.
                 // I think we shouldn't allow a possibly 0 value in a denominator but we must make
                 // sure of that.
-                if *other == **expr {
-                    Some(one())
+                if **recip_expr == *expr {
+                    Cancel
                 } else {
                     None
                 }
             }
 
-            Expr::Atom(Atom::Literal(x)) => match other {
-                // Calculate x*y for literals
-                Expr::Atom(Atom::Literal(y)) => Some(Expr::Atom(Atom::Literal((*x) * (*y)))),
-                _ => None,
-            },
+            (Expr::Atom(Atom::Literal(x)), Expr::Atom(Atom::Literal(y))) => {
+                let z = (*x) * (*y);
+                if z == Rational::ONE {
+                    Cancel
+                } else {
+                    Combine(Expr::literal(z))
+                }
+            }
 
             _ => None,
         }

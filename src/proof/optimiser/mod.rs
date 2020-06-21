@@ -33,6 +33,8 @@ const BFS: bool = false;
 
 const TRY_NO_SUB: bool = NO_SUB_FIRST || NO_SUB_LAST;
 
+const DONT_MAKE_TRUE: bool = false;
+
 /// Minimizer is a type for generating lower bounds on an expression, given a set of requirements.
 /// It can be constructed with `Minimizer::new`, see that documentation for more details.
 ///
@@ -259,9 +261,21 @@ fn ge0_sub_and_exclude<'a, Opt: Options, NS: Fn(&Ident<'a>) -> Sign + Copy>(
         .iter()
         .chain(ge0s[..exclude].iter())
         .map(|expr| {
-            Maximizer::<Opt>::sub_bound(expr, sub, named_sign).unwrap_or_else(|| expr.clone())
+            let subbed_expr = Maximizer::<Opt>::sub_bound(expr, sub, named_sign)
+                .unwrap_or_else(|| expr.clone())
+                .simplify();
+            if DONT_MAKE_TRUE
+                && subbed_expr
+                    .eval()
+                    .map(|x| x.as_lower_bound())
+                    .unwrap_or(-Int::ONE)
+                    >= Int::ZERO
+            {
+                expr.clone()
+            } else {
+                subbed_expr
+            }
         })
-        .map(|expr| expr.simplify())
         .collect()
 }
 
@@ -690,9 +704,9 @@ fn sub_bound_into<
             // create the new terms.
             Some(Expr::Sum(
                 subbed_terms
-                    .iter()
+                    .into_iter()
                     .enumerate()
-                    .map(|(i, term)| term.as_ref().unwrap_or_else(|| &terms[i]).clone())
+                    .map(|(i, term)| term.unwrap_or_else(|| terms[i].clone()))
                     .collect(),
             ))
         }
@@ -707,7 +721,8 @@ fn sub_bound_into<
             //
             // As mentioned above, we also can't handle multiple terms containing `x`
             let mut sub = None;
-            let mut out = Vec::with_capacity(terms.len());
+            // Store references to expressions for now - we'll clone them when we need to.
+            let mut out: Vec<&Expr> = Vec::with_capacity(terms.len());
             for i in 0..terms.len() {
                 let term = &terms[i];
                 match self_sub(term, bound, named_sign) {
@@ -717,7 +732,7 @@ fn sub_bound_into<
                         }
                         sub = Some(subbed);
                     }
-                    None => out.push(term.clone()),
+                    None => out.push(term),
                 }
             }
             // Return None now if we've not found anything to substitute!
@@ -730,6 +745,8 @@ fn sub_bound_into<
                     return None;
                 }
             }
+            // We know we're good, so we will now clone the terms.
+            let mut out: Vec<Expr> = out.into_iter().map(|term| term.clone()).collect();
             // Now push the substituted term
             out.push(sub);
             Some(Expr::Prod(out))

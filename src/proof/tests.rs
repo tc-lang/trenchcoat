@@ -1257,28 +1257,3 @@ fn non_linear() {
 
     cleanup!()
 }
-
-#[test]
-fn justify_everything___properly() {
-    let prover;
-
-    requirements!(let reqs = [
-        "0 <= y",
-        "0 <= z",
-        "1 <= x",
-        "x <= 2",
-    ], prover);
-
-    make_prover!(prover, reqs, max_depth = budget(reqs.len()));
-
-    prove!("x*(y+z) + y <= 3*y+2*z" => ProofResult::True);
-    prove!("x*(y+z) + y <= 4*y+2*z" => ProofResult::True);
-    prove!("x*(y+z) + y <= 3*(y+z)" => ProofResult::True);
-    prove!("x*(y+z) + y <= 5*y+3*z" => ProofResult::True);
-    prove!("x*(y+z) + y <= 2*y+2*z" => ProofResult::Undetermined);
-    prove!("x*(y+z) + y <= 2*(y+z)" => ProofResult::Undetermined);
-    prove!("x*(y+z) + y <= 0" => ProofResult::Undetermined);
-    prove!("x*(y+z) + y <= 0-1" => ProofResult::False);
-
-    cleanup!()
-}

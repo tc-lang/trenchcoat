@@ -646,8 +646,16 @@ This almost\* doesn't change the capability of the algorithm.
 The above optimisation only makes a statement about the order of the substitutions, not the
 substitutions that should be made.
 
-It is in fact almost\* okay to make all substitutions we can if the permutation group optimisation
+It is in fact almost okay to make all substitutions we can if the permutation group optimisation
 is also applied.
+
+A breaking example though is:
+```
+0 ≤ x
+x ≤ 5
+```
+These bounds would be in different permutation groups and so if substitutions are made greedily, the
+order will be fixed. In the case where `x ≥ 0` is chosen first, 
 
 TODO: Elaborate (this is hard to prove though...)
 

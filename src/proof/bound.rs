@@ -196,7 +196,7 @@ impl<'a> Relation<'a> {
 
             // Negate both sides to unwrap the Neg
             Neg(term) => Relation {
-                left: *term.clone(),
+                left: (**term).clone(),
                 kind: self.kind.opposite(),
                 right: Neg(Box::new(self.right.clone())),
             }
@@ -204,7 +204,7 @@ impl<'a> Relation<'a> {
 
             // Recip both sides to unwrap this Recip
             Recip(term, _rounding) => Relation {
-                left: *term.clone(),
+                left: (**term).clone(),
                 kind: self.kind.opposite(),
                 // When you implement this todo, make sure you check the sign!
                 // See Prod case for how it should be done.

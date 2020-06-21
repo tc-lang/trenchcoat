@@ -39,6 +39,14 @@ impl Int {
             Infinity | NegInfinity => false,
         }
     }
+
+    /// Returns 1/x
+    pub fn recip(self) -> Rational {
+        Rational {
+            numerator: Int::ONE,
+            denominator: self,
+        }
+    }
 }
 
 impl EvalInt {
@@ -114,10 +122,10 @@ impl Rational {
     };
 
     /// Returns 1/x
-    pub fn recip(x: Int) -> Rational {
+    pub fn recip(self) -> Rational {
         Rational {
-            numerator: Int::ONE,
-            denominator: x,
+            numerator: self.denominator,
+            denominator: self.numerator,
         }
     }
 
@@ -148,10 +156,10 @@ impl Rational {
         }
         // Do the division if it's exact!
         if self.numerator % self.denominator == Int::ZERO {
-            return Rational::from(self.numerator / self.denominator);
+            return (self.numerator / self.denominator).into();
         }
         if self.denominator % self.numerator == Int::ZERO {
-            return Rational::recip(self.denominator / self.numerator);
+            return (self.denominator / self.numerator).recip();
         }
         self
     }
