@@ -17,4 +17,5 @@ opt-level = 3
 [features]
 graph = []
 bounds = []
+dummy-prover = []
 expr-simplify-debug = []

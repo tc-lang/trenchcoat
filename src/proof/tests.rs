@@ -1,21 +1,24 @@
-use super::bound_method::{DefaultProver as FullProver, Prover as BoundsProver};
 use super::graph::Prover as GraphProver;
 use super::{ProofResult, Prover, Requirement, SimpleProver};
 use crate::ast::proof::Condition;
 use crate::tokens::tokenize;
 
-#[cfg(not(any(feature = "graph", feature = "bounds")))]
-compile_error!("Either the 'graph' feature or the 'bounds' feature must be enabled");
+#[cfg(not(any(feature = "graph", feature = "bounds", feature = "dummy-prover")))]
+compile_error!("Either the 'graph' feature, the 'bounds' feature or the 'dummy-prover' feature must be enabled");
 
 #[cfg(all(feature = "graph", feature = "bounds"))]
 compile_error!("Only one of the 'graph' feature or the 'bounds' feature can be enabled");
+#[cfg(all(feature = "graph", feature = "dummy-prover"))]
+compile_error!("Only one of the 'graph' feature or the 'dummy-prover' feature can be enabled");
+#[cfg(all(feature = "dummy-prover", feature = "bounds"))]
+compile_error!("Only one of the 'bounds' feature or the 'dummy-prover' feature can be enabled");
 
 #[cfg(feature = "bounds")]
 macro_rules! make_prover {
     ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
         // Option A: Bounds method
-        let bounds_prover = BoundsProver::new(&$reqs);
-        $name = FullProver::from(bounds_prover);
+        $name = super::bound_method::DefaultSimpleProver::new(&$reqs);
+        //$name = FullProver::from(bounds_prover);
     };
 }
 
@@ -23,7 +26,7 @@ macro_rules! make_prover {
 macro_rules! make_prover {
     ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
         // Option B: Graph method
-        $name = GraphProver::new(&$reqs)
+        $name = super::graph::Prover::new(&$reqs)
     };
 }
 
@@ -34,10 +37,8 @@ macro_rules! make_prover {
 macro_rules! make_prover {
     ($name:ident, $reqs:ident, max_depth=$depth:expr) => {
         // A dummy macro so that we only get one error if the features are wrong
-        //
-        // Because we still need to provide a type, we'll actually default to the graph prover to
-        // avoid errors because it's simpler
-        $name = GraphProver::new($reqs.clone())
+        // This will also be used when the dummy-prover feature is passed
+        $name = super::dummy::Prover::new(&$reqs)
     };
 }
 

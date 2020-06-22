@@ -625,22 +625,3 @@ impl<'a> DerefMut for ProverSetItem<'a> {
         &mut self.prover
     }
 }
-
-/// A dummy implemetor of `proof::SimpleProver` so that we reduce the number of errors if no
-/// features are given.
-#[derive(Debug)]
-struct Dummy;
-
-impl<'a> SimpleProver<'a> for Dummy {
-    fn new(_: &[Requirement<'a>]) -> Self {
-        unreachable!()
-    }
-
-    fn prove(&self, _: &Requirement) -> ProofResult {
-        unreachable!()
-    }
-
-    fn add_requirements(&mut self, _: &[Requirement<'a>]) {
-        unreachable!()
-    }
-}
