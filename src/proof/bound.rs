@@ -1,17 +1,8 @@
 use super::expr::{minus_one, one, zero, Atom, Expr};
-use super::optimiser::{bound_sub as _bound_sub, options::DefaultMode as OptimiserOptions};
 use super::sign::Sign;
 use super::PrettyFormat;
 use crate::ast::Ident;
 use std::fmt::{self, Display, Formatter};
-
-fn bound_sub<'a, F: Fn(&Ident<'a>) -> Sign + Copy>(
-    bound: &DescriptiveBound<'a>,
-    sub_bound: &DescriptiveBound<'a>,
-    named_sign: F,
-) -> Option<DescriptiveBound<'a>> {
-    _bound_sub::<OptimiserOptions, F>(bound, sub_bound, named_sign)
-}
 
 /// Represents a bound on something.
 /// For example `<= 2` or `>= x+y`
@@ -377,15 +368,6 @@ impl<'a> DescriptiveBound<'a> {
             subject: self.subject.clone(),
             bound: self.bound.simplify(),
         }
-    }
-
-    /// Try substituting sub in to self and return the result.
-    pub fn sub(
-        &self,
-        sub: &DescriptiveBound<'a>,
-        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
-    ) -> Option<DescriptiveBound<'a>> {
-        bound_sub(self, &sub, named_sign)
     }
 
     pub fn bound_ref<'b>(&'b self) -> DescriptiveBoundRef<'a, 'b> {
