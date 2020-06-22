@@ -388,7 +388,9 @@ fn consume_block_comment<'a>(s: &'a str, start_idx: usize) -> Result<usize, Vec<
             },
 
             // Start parsing (escaping) a string literal
-            (b'"', _) => match consume_string_lit(s, idx) {
+            //
+            // We give it idx+1 because it expects the first character *inside* the string.
+            (b'"', _) => match consume_string_lit(s, idx + 1) {
                 // Within bounds
                 Some(i) if i < bytes.len() => {
                     idx = i;
