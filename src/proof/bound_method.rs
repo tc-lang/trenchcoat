@@ -1,4 +1,4 @@
-use super::bound::{bounds_on_ge0, Bound, Relation, RelationKind};
+use super::bound::{Bound, Relation, RelationKind};
 use super::expr::{zero, Expr};
 use super::int::Int;
 use super::optimiser::{options, options::Options, Maximizer, Minimizer};
@@ -12,7 +12,7 @@ pub type DefaultProver<'a> = ScopedSimpleProver<'a, DefaultSimpleProver<'a>>;
 
 pub struct Prover<'a, Opt: Options, LOpt: Options> {
     given: Vec<Expr<'a>>,
-    max_depth: isize,
+    budget: isize,
     sign_cache: LittleCache<Ident<'a>, Sign>,
     options: Opt,
     lemma_options: LOpt,
@@ -21,7 +21,7 @@ pub struct Prover<'a, Opt: Options, LOpt: Options> {
 pub fn default_budget(n: usize) -> isize {
     let ni = n as isize;
     // There's a bit of maths behind this, but not loads. Feel free to change it.
-    ni * ni + ni + 1 + 10000000
+    ni * ni + ni + 1
 }
 
 impl<'a, Opt: Options, LOpt: Options> SimpleProver<'a> for Prover<'a, Opt, LOpt> {
@@ -33,7 +33,7 @@ impl<'a, Opt: Options, LOpt: Options> SimpleProver<'a> for Prover<'a, Opt, LOpt>
         let n = reqs.len();
         let mut out = Prover {
             given: reqs,
-            max_depth: default_budget(n),
+            budget: default_budget(n),
             sign_cache: LittleCache::new(0),
             options: Opt::init(),
             lemma_options: LOpt::init(),
@@ -67,7 +67,7 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
         let mini = Minimizer::new(
             ge0.clone(),
             self.given.clone(),
-            self.max_depth,
+            self.budget,
             &self.sign_cache,
             options.clone(),
         );
@@ -78,7 +78,7 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
         let maxi = Maximizer::new(
             ge0,
             self.given.clone(),
-            self.max_depth,
+            self.budget,
             &self.sign_cache,
             options,
         );
@@ -111,11 +111,11 @@ macro_rules! help_suggestions {
 }
 
 impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
-    pub fn max_depth(&self) -> isize {
-        self.max_depth
+    pub fn budget(&self) -> isize {
+        self.budget
     }
-    pub fn set_max_depth(&mut self, max_depth: isize) {
-        self.max_depth = max_depth
+    pub fn set_budget(&mut self, budget: isize) {
+        self.budget = budget
     }
 
     /// Populates self.sign_cache with the known signs of variables
@@ -133,7 +133,8 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
             self.sign_cache = LittleCache::new(variables.len());
         }
 
-        'outer: loop {
+        loop {
+            let mut not_changed = true;
             for var in variables.iter() {
                 for ge0 in self.given.iter() {
                     macro_rules! named_sign {
@@ -142,7 +143,7 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
                         };
                     }
                     // Try to find the sign of the variable by finding the sign of a bound
-                    let bound_sign = match bounds_on_ge0(&ge0, &var, named_sign!()) {
+                    let bound_sign = match Bound::from_ge0(&ge0, &var, named_sign!()) {
                         Some(Bound::Le(expr)) => {
                             let sign = expr.sign(named_sign!());
                             if sign == Sign::NEGATIVE {
@@ -182,7 +183,7 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
                             // Update the cache and start again if it's changed
                             if new_sign != existing_sign {
                                 self.sign_cache.set(var.clone(), bound_sign);
-                                continue 'outer;
+                                not_changed = false;
                             }
                         }
                         None => {
@@ -191,13 +192,15 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
                                 // Then start again. TODO Make this more efficient by not starting
                                 // again. Above, too.
                                 self.sign_cache.set(var.clone(), bound_sign);
-                                continue 'outer;
+                                not_changed = false;
                             }
                         }
                     }
                 }
             }
-            break;
+            if not_changed {
+                break;
+            }
         }
     }
 
@@ -207,7 +210,7 @@ impl<'a, Opt: Options, LOpt: Options> Prover<'a, Opt, LOpt> {
         Minimizer::new(
             prop.ge0(),
             self.given.clone(),
-            self.max_depth,
+            self.budget,
             todo!(),
             options::HelpMode::init(),
         )

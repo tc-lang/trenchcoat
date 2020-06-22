@@ -1,7 +1,6 @@
 //! Interfaces for use in verification of proof statments
 
 mod bound;
-//mod bound_group;
 pub mod bound_method;
 pub mod expr;
 pub mod graph;
@@ -67,39 +66,13 @@ impl<'a> Requirement<'a> {
         self.relation.variables()
     }
 
-    /// Returns the bounds on `name` given by self.
-    /// If no bounds are given or if they cannot be computed, None is returned.
-    //pub fn bounds_on(&self, name: &Ident<'a>) -> Option<Bound<'a>> {
-    //    self.relation.bounds_on(name)
-    //}
-
-    /// Returns bounds specified by self.
-    /// The tuple contains the variable the bound is on and the bound itself.
-    /// It may not return all bounds since some bounds cannot yet be calculated.
-    //fn bounds(&self) -> Vec<DescriptiveBound<'a>> {
-    //    self.relation.bounds()
-    //}
-
     fn as_relation<'b>(&'b self) -> &'b Relation<'a> {
         &self.relation
     }
 
     /// Returns an expression that is >= 0 if and only if self is true.
     pub fn ge0(&self) -> Expr<'a> {
-        match self.relation.kind {
-            // left <= right
-            // ==> 0 <= right-left
-            RelationKind::Le => Expr::Sum(vec![
-                self.relation.right.clone(),
-                Expr::Neg(Box::new(self.relation.left.clone())),
-            ]),
-            // left >= right
-            // ==> left-right >= 0
-            RelationKind::Ge => Expr::Sum(vec![
-                self.relation.left.clone(),
-                Expr::Neg(Box::new(self.relation.right.clone())),
-            ]),
-        }
+        self.as_relation().ge0()
     }
 }
 

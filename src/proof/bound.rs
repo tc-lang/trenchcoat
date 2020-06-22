@@ -15,16 +15,10 @@ pub enum Bound<'a> {
 }
 
 /// Represents a bound on a named variables.
-/// Contains a bound and a specfic variable that the bound applies to.
+/// Contain references to a bound and a specfic variable that the bound applies to.
 /// For example `x <= 2` or `a >= x+y`
-#[derive(Debug, Clone, PartialEq)]
-pub struct DescriptiveBound<'a> {
-    pub subject: Ident<'a>,
-    pub bound: Bound<'a>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub struct DescriptiveBoundRef<'a, 'b> {
+pub struct DescriptiveBound<'a, 'b> {
     pub subject: &'b Ident<'a>,
     pub bound: &'b Bound<'a>,
 }
@@ -50,6 +44,21 @@ pub enum RelationKind {
 }
 
 impl<'a> Bound<'a> {
+    /// Returns the bound on `subject` given by `0 <= expr_ge0`
+    /// This uses the `named_sign` callback to determine possible signs for named variables.
+    pub fn from_ge0(
+        expr_ge0: &Expr<'a>,
+        subject: &Ident<'a>,
+        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
+    ) -> Option<Bound<'a>> {
+        Relation {
+            left: expr_ge0.single_x(subject)?,
+            kind: RelationKind::Ge,
+            right: zero(),
+        }
+        .bounds_on_unsafe(subject, named_sign)
+    }
+
     /// Apply f to the bound expression and return the new bound.
     pub fn map(&self, f: impl Fn(&Expr<'a>) -> Expr<'a>) -> Bound<'a> {
         use Bound::{Ge, Le};
@@ -281,22 +290,6 @@ impl<'a> Relation<'a> {
         .bounds_on_unsafe(name, named_sign)
     }
 
-    /// Returns a list of all the bounds that can be computed from self.
-    pub fn bounds(
-        &self,
-        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
-    ) -> Vec<DescriptiveBound<'a>> {
-        self.variables()
-            .iter()
-            .filter_map(|x| {
-                Some(DescriptiveBound {
-                    subject: x.clone(),
-                    bound: self.bounds_on(x, named_sign)?,
-                })
-            })
-            .collect()
-    }
-
     /// Returns a Relation which is true iff self is false.
     pub fn contra_positive(&self) -> Relation<'a> {
         //   ¬(lhs <= rhs)
@@ -353,52 +346,24 @@ impl<'a> Relation<'a> {
         vars.dedup();
         vars
     }
-}
 
-impl<'a> DescriptiveBound<'a> {
-    /// Returns true iff the order that self and other are substituted does not matter.
-    /// This is currently if they don't have the same subject or don't have the same relation kind.
-    pub fn permutes_with(&self, other: &DescriptiveBound<'a>) -> bool {
-        self.subject != other.subject || self.bound.relation_kind() != other.bound.relation_kind()
-    }
-
-    /// Simplifies the bound expression and returns the result.
-    pub fn simplify(&self) -> DescriptiveBound<'a> {
-        DescriptiveBound {
-            subject: self.subject.clone(),
-            bound: self.bound.simplify(),
+    /// Returns an expression that is >= 0 if and only if self is true.
+    pub fn ge0(&self) -> Expr<'a> {
+        match self.kind {
+            // left <= right
+            // ==> 0 <= right-left
+            RelationKind::Le => Expr::Sum(vec![
+                self.right.clone(),
+                Expr::Neg(Box::new(self.left.clone())),
+            ]),
+            // left >= right
+            // ==> left-right >= 0
+            RelationKind::Ge => Expr::Sum(vec![
+                self.left.clone(),
+                Expr::Neg(Box::new(self.right.clone())),
+            ]),
         }
     }
-
-    pub fn bound_ref<'b>(&'b self) -> DescriptiveBoundRef<'a, 'b> {
-        DescriptiveBoundRef {
-            subject: &self.subject,
-            bound: &self.bound,
-        }
-    }
-}
-
-impl<'a, 'b> DescriptiveBoundRef<'a, 'b> {
-    pub fn deref_and_clone(&self) -> DescriptiveBound<'a> {
-        DescriptiveBound{
-            subject: self.subject.clone(),
-            bound: self.bound.clone(),
-        }
-    }
-}
-
-/// Returns the bound on `subject` given by `0 <= expr_ge0`
-pub fn bounds_on_ge0<'a>(
-    expr_ge0: &Expr<'a>,
-    subject: &Ident<'a>,
-    named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
-) -> Option<Bound<'a>> {
-    Relation {
-        left: expr_ge0.single_x(subject)?,
-        kind: RelationKind::Ge,
-        right: zero(),
-    }
-    .bounds_on_unsafe(subject, named_sign)
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -448,7 +413,7 @@ impl<'a> Display for Bound<'a> {
     }
 }
 
-impl<'a> Display for DescriptiveBound<'a> {
+impl<'a, 'b> Display for DescriptiveBound<'a, 'b> {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{} {}", self.subject, self.bound)
     }
