@@ -44,14 +44,16 @@ drastically different runtimes.
 
 (The following results are based on the tests in [src/proof/tests.rs](../src/proof/tests.rs))
 
-On my laptop, the times to complete the proof tests (averaged over 15 runs) are:
-- Bound method: 209ms;
-- Graph method: 51ms;
+On my laptop, the times to complete the proof tests are:
+- Bound method: 317ms;
+- Graph method: 20ms;
+
+These are the total usr times (so the sum of the time over all threads), averaged over 15 tests,
+with a cool-down between them and with a control time subtracted. The control time was calculated
+by timing a dummy prover which always gives undetermined - this eliminates time spent parsing and
+performing other tasks.
 
 TODO: Further breakdown of test timings to include times for true/false/undetermined results.
-
-It should be noted that this time also includes parsing and other tests, making the difference not
-meaningful as a factor. It does, however, illustrate that the bounds method is significantly slower.
 
 On the other hand, out of 786 tests:
 - Bound method passes 768/786 > 97.7% of tests;
