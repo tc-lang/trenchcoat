@@ -32,6 +32,12 @@ pub struct DescriptiveBound<'a> {
     pub bound: Bound<'a>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DescriptiveBoundRef<'a, 'b> {
+    pub subject: &'b Ident<'a>,
+    pub bound: &'b Bound<'a>,
+}
+
 /// Represents a relation between 2 expressions.
 /// For example: left <= (RelationKind::Le) right
 ///
@@ -380,6 +386,22 @@ impl<'a> DescriptiveBound<'a> {
         named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
     ) -> Option<DescriptiveBound<'a>> {
         bound_sub(self, &sub, named_sign)
+    }
+
+    pub fn bound_ref<'b>(&'b self) -> DescriptiveBoundRef<'a, 'b> {
+        DescriptiveBoundRef {
+            subject: &self.subject,
+            bound: &self.bound,
+        }
+    }
+}
+
+impl<'a, 'b> DescriptiveBoundRef<'a, 'b> {
+    pub fn deref_and_clone(&self) -> DescriptiveBound<'a> {
+        DescriptiveBound{
+            subject: self.subject.clone(),
+            bound: self.bound.clone(),
+        }
     }
 }
 

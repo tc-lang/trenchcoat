@@ -1,7 +1,9 @@
 pub mod options;
 
 use self::options::Options;
-use super::bound::{bounds_on_ge0, Bound, DescriptiveBound, Relation, RelationKind};
+use super::bound::{
+    bounds_on_ge0, Bound, DescriptiveBound, DescriptiveBoundRef, Relation, RelationKind,
+};
 use super::expr::{self, Atom, Expr};
 use super::int::Int;
 use super::sign::Sign;
@@ -251,19 +253,19 @@ impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
 /// This is so that if this is passed to a child optimiser, the next requirement checked will be
 /// the one after the one that has just been substituted (possibly reducing the number of failed
 /// rearrangements).
-fn ge0_sub_and_exclude<'a, Opt: Options, NS: Fn(&Ident<'a>) -> Sign + Copy>(
+fn ge0_sub_and_exclude<'a, 'b, Opt: Options, NS: Fn(&Ident<'a>) -> Sign + Copy>(
     ge0s: &[Expr<'a>],
     exclude: usize,
-    sub: &DescriptiveBound<'a>,
+    sub: DescriptiveBoundRef<'a, 'b>,
     named_sign: NS,
 ) -> Vec<Expr<'a>> {
     ge0s[exclude + 1..]
         .iter()
         .chain(ge0s[..exclude].iter())
         .map(|expr| {
-            let subbed_expr = Maximizer::<Opt>::sub_bound(expr, sub, named_sign)
-                .unwrap_or_else(|| expr.clone())
-                .simplify();
+            let subbed_expr = Maximizer::<Opt>::sub_bound_ref(expr, sub, named_sign)
+                .map(|expr| expr.simplify())
+                .unwrap_or_else(|| expr.clone());
             if DONT_MAKE_TRUE
                 && subbed_expr
                     .eval()
@@ -310,21 +312,16 @@ macro_rules! optimiser_misc_methods {
                             ))
                         })
                         .filter_map(|(given_idx, bound, var)| {
-                            let rv = Some((
-                                var.clone(),
-                                bound.clone(),
-                                Self::sub_bound(
-                                    &self.solving,
-                                    &DescriptiveBound {
-                                        subject: var.clone(),
-                                        bound,
-                                    },
-                                    |x| self.sign_of(x),
-                                )?
-                                .simplify(),
-                                given_idx,
-                            ));
-                            rv
+                            Self::sub_bound_ref(
+                                &self.solving,
+                                DescriptiveBoundRef {
+                                    subject: var,
+                                    bound: &bound,
+                                },
+                                |x| self.sign_of(x),
+                            )
+                            .map(|subbed_expr| subbed_expr.simplify())
+                            .map(|subbed_expr| (var.clone(), bound, subbed_expr, given_idx))
                         })
                 })
                 .next()
@@ -343,19 +340,16 @@ macro_rules! optimiser_misc_methods {
                                     }
                                     let bound =
                                         bounds_on_ge0(ge0, &var, |x| self.sign_of(x))?.simplify();
-                                    Some((
-                                        bound.clone(),
-                                        Self::sub_bound(
-                                            &self.solving,
-                                            &DescriptiveBound {
-                                                subject: var.clone(),
-                                                bound,
-                                            },
-                                            |x| self.sign_of(x),
-                                        )?
-                                        .simplify(),
-                                        given_idx,
-                                    ))
+                                    let subbed = Self::sub_bound_ref(
+                                        &self.solving,
+                                        DescriptiveBoundRef {
+                                            subject: &var,
+                                            bound: &bound,
+                                        },
+                                        |x| self.sign_of(x),
+                                    )?
+                                    .simplify();
+                                    Some((bound, subbed, given_idx))
                                 }
                             })
                             .collect(),
@@ -423,9 +417,9 @@ macro_rules! optimiser_misc_methods {
                         ge0_sub_and_exclude::<Opt, _>(
                             &self.given_ge0,
                             *req_id,
-                            &DescriptiveBound {
-                                subject: var.clone(),
-                                bound: bound.clone(),
+                            DescriptiveBoundRef {
+                                subject: var,
+                                bound: bound,
                             },
                             |x| self.sign_of(x),
                         ),
@@ -472,9 +466,9 @@ macro_rules! optimiser_misc_methods {
                 ge0_sub_and_exclude::<Opt, _>(
                     &self.given_ge0,
                     *req_id,
-                    &DescriptiveBound {
-                        subject: var.clone(),
-                        bound: bound.clone(),
+                    DescriptiveBoundRef {
+                        subject: var,
+                        bound: bound,
                     },
                     |x| self.sign_of(x),
                 ),
@@ -518,7 +512,10 @@ macro_rules! optimizer_next_body {
                 if $self.options.yield_all() {
                     return None;
                 }
-                return Some($self.solving.clone());
+                // We can't come out of BudgetState::Finished so we're safe to swap out solving.
+                let mut to_return = expr::zero();
+                std::mem::swap(&mut to_return, &mut $self.solving);
+                return Some(to_return);
             }
 
             if NO_SUB_FIRST && $self.children.len() == 0 || !NO_SUB_FIRST && !$self.generated {
@@ -754,7 +751,99 @@ fn sub_bound_into<
     }
 }
 
-impl<'a, 'b, Opt: Options> Minimizer<'a, 'b, Opt> {
+fn sub_bound_ref_into<
+    'a,
+    'b,
+    SS: Fn(&Expr<'a>, DescriptiveBoundRef<'a, 'b>, NS) -> Option<Expr<'a>>,
+    SO: Fn(&Expr<'a>, DescriptiveBoundRef<'a, 'b>, NS) -> Option<Expr<'a>>,
+    NS: Fn(&Ident<'a>) -> Sign + Copy,
+>(
+    expr: &Expr<'a>,
+    bound: DescriptiveBoundRef<'a, 'b>,
+    self_sub: SS,
+    sub_opposite: SO,
+    named_sign: NS,
+) -> Option<Expr<'a>> {
+    match expr {
+        // An atom has a fixed value if it was not `x`
+        Expr::Atom(_) => None,
+
+        // An upper bound for -(...) is -(a lower bound for ...)
+        Expr::Neg(inner_expr) => Some(Expr::Neg(Box::new(sub_opposite(
+            inner_expr, bound, named_sign,
+        )?))),
+        // An upper bound for 1/(...) is 1/(a lower bound for ...)
+        Expr::Recip(inner_expr, rounding) => Some(Expr::Recip(
+            Box::new(sub_opposite(inner_expr, bound, named_sign)?),
+            *rounding,
+        )),
+
+        // A bound on a sum is the sum of the bounds of its terms.
+        Expr::Sum(terms) => {
+            // Try substituting into each term.
+            let subbed_terms = terms
+                .iter()
+                .map(|term| self_sub(term, bound, named_sign))
+                .collect::<Vec<Option<Expr>>>();
+            // If no terms had substitutions then return None.
+            if subbed_terms.iter().all(Option::is_none) {
+                return None;
+            }
+            // Otherwise, use the substituted terms and clone the ones without substitutions to
+            // create the new terms.
+            Some(Expr::Sum(
+                subbed_terms
+                    .into_iter()
+                    .enumerate()
+                    .map(|(i, term)| term.unwrap_or_else(|| terms[i].clone()))
+                    .collect(),
+            ))
+        }
+
+        Expr::Prod(terms) => {
+            // We now want to minimize a product. Currently, we can do this if `x` is only in 1
+            // term and the rest of the terms are known to be non-negative.
+            // If this is the case, then subbed( a*b*c*x ) = a*b*c*subbed(x)
+
+            // We'll start by copying the terms in to out - excluding the term which we can
+            // substitute in to which we'll store in sub and then add back in later.
+            //
+            // As mentioned above, we also can't handle multiple terms containing `x`
+            let mut sub = None;
+            // Store references to expressions for now - we'll clone them when we need to.
+            let mut out: Vec<&Expr> = Vec::with_capacity(terms.len());
+            for i in 0..terms.len() {
+                let term = &terms[i];
+                match self_sub(term, bound, named_sign) {
+                    Some(subbed) => {
+                        if sub.is_some() {
+                            return None;
+                        }
+                        sub = Some(subbed);
+                    }
+                    None => out.push(term),
+                }
+            }
+            // Return None now if we've not found anything to substitute!
+            let sub = sub?;
+            // Now check that the rest of the terms can't be negative
+            for term in out.iter() {
+                let sign = term.sign(named_sign);
+                if sign.maybe_neg() {
+                    // We might be able to do more here, but we've probably done enough.
+                    return None;
+                }
+            }
+            // We know we're good, so we will now clone the terms.
+            let mut out: Vec<Expr> = out.into_iter().map(|term| term.clone()).collect();
+            // Now push the substituted term
+            out.push(sub);
+            Some(Expr::Prod(out))
+        }
+    }
+}
+
+impl<'a, 'b, 'c, Opt: Options> Minimizer<'a, 'b, Opt> {
     /// Returns an upper bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
@@ -778,9 +867,30 @@ impl<'a, 'b, Opt: Options> Minimizer<'a, 'b, Opt> {
             named_sign,
         )
     }
+
+    pub fn sub_bound_ref(
+        expr: &Expr<'a>,
+        bound: DescriptiveBoundRef<'a, 'c>,
+        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
+    ) -> Option<Expr<'a>> {
+        // If the expression is x, then an upper bound is given directly.
+        if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
+            return match bound.bound {
+                Bound::Ge(bound_expr) => Some(bound_expr.clone()),
+                Bound::Le(_) => None,
+            };
+        }
+        sub_bound_ref_into(
+            expr,
+            bound,
+            Minimizer::<Opt>::sub_bound_ref,
+            Maximizer::<Opt>::sub_bound_ref,
+            named_sign,
+        )
+    }
 }
 
-impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
+impl<'a, 'b, 'c, Opt: Options> Maximizer<'a, 'b, Opt> {
     /// Returns a lower bound on `expr` given a bound on `x`.
     /// This is done by making all apropriate substitutions.
     /// Note that the outputted expression isn't garenteed to be simplified.
@@ -800,6 +910,26 @@ impl<'a, 'b, Opt: Options> Maximizer<'a, 'b, Opt> {
             bound,
             Maximizer::<Opt>::sub_bound,
             Minimizer::<Opt>::sub_bound,
+            named_sign,
+        )
+    }
+
+    pub fn sub_bound_ref(
+        expr: &Expr<'a>,
+        bound: DescriptiveBoundRef<'a, 'c>,
+        named_sign: impl Fn(&Ident<'a>) -> Sign + Copy,
+    ) -> Option<Expr<'a>> {
+        if expr == &Expr::Atom(Atom::Named(bound.subject.clone())) {
+            return match &bound.bound {
+                Bound::Le(bound_expr) => Some(bound_expr.clone()),
+                Bound::Ge(_) => None,
+            };
+        }
+        sub_bound_ref_into(
+            expr,
+            bound,
+            Maximizer::<Opt>::sub_bound_ref,
+            Minimizer::<Opt>::sub_bound_ref,
             named_sign,
         )
     }
