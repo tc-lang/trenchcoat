@@ -1,0 +1,14 @@
+use std.foo.Bar;
+
+// It's a comment!
+fn baz(x: int, y: bool) -> { z: Bar<int> } {
+	/*
+    Maybe someone implemented this, maybe they didn't.
+	either way, it serves as a nice place to put nested
+	block comments and strings:
+	/* Inner block comment! */
+	"and in /* a string"
+	*/
+	
+	{ z: Baz.new(x) }
+}
