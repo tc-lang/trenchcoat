@@ -189,13 +189,13 @@ pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<Token<'a>, Invalid<'a>>> {
     tokens
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Token<'a> {
     src: &'a str,
     kind: TokenKind,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TokenKind {
     // Multi-character tokens:
     LineComment,  // Two slashes, followed by anything until a newline
@@ -228,7 +228,7 @@ pub enum TokenKind {
     Slash,       // "/"
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum LiteralKind {
     Char,
     Int,
@@ -236,13 +236,13 @@ pub enum LiteralKind {
 }
 
 /// An invalid character sequence in the source file
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub struct Invalid<'a> {
     src: &'a str,
     incomplete: Option<IncompleteKind>,
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum IncompleteKind {
     BlockComment,
     StringLiteral,
@@ -468,5 +468,125 @@ fn consume_single_quote(s: &str, idx: usize) -> Option<usize> {
     match s.as_bytes().get(post) {
         Some(b'\'') => Some(post + 1),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A helper macro for cleanly constructing tokens
+    macro_rules! token {
+        ($kind:expr, $src:expr) => {{
+            Token {
+                src: $src,
+                kind: $kind,
+            }
+        }};
+    }
+
+    #[test]
+    fn valid_no_nested() {
+        use TokenKind::*;
+
+        let input = concat!(
+            "foo 34 // comment\n",
+            "bars! (){}[]\n",
+            "    <- indent\n",
+            "\tops +-*/= \n",
+            "punc. ,:;",
+        );
+
+        let expected = vec![
+            // First line:
+            token!(Ident, "foo"),
+            token!(Whitespace, " "),
+            token!(Literal(LiteralKind::Int), "34"),
+            token!(Whitespace, " "),
+            token!(LineComment, "// comment"),
+            token!(Whitespace, "\n"),
+            // Second line:
+            token!(Ident, "bars"),
+            token!(Not, "!"),
+            token!(Whitespace, " "),
+            token!(OpenParen, "("),
+            token!(CloseParen, ")"),
+            token!(OpenCurly, "{"),
+            token!(CloseCurly, "}"),
+            token!(OpenSquare, "["),
+            token!(CloseSquare, "]"),
+            token!(Whitespace, "\n    "),
+            // Third line:
+            token!(Lt, "<"),
+            token!(Minus, "-"),
+            token!(Whitespace, " "),
+            token!(Ident, "indent"),
+            token!(Whitespace, "\n\t"),
+            // Fourth line:
+            token!(Ident, "ops"),
+            token!(Whitespace, " "),
+            token!(Plus, "+"),
+            token!(Minus, "-"),
+            token!(Star, "*"),
+            token!(Slash, "/"),
+            token!(Eq, "="),
+            token!(Whitespace, " \n"),
+            // Fifth line:
+            token!(Ident, "punc"),
+            token!(Dot, "."),
+            token!(Whitespace, " "),
+            token!(Comma, ","),
+            token!(Colon, ":"),
+            token!(Semi, ";"),
+        ];
+
+        let tokens = tokenize(input)
+            .into_iter()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn valid_nested() {
+        use TokenKind::*;
+
+        let input = concat!(
+            "foo /* block!\n",
+            "    /* inner! */\n",
+            "    \" string! */ \" continue\n",
+            " and end */\n",
+            "tail!",
+        );
+
+        let expected = vec![
+            token!(Ident, "foo"),
+            token!(Whitespace, " "),
+            token!(
+                BlockComment,
+                concat!(
+                    "/* block!\n",
+                    "    /* inner! */\n",
+                    "    \" string! */ \" continue\n",
+                    " and end */",
+                )
+            ),
+            // NOTE: The inner values are parsed, but not given, because they were done
+            // successfully
+            //
+            // token!(BlockComment, "/* inner! */"),
+            // token!(Literal(LiteralKind::String), "\" string! */ \""),
+            token!(Whitespace, "\n"),
+            token!(Ident, "tail"),
+            token!(Not, "!"),
+        ];
+
+        let tokens = tokenize(input)
+            .into_iter()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+
+        assert_eq!(tokens, expected);
     }
 }
