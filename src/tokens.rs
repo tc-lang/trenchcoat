@@ -1,3 +1,6 @@
+use crate::error::{self, Builder as ErrorBuilder, SourceRange, ToError};
+use std::ops::Range;
+
 // Note: tokens might not be strictly non-overlapping. This can occur in certain error cases, where
 // we might have string literals / block comments inside others
 pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<Token<'a>, Invalid<'a>>> {
@@ -468,6 +471,32 @@ fn consume_single_quote(s: &str, idx: usize) -> Option<usize> {
     match s.as_bytes().get(post) {
         Some(b'\'') => Some(post + 1),
         _ => None,
+    }
+}
+
+impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Invalid<'_> {
+    fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
+        use IncompleteKind::{BlockComment, StringLiteral};
+
+        let (ref byte_range, ref file_name) = aux;
+
+        let range = byte_range(self.src);
+        let region = SourceRange {
+            file_name: (*file_name).into(),
+            byte_range: range.clone(),
+        };
+
+        match self.incomplete {
+            None => ErrorBuilder::new(format!("unrecognized character sequence: {:?}", self.src))
+                .context(*file_name, range.start)
+                .highlight(vec![region], error::ERR_COLOR),
+            Some(BlockComment) => ErrorBuilder::new("unclosed block comment")
+                .context(*file_name, range.start)
+                .highlight(vec![region], error::ERR_COLOR),
+            Some(StringLiteral) => ErrorBuilder::new("unclosed string literal")
+                .context(*file_name, range.start)
+                .highlight(vec![region], error::ERR_COLOR),
+        }
     }
 }
 
