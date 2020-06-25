@@ -489,10 +489,12 @@ impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Invalid<'_> {
                 .highlight(file_name, vec![range], error::ERR_COLOR),
             Some(BlockComment) => ErrorBuilder::new("unclosed block comment")
                 .context(file_name, range.start)
-                .highlight(file_name, vec![range], error::ERR_COLOR),
+                .highlight(file_name, vec![range], error::ERR_COLOR)
+                .note("expected '*/', found EOF"),
             Some(StringLiteral) => ErrorBuilder::new("unclosed string literal")
                 .context(file_name, range.start)
-                .highlight(file_name, vec![range], error::ERR_COLOR),
+                .highlight(file_name, vec![range], error::ERR_COLOR)
+                .note("expected '\"', found EOF"),
         }
     }
 }
