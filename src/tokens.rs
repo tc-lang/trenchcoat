@@ -176,11 +176,13 @@ pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<Token<'a>, Invalid<'a>>> {
             }
         }
 
+        // We set the byte index first so that when we handle any trailing invalid tokens, it's
+        // with the byte index as the length of the file.
+        byte_idx = next_idx;
         ch = match next_ch {
             Some(c) => c,
             None => break,
         };
-        byte_idx = next_idx;
 
         next_idx = byte_idx + ch.len_utf8();
         next_ch = char_at(file_str, next_idx);
@@ -513,6 +515,16 @@ mod tests {
         }};
     }
 
+    // A helper macro for cleanly constructing `Invalid`s
+    macro_rules! invalid {
+        ($incomplete_kind:expr, $src:expr) => {{
+            Invalid {
+                src: $src,
+                incomplete: $incomplete_kind,
+            }
+        }};
+    }
+
     #[test]
     fn valid_no_nested() {
         use TokenKind::*;
@@ -615,6 +627,75 @@ mod tests {
             .map(Result::unwrap)
             .collect::<Vec<_>>();
 
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn valid_block_eof() {
+        use TokenKind::*;
+
+        let input = "/* foobar \nbaz*/";
+
+        let expected = vec![token!(BlockComment, input)];
+
+        let tokens = tokenize(input)
+            .into_iter()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn valid_string_eof() {
+        use TokenKind::*;
+
+        let input = "\" foobar \nbaz\"";
+
+        let expected = vec![token!(Literal(LiteralKind::String), input)];
+
+        let tokens = tokenize(input)
+            .into_iter()
+            .map(Result::unwrap)
+            .collect::<Vec<_>>();
+
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn invalid_no_nested() {
+        use TokenKind::*;
+
+        let input = "foo ☺ bar~";
+
+        let expected = vec![
+            Ok(token!(Ident, "foo")),
+            Ok(token!(Whitespace, " ")),
+            Err(invalid!(None, "☺")),
+            Ok(token!(Whitespace, " ")),
+            Ok(token!(Ident, "bar")),
+            Err(invalid!(None, "~")),
+        ];
+
+        let tokens = tokenize(input);
+        assert_eq!(tokens, expected);
+    }
+
+    #[test]
+    fn invalid_nested() {
+        use IncompleteKind::{BlockComment, StringLiteral};
+        use TokenKind::*;
+
+        let input = "foo /* bar /* baz */ \" qux";
+
+        let expected = vec![
+            Ok(token!(Ident, "foo")),
+            Ok(token!(Whitespace, " ")),
+            Err(invalid!(Some(BlockComment), "/* bar /* baz */ \" qux")),
+            Err(invalid!(Some(StringLiteral), "\" qux")),
+        ];
+
+        let tokens = tokenize(input);
         assert_eq!(tokens, expected);
     }
 }
