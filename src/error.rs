@@ -10,20 +10,40 @@ use std::mem;
 use std::ops::{Range, RangeInclusive};
 use unicode_width::UnicodeWidthStr;
 
+/// A builder for creating complex error messages
+///
+/// `Builder`s are initially created with the associated [`new`] function, which gives the title of
+/// the error message. Complexity is built with method chaining, so the primary methods take an
+/// owned `self` as the receiver.
+///
+/// This type is also used in the [`ToError`] trait.
+///
+/// ## Example
+///
+/// For a given error occuring in the byte range `src_range` of the file `file_name`, typical usage
+/// might look something like:
+/// ```
+/// error::Builder::new("title message goes here")
+///     .context(file_name, range.start)
+///     .highlight(vec![range], error::ERR_COLOR)
+///     .note("here's some additional info you might want")
+/// ```
+/// which could display as:
+/// ```text
+/// error: title message goes here
+///   --> src/example.tc:10:5
+///    |
+/// 10 |     foobar()
+///    |     ^^^^^^
+///    = note: here's some additional info you might want
+/// ```
+///
+/// [`new`]: #method.new
 pub struct Builder {
     /// The primary error message to go at the top of the error. This is is prefixed by 'error: ' to
     /// construct the final error message.
     msg: String,
     elements: Vec<Element>,
-}
-
-/// A range in a single source file
-#[derive(Debug, Clone)]
-pub struct SourceRange {
-    /// The file which the range exists
-    pub file_name: String,
-    /// The range of bytes in the source file
-    pub byte_range: Range<usize>,
 }
 
 pub const ERR_COLOR: Color = Color::Red;
@@ -43,7 +63,8 @@ pub enum Element {
     /// A set of source ranges in a single file to be highlighted, in order. Multiple ranges are
     /// allowed here so that multiple highlights can be made on a single line, where applicable.
     Highlight {
-        regions: Vec<SourceRange>,
+        file_name: String,
+        regions: Vec<Range<usize>>,
         color: Color,
     },
 
@@ -93,6 +114,10 @@ pub fn display_errors<A, E: ToError<A>>(errs: impl Iterator<Item = E>, aux: A, f
 }
 
 impl Builder {
+    /// Creates a new error builder with the given main message
+    ///
+    /// The message will always be prefixed with "error: ". For more information, refer back to the
+    /// type-level documentation.
     pub fn new(msg: impl Into<String>) -> Builder {
         Builder {
             msg: msg.into(),
@@ -100,21 +125,56 @@ impl Builder {
         }
     }
 
+    /// Adds a context line to the builder
+    ///
+    /// As demonstrated in the type-level documentation, this like will tend to look like:
+    /// ```text
+    ///   --> src/example.tc:10:5
+    /// ```
+    /// and serves to give the location of the user's error.
+    ///
+    /// Any contexts must be given at the start of building the error message; calling this method
+    /// after other elements have been added will result in a panic.
     pub fn context(self, file_name: impl Into<String>, byte_idx: usize) -> Self {
+        match self.elements.last().map(Element::kind) {
+            Some(ElementKind::Context) | None => (),
+            _ => panic!("cannot add context to error builder with other elements already there"),
+        }
+
         self.element(Element::Context {
             file_name: file_name.into(),
             byte_idx,
         })
     }
 
-    // All of the regions must have the same source file
-    pub fn highlight(self, regions: Vec<SourceRange>, color: Color) -> Self {
-        assert!(!regions.is_empty());
-        assert!(regions[1..]
-            .iter()
-            .all(|r| r.file_name == regions[0].file_name));
+    /// An error element that highlights a set of byte ranges within a file
+    ///
+    /// The typical use case will be a single range contained within a single line, which will
+    /// result in something like:
+    /// ```text
+    /// 10 |     foobar()
+    ///    |     ^^^^^^
+    /// ```
+    /// with extra spacing added as needed.
+    ///
+    /// This *does* work with multiple ranges spanning many lines, and will print disjoint ranges
+    /// in the order they are given.
+    ///
+    /// The set of ranges given must be non-empty, and this function will panic if that is not the
+    /// case.
+    pub fn highlight(
+        self,
+        file_name: impl Into<String>,
+        ranges: Vec<Range<usize>>,
+        color: Color,
+    ) -> Self {
+        assert!(ranges.len() >= 1);
 
-        self.element(Element::Highlight { regions, color })
+        self.element(Element::Highlight {
+            file_name: file_name.into(),
+            regions: ranges,
+            color,
+        })
     }
 
     pub fn line(self, file_name: impl Into<String>, byte_idx: usize) -> Self {
@@ -190,10 +250,16 @@ impl Builder {
                     file_name,
                     byte_idx,
                 } => Some(files.line_idx(&file_name, *byte_idx)),
-                Element::Highlight { regions, .. } => regions
-                    .iter()
-                    .map(|r| files.line_idx(&r.file_name, r.byte_range.end))
-                    .max(),
+                Element::Highlight {
+                    file_name, regions, ..
+                } => Some(
+                    regions
+                        .iter()
+                        .map(|r| r.end)
+                        .max()
+                        .map(|idx| files.line_idx(&file_name, idx))
+                        .unwrap(),
+                ),
                 Element::Line {
                     file_name,
                     byte_idx,
@@ -375,27 +441,26 @@ impl Builder {
         );
 
         let file: &str = match &self.elements[idx] {
-            Element::Highlight { regions, .. } => {
-                // We're given that all highlight regions refer to the same file and that all
-                // regions require, so we can just
-                // take the first one
-                &regions[0].file_name
-            }
-            Element::Line { file_name, .. } => &file_name,
+            Element::Highlight { file_name, .. } | Element::Line { file_name, .. } => &file_name,
             _ => unreachable!(),
         };
 
         let line_range = |elem: &Element| match elem {
-            Element::Highlight { regions, .. } => {
+            Element::Highlight {
+                file_name, regions, ..
+            } => {
                 let start = regions
                     .iter()
-                    .map(|r| files.line_idx(&r.file_name, r.byte_range.start))
+                    .map(|r| r.start)
                     .min()
+                    .map(|idx| files.line_idx(&file_name, idx))
                     .unwrap();
+
                 let end = regions
                     .iter()
-                    .map(|r| files.line_idx(&r.file_name, r.byte_range.end))
+                    .map(|r| r.end)
                     .max()
+                    .map(|idx| files.line_idx(&file_name, idx))
                     .unwrap();
 
                 start..=end
@@ -428,12 +493,11 @@ impl Builder {
 
         for (i, elem) in (idx + 1..).zip(&self.elements[idx + 1..]) {
             match elem {
-                Element::Highlight { regions, .. } => {
-                    // Again: We only check the first region's file name because all of the regions
-                    // for a highlight region must be in the same file
-                    //
+                Element::Highlight {
+                    file_name, regions, ..
+                } => {
                     // If it's in a different file, we'll leave it out
-                    if &regions[0].file_name != file {
+                    if &file_name != &file {
                         continue_idx = i;
                         break;
                     }
@@ -491,6 +555,7 @@ impl Builder {
 
         groups.push(current_group);
 
+        // A marker to track whether there should be space after the end of this block
         let mut end_space = false;
 
         // And now we print each group, which we delegate to yet another function
@@ -521,7 +586,7 @@ impl Builder {
             end_space = Self::write_group(msg, g, files, file, spacing);
         }
 
-        (continue_idx, file, end_space)
+        (continue_idx, file, !end_space)
     }
 
     // Returns whether there should be space after this group
@@ -555,6 +620,7 @@ impl Builder {
             if let Element::Highlight {
                 regions: rs,
                 color: c,
+                ..
             } = elem
             {
                 regions = rs;
@@ -612,7 +678,7 @@ impl Builder {
             // into a single set of sorted ranges that are all mutally exclusive.
             //
             // And because it's complicated, we're deferring it to yet another function!
-            let byte_ranges = collapse_ranges(regions.into_iter().map(|r| r.byte_range.clone()));
+            let byte_ranges = collapse_ranges(regions.iter().cloned());
             Self::highlight_byte_ranges(msg, byte_ranges, color, files, file_name, spacing);
             end_needs_space = false;
             i = next;
@@ -671,9 +737,10 @@ impl Builder {
             writeln!(
                 msg,
                 "{:>width$} {} {}",
-                // +1 becaues lines start at zero
+                // +1 because lines start at zero
                 first_line + 1,
                 ACCENT_COLOR.paint("|"),
+                files.get(file_name, first_line),
                 width = spacing.len(),
             )
             .unwrap();
@@ -947,7 +1014,9 @@ impl Builder {
                     "{:>width$} {} {}  {}",
                     // Note:         ^^ These two spaces are what's left of the four from
                     // before, after filling in the " |" as the continuation of the upper "/".
-                    lines.end(),
+                    //
+                    // +1 because line indices start at zero
+                    lines.end() + 1,
                     ACCENT_COLOR.paint("|"),
                     color.paint("|"),
                     final_line,
