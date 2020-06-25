@@ -513,9 +513,7 @@ impl Builder {
                     file,
                 )
                 .unwrap();
-            }
-
-            if prev_space {
+            } else if !prev_space {
                 writeln!(msg, "{} {}", spacing, ACCENT_COLOR.paint("|")).unwrap();
                 prev_space = false;
             }
@@ -699,8 +697,8 @@ impl Builder {
         // If that wasn't the case, we have a more complex situtation on our hands. At a maximum
         // level of complexity, this can look something like:
         // ```
-        // 14 |        let foo = bar({
-        //    | /                ^^^^^
+        // 14 | /      let foo = bar({
+        //    | |                ^^^^^
         // 15 | |          baz();    // <- this extra line is a courtesy
         // ...  |
         // 17 | |      }) + qux + FooBar {
@@ -728,7 +726,6 @@ impl Builder {
             // explicitly handled.
 
             // Set up some things to use later - these will be useful in all of the cases below.
-            let col = last_col.unwrap_or(0);
             let curr_line = files.get(file_name, *lines.start());
 
             // If we're on a new line (this shouldn't happen outside of the first loop iteration),
@@ -749,12 +746,23 @@ impl Builder {
                 // And finally we'll write the actual line that we're highlighting. Note the 4
                 // spaces between the pipe and the text of the line. This is for the reason
                 // mentioned briefly above, with the overview picture of the complex case.
+                //
+                // In order to get the slash character before the line as shown above, we need to
+                // insert that slash in a particular place - only when the current set of lines
+                // contains at least three elements.
+                let slash = match lines.end() - lines.start() {
+                    // less than three lines
+                    0 | 1 => " ".into(),
+                    _ => color.paint("/"),
+                };
+
                 writeln!(
                     msg,
-                    "{:>width$} {}    {}",
+                    "{:>width$} {} {}  {}",
                     // +1 because line indices start at zero
                     *lines.start() + 1,
                     ACCENT_COLOR.paint("|"),
+                    slash,
                     curr_line,
                     width = spacing.len(),
                 )
@@ -851,8 +859,8 @@ impl Builder {
                 //
                 // As shown above, this structure looks something like:
                 // ```
-                // 14 |        let foo = bar({
-                //    | /                ^^^^^
+                // 14 | /      let foo = bar({
+                //    | |                ^^^^^
                 // 15 | |          baz();    // <- this extra line is a courtesy
                 // ...  |
                 // 17 | |      }) + qux + FooBar {
@@ -867,15 +875,16 @@ impl Builder {
                     //
                     // Without any long regions like this, there's 4 spaces between the first
                     // pipe (see: "14 |") and the start of the text ("    let foo"). With this
-                    // addition, we replace two of them with " /" for the start of the
+                    // addition, we replace two of them with " |" for the start of the
                     // highlighting, and leave the rest of the message to be written in a
-                    // moment
+                    // moment. The slash should be taken care of on the previous line, and so we
+                    // only need to connect to it
                     write!(
                         msg,
                         "{} {} {}  ",
                         spacing,
                         ACCENT_COLOR.paint("|"),
-                        color.paint("/")
+                        color.paint("|")
                     )
                     .unwrap();
                 }
