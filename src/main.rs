@@ -34,22 +34,31 @@ fn main() {
                 }
             });
 
+    let offset = |line: &str| {
+        let start = (line as *const str as *const u8 as usize)
+            - (input_str as *const str as *const u8 as usize);
+
+        start..start + line.len()
+    };
+
     let tokens = match res {
         Ok(ts) => ts,
         Err(es) => {
-            let offset = |line: &str| {
-                let start = (line as *const str as *const u8 as usize)
-                    - (input_str as *const str as *const u8 as usize);
-
-                start..start + line.len()
-            };
-
             error::display_errors(es.into_iter(), (offset, "test_input.tc"), &files);
             return;
         }
     };
 
     let tokens = file_tree(&tokens);
+    let token_tree_errors = tokens.collect_errors();
+    if !token_tree_errors.is_empty() {
+        error::display_errors(
+            token_tree_errors.into_iter(),
+            (offset, "test_input.tc"),
+            &files,
+        );
+        return;
+    }
 
     println!("{:?}", tokens);
 }

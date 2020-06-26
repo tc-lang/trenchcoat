@@ -17,7 +17,9 @@
 //! [`crate::tokens`]: ../tokens/index.html
 //! [`file_tree`]: fn.file_tree.html
 
+use crate::error::{self, Builder as ErrorBuilder, ToError};
 use crate::tokens::{self, LiteralKind, SimpleToken};
+use std::ops::Range;
 
 // TODO: Document - gives the output of tokenizing the entire file.
 pub fn file_tree<'a>(simple_tokens: &'a [SimpleToken<'a>]) -> FileTokenTree<'a> {
@@ -35,7 +37,7 @@ pub fn file_tree<'a>(simple_tokens: &'a [SimpleToken<'a>]) -> FileTokenTree<'a> 
     let mut idx = n_leading_whitespace;
     let mut tokens = Vec::new();
     while idx < simple_tokens.len() {
-        let (t, i) = Token::consume(&simple_tokens[idx..]);
+        let (t, i) = Token::consume(&simple_tokens[idx..], None);
         tokens.push(t);
         idx += i;
     }
@@ -49,7 +51,7 @@ pub fn file_tree<'a>(simple_tokens: &'a [SimpleToken<'a>]) -> FileTokenTree<'a> 
 #[derive(Debug, Clone)]
 pub struct FileTokenTree<'a> {
     pub leading_whitespace: &'a [SimpleToken<'a>],
-    pub tokens: Vec<Token<'a>>,
+    pub tokens: Vec<Result<Token<'a>, Error<'a>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -66,25 +68,36 @@ enum TokenKind<'a> {
     Tree {
         delim: Delim,
         leading_whitespace: &'a [SimpleToken<'a>],
-        inner: Vec<Token<'a>>,
+        inner: Vec<Result<Token<'a>, Error<'a>>>,
     },
     Keyword(Kwd),
     Literal(&'a str, LiteralKind),
     Ident(&'a str),
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum Kwd {}
+#[derive(Debug, Copy, Clone)]
+pub enum Error<'a> {
+    UnexpectedCloseDelim(SimpleToken<'a>),
+    MismatchedCloseDelim {
+        delim: Delim,
+        first: SimpleToken<'a>,
+        end: SimpleToken<'a>,
+    },
+    UnclosedDelim(Delim, &'a [SimpleToken<'a>]),
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum Delim {
+pub enum Kwd {}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Delim {
     Parens,
     Squares,
     Curlies,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-enum Punc {
+pub enum Punc {
     Semi,   // ";"
     Colon,  // ":"
     Comma,  // ","
@@ -106,22 +119,52 @@ enum Punc {
     Slash,  // "/"
 }
 
+impl Kwd {
+    fn try_from(ident: &str) -> Option<Kwd> {
+        match ident {
+            _ => None,
+        }
+    }
+}
+
+impl Delim {
+    fn open_char(&self) -> char {
+        match self {
+            Delim::Parens => '(',
+            Delim::Squares => '[',
+            Delim::Curlies => '{',
+        }
+    }
+
+    fn close_char(&self) -> char {
+        match self {
+            Delim::Parens => ')',
+            Delim::Squares => ']',
+            Delim::Curlies => '}',
+        }
+    }
+}
+
 impl<'a> Token<'a> {
-    fn consume(tokens: &'a [SimpleToken<'a>]) -> (Token<'a>, usize) {
+    fn consume(
+        tokens: &'a [SimpleToken<'a>],
+        enclosing_delim: Option<SimpleToken<'a>>,
+    ) -> (Result<Token<'a>, Error<'a>>, usize) {
         use tokens::TokenKind::*;
+        use Error::{MismatchedCloseDelim, UnexpectedCloseDelim};
 
         assert!(tokens.len() >= 1);
 
         macro_rules! punc {
             ($variant:ident, $len:expr) => {{
-                (TokenKind::Punctuation(Punc::$variant), $len)
+                (Ok(TokenKind::Punctuation(Punc::$variant)), $len)
             }};
         }
 
         let first = tokens[0];
         let kinds = tokens.iter().map(|t| t.kind).take(2).collect::<Vec<_>>();
 
-        let (kind, consumed) = match &kinds as &[_] {
+        let (kind_res, consumed) = match &kinds as &[_] {
             // This is unreachable because of the assert statement at the top
             [] => unreachable!(),
 
@@ -130,15 +173,34 @@ impl<'a> Token<'a> {
             [Whitespace, ..] | [LineComment, ..] | [BlockComment, ..] => unreachable!(),
 
             // Multi-token elements
-            [OpenParen, ..] | [OpenCurly, ..] | [OpenSquare, ..] => Token::consume_delim(tokens),
-            // Error message! - we still need to write this one
-            [CloseParen, ..] | [CloseCurly, ..] | [CloseSquare, ..] => todo!(),
+            [OpenParen, ..] | [OpenCurly, ..] | [OpenSquare, ..] => {
+                let (kind, consumed) = Token::consume_delim(tokens);
+                (Ok(kind), consumed)
+            }
+
+            // Error cases - close delims should be handled by the caller
+            [CloseParen, ..] | [CloseSquare, ..] | [CloseCurly, ..] => match enclosing_delim {
+                Some(d) => (
+                    Err(MismatchedCloseDelim {
+                        delim: match d.kind {
+                            OpenParen => Delim::Parens,
+                            OpenSquare => Delim::Squares,
+                            OpenCurly => Delim::Curlies,
+                            _ => unreachable!(),
+                        },
+                        first: d,
+                        end: first,
+                    }),
+                    1,
+                ),
+                None => (Err(UnexpectedCloseDelim(first)), 1),
+            },
 
             // Some of the "complex" individual tokens
-            [Literal(kind), ..] => (TokenKind::Literal(first.src, *kind), 1),
+            [Literal(kind), ..] => (Ok(TokenKind::Literal(first.src, *kind)), 1),
             [Ident, ..] => match Kwd::try_from(first.src) {
-                Some(kwd) => (TokenKind::Keyword(kwd), 1),
-                None => (TokenKind::Ident(first.src), 1),
+                Some(kwd) => (Ok(TokenKind::Keyword(kwd)), 1),
+                None => (Ok(TokenKind::Ident(first.src)), 1),
             },
 
             // And all of the punctuation
@@ -172,13 +234,13 @@ impl<'a> Token<'a> {
             })
             .count();
 
-        let token = Token {
+        let token_res = kind_res.map(|kind| Token {
             trailing_whitespace: &tokens[consumed..consumed + trailing],
             src: &tokens[..consumed],
             kind,
-        };
+        });
 
-        (token, consumed + trailing)
+        (token_res, consumed + trailing)
     }
 
     fn consume_delim(tokens: &'a [SimpleToken<'a>]) -> (TokenKind<'a>, usize) {
@@ -187,6 +249,7 @@ impl<'a> Token<'a> {
             OpenSquare, Whitespace,
         };
         use Delim::{Curlies, Parens, Squares};
+        use Error::UnclosedDelim;
         use TokenKind::Tree;
 
         assert!(tokens.len() >= 1);
@@ -211,9 +274,10 @@ impl<'a> Token<'a> {
         let mut consumed = n_leading + 1;
         let mut inner = Vec::new();
         loop {
-            if consumed >= tokens.len() {
+            if consumed == tokens.len() {
                 // This is an error; we got to EOF and the delimeter wasn't closed
-                todo!()
+                inner.push(Err(UnclosedDelim(delim, tokens)));
+                break;
             }
 
             if tokens[consumed].kind == close {
@@ -222,7 +286,7 @@ impl<'a> Token<'a> {
                 break;
             }
 
-            let (t, c) = Token::consume(&tokens[consumed..]);
+            let (t, c) = Token::consume(&tokens[consumed..], Some(tokens[0]));
             inner.push(t);
             consumed += c;
         }
@@ -236,12 +300,67 @@ impl<'a> Token<'a> {
             consumed,
         )
     }
+
+    fn collect_errors(&self, errors: &mut Vec<Error<'a>>) {
+        if let TokenKind::Tree { inner, .. } = &self.kind {
+            inner.iter().for_each(|res| match res {
+                Err(e) => errors.push(*e),
+                Ok(t) => t.collect_errors(errors),
+            });
+        }
+    }
 }
 
-impl Kwd {
-    fn try_from(ident: &str) -> Option<Kwd> {
-        match ident {
-            _ => None,
+impl<'a> FileTokenTree<'a> {
+    pub fn collect_errors(&self) -> Vec<Error<'a>> {
+        let mut errors = Vec::new();
+        self.tokens.iter().for_each(|res| match res {
+            Err(e) => errors.push(*e),
+            Ok(t) => t.collect_errors(&mut errors),
+        });
+
+        errors
+    }
+}
+
+impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Error<'_> {
+    fn to_error(self, aux: &(F, &str)) -> ErrorBuilder {
+        use Error::*;
+
+        let file_name: &str = aux.1;
+
+        match self {
+            UnexpectedCloseDelim(token) => {
+                let range = (aux.0)(token.src);
+
+                ErrorBuilder::new(format!("unexpected close delimeter '{}'", token.src))
+                    .context(file_name, range.start)
+                    .highlight(file_name, vec![range], error::ERR_COLOR)
+            }
+            MismatchedCloseDelim { delim, first, end } => {
+                let end_range = (aux.0)(end.src);
+
+                ErrorBuilder::new(format!(
+                    "mismatched delimeter; expected '{}', found '{}'",
+                    delim.open_char(),
+                    end.src,
+                ))
+                .context(file_name, end_range.start)
+                .highlight(file_name, vec![(aux.0)(first.src)], error::CTX_COLOR)
+                .highlight(file_name, vec![end_range], error::ERR_COLOR)
+            }
+            UnclosedDelim(delim, src) => {
+                let start = (aux.0)(src[0].src).start;
+                let end = (aux.0)(src.last().unwrap().src).end;
+
+                ErrorBuilder::new(format!(
+                    "unclosed delimeter '{}'; expected '{}', found EOF",
+                    delim.open_char(),
+                    delim.close_char(),
+                ))
+                .context(file_name, start)
+                .highlight(file_name, vec![start..end], error::ERR_COLOR)
+            }
         }
     }
 }
