@@ -555,9 +555,6 @@ impl Builder {
 
         groups.push(current_group);
 
-        // A marker to track whether there should be space after the end of this block
-        let mut end_space = false;
-
         // And now we print each group, which we delegate to yet another function
         for (i, g) in groups.into_iter().enumerate() {
             if i == 0 && last_file != Some(file) {
@@ -580,16 +577,15 @@ impl Builder {
                 .unwrap();
             } else if !prev_space {
                 writeln!(msg, "{} {}", spacing, ACCENT_COLOR.paint("|")).unwrap();
-                prev_space = false;
             }
 
-            end_space = Self::write_group(msg, g, files, file, spacing);
+            prev_space = Self::write_group(msg, g, files, file, spacing);
         }
 
-        (continue_idx, file, !end_space)
+        (continue_idx, file, prev_space)
     }
 
-    // Returns whether there should be space after this group
+    // Returns whether this group is spacious at the end
     fn write_group(
         msg: &mut String,
         group: Vec<(RangeInclusive<usize>, &Element)>,
@@ -600,7 +596,7 @@ impl Builder {
         let mut i = 0;
         let mut last_line: Option<usize> = None;
 
-        let mut end_needs_space = false;
+        let mut end_is_spacious = false;
 
         while i < group.len() {
             let (ref range, ref elem) = &group[i];
@@ -667,7 +663,7 @@ impl Builder {
                 }
 
                 last_line = Some(*range.end());
-                end_needs_space = true;
+                end_is_spacious = false;
 
                 i += 1;
                 continue;
@@ -680,12 +676,12 @@ impl Builder {
             // And because it's complicated, we're deferring it to yet another function!
             let byte_ranges = collapse_ranges(regions.iter().cloned());
             Self::highlight_byte_ranges(msg, byte_ranges, color, files, file_name, spacing);
-            end_needs_space = false;
+            end_is_spacious = true;
             i = next;
         }
 
         // There's nothing else to do! We've already written all of the pieces that we wanted to.
-        end_needs_space
+        end_is_spacious
     }
 
     // *Actually* does the formatting for writing a set of highlighted ranges to a region. The
