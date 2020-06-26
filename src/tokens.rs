@@ -1,9 +1,27 @@
+//! The first half of tokenizing
+//!
+//! The primary usage of this module is with the [`tokenize`] function, which produces a list of
+//! token results.
+//!
+//! This simply breaks a source file into a flat list of tokens that consists of identifiers (which
+//! includes keywords), string and integer literals, operators, punctuation, and delimeters - in
+//! addition to block and line comments. These are represented by the [`SimpleToken`] and
+//! [`TokenKind`] types.
+//!
+//! There are a few errors that may occur at this stage. These are from (1) unrecognzied character
+//! sequences (e.g. emojis or nul bytes), which produce errors containing the entire sequence,
+//! (2) unterminated string literals, and (3) unterminated block comments.
+//!
+//! [`tokenize`]: fn.tokenize.html
+//! [`SimpleToken`]: struct.SimpleToken.html
+//! [`TokenKind`]: struct.TokenKind.html
+
 use crate::error::{self, Builder as ErrorBuilder, ToError};
 use std::ops::Range;
 
 // Note: tokens might not be strictly non-overlapping. This can occur in certain error cases, where
 // we might have string literals / block comments inside others
-pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<Token<'a>, Invalid<'a>>> {
+pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<SimpleToken<'a>, Invalid<'a>>> {
     use TokenKind::*;
 
     let mut tokens = Vec::new();
@@ -40,7 +58,7 @@ pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<Token<'a>, Invalid<'a>>> {
             valid_char!();
 
             let end = $end_idx;
-            tokens.push(Ok(Token {
+            tokens.push(Ok(SimpleToken {
                 src: &file_str[byte_idx..end],
                 kind: $kind,
             }));
@@ -59,7 +77,7 @@ pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<Token<'a>, Invalid<'a>>> {
     macro_rules! single {
         ($kind:expr) => {{
             valid_char!();
-            tokens.push(Ok(Token {
+            tokens.push(Ok(SimpleToken {
                 src: &file_str[byte_idx..next_idx],
                 kind: $kind,
             }));
@@ -195,9 +213,9 @@ pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<Token<'a>, Invalid<'a>>> {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub struct Token<'a> {
-    src: &'a str,
-    kind: TokenKind,
+pub struct SimpleToken<'a> {
+    pub src: &'a str,
+    pub kind: TokenKind,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -508,7 +526,7 @@ mod tests {
     // A helper macro for cleanly constructing tokens
     macro_rules! token {
         ($kind:expr, $src:expr) => {{
-            Token {
+            SimpleToken {
                 src: $src,
                 kind: $kind,
             }

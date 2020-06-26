@@ -1,8 +1,10 @@
 mod error;
 mod files;
+mod token_tree;
 mod tokens;
 
 use files::Files;
+use token_tree::file_tree;
 use tokens::tokenize;
 
 fn main() {
@@ -46,6 +48,8 @@ fn main() {
             return;
         }
     };
+
+    let tokens = file_tree(&tokens);
 
     println!("{:?}", tokens);
 }

@@ -1,0 +1,247 @@
+//! The second half of tokenizing
+//!
+//! The primary usage of this module is to take the output of [`crate::tokens`] and to construct
+//! token trees from it.
+//!
+//! Token trees are a tree structure where certain matched characters (namely: parenthesis, square
+//! brackets, and curly braces) are collapsed into a single node, where all of the children are
+//! themselves nodes in the tree. This idea is primarily taken from Rust, which briefly mentions
+//! them in [the reference](https://doc.rust-lang.org/stable/reference/tokens.html#delimiters).
+//!
+//! In addition to constructing token trees, the tokens here are additionally collapsed to be
+//! independent of whitespace - each token may optionally have trailing whitespace or comments.
+//!
+//! Further details (e.g. how leading whitespace / comments at the start of a file are handled) can
+//! be found in the description for the primary exported function from this module: [`file_tree`].
+//!
+//! [`crate::tokens`]: ../tokens/index.html
+//! [`file_tree`]: fn.file_tree.html
+
+use crate::tokens::{self, LiteralKind, SimpleToken};
+
+// TODO: Document - gives the output of tokenizing the entire file.
+pub fn file_tree<'a>(simple_tokens: &'a [SimpleToken<'a>]) -> FileTokenTree<'a> {
+    // Trim any leading whitespace from the tokens
+    use tokens::TokenKind::{BlockComment, LineComment, Whitespace};
+
+    let n_leading_whitespace = simple_tokens
+        .iter()
+        .take_while(|t| match t.kind {
+            Whitespace | LineComment | BlockComment => true,
+            _ => false,
+        })
+        .count();
+
+    let mut idx = n_leading_whitespace;
+    let mut tokens = Vec::new();
+    while idx < simple_tokens.len() {
+        let (t, i) = Token::consume(&simple_tokens[idx..]);
+        tokens.push(t);
+        idx += i;
+    }
+
+    FileTokenTree {
+        leading_whitespace: &simple_tokens[..n_leading_whitespace],
+        tokens,
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct FileTokenTree<'a> {
+    pub leading_whitespace: &'a [SimpleToken<'a>],
+    pub tokens: Vec<Token<'a>>,
+}
+
+#[derive(Debug, Clone)]
+pub struct Token<'a> {
+    trailing_whitespace: &'a [SimpleToken<'a>],
+    // Note: `src` doesn't contain leading or trailing whitespace
+    src: &'a [SimpleToken<'a>],
+    kind: TokenKind<'a>,
+}
+
+#[derive(Debug, Clone)]
+enum TokenKind<'a> {
+    Punctuation(Punc),
+    Tree {
+        delim: Delim,
+        leading_whitespace: &'a [SimpleToken<'a>],
+        inner: Vec<Token<'a>>,
+    },
+    Keyword(Kwd),
+    Literal(&'a str, LiteralKind),
+    Ident(&'a str),
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Kwd {}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Delim {
+    Parens,
+    Squares,
+    Curlies,
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum Punc {
+    Semi,   // ";"
+    Colon,  // ":"
+    Comma,  // ","
+    Dot,    // "."
+    EqEq,   // "=="
+    Eq,     // "="
+    Le,     // "<="
+    Lt,     // "<"
+    Ge,     // ">="
+    Gt,     // ">"
+    AndAnd, // "&&"
+    And,    // "&"
+    OrOr,   // "||"
+    Pipe,   // "|"
+    Not,    // "!"
+    Plus,   // "+"
+    Minus,  // "-"
+    Star,   // "*"
+    Slash,  // "/"
+}
+
+impl<'a> Token<'a> {
+    fn consume(tokens: &'a [SimpleToken<'a>]) -> (Token<'a>, usize) {
+        use tokens::TokenKind::*;
+
+        assert!(tokens.len() >= 1);
+
+        macro_rules! punc {
+            ($variant:ident, $len:expr) => {{
+                (TokenKind::Punctuation(Punc::$variant), $len)
+            }};
+        }
+
+        let first = tokens[0];
+        let kinds = tokens.iter().map(|t| t.kind).take(2).collect::<Vec<_>>();
+
+        let (kind, consumed) = match &kinds as &[_] {
+            // This is unreachable because of the assert statement at the top
+            [] => unreachable!(),
+
+            // And *this* can't happen because we're given that the first token will be
+            // non-whitespace.
+            [Whitespace, ..] | [LineComment, ..] | [BlockComment, ..] => unreachable!(),
+
+            // Multi-token elements
+            [OpenParen, ..] | [OpenCurly, ..] | [OpenSquare, ..] => Token::consume_delim(tokens),
+            // Error message! - we still need to write this one
+            [CloseParen, ..] | [CloseCurly, ..] | [CloseSquare, ..] => todo!(),
+
+            // Some of the "complex" individual tokens
+            [Literal(kind), ..] => (TokenKind::Literal(first.src, *kind), 1),
+            [Ident, ..] => match Kwd::try_from(first.src) {
+                Some(kwd) => (TokenKind::Keyword(kwd), 1),
+                None => (TokenKind::Ident(first.src), 1),
+            },
+
+            // And all of the punctuation
+            [Semi, ..] => punc!(Semi, 1),
+            [Colon, ..] => punc!(Colon, 1),
+            [Comma, ..] => punc!(Comma, 1),
+            [Dot, ..] => punc!(Dot, 1),
+            [Eq, Eq, ..] => punc!(EqEq, 2),
+            [Eq, ..] => punc!(Eq, 1),
+            [Lt, Eq, ..] => punc!(Le, 2),
+            [Lt, ..] => punc!(Lt, 1),
+            [Gt, Eq, ..] => punc!(Ge, 2),
+            [Gt, ..] => punc!(Gt, 1),
+            [And, And, ..] => punc!(AndAnd, 2),
+            [And, ..] => punc!(And, 1),
+            [Pipe, Pipe, ..] => punc!(OrOr, 2),
+            [Pipe, ..] => punc!(Pipe, 1),
+            [Not, ..] => punc!(Not, 1),
+            [Plus, ..] => punc!(Plus, 1),
+            [Minus, ..] => punc!(Minus, 1),
+            [Star, ..] => punc!(Star, 1),
+            [Slash, ..] => punc!(Slash, 1),
+        };
+
+        // We'll additionally consume any trailing whitespace.
+        let trailing = tokens[consumed..]
+            .iter()
+            .take_while(|t| match t.kind {
+                LineComment | BlockComment | Whitespace => true,
+                _ => false,
+            })
+            .count();
+
+        let token = Token {
+            trailing_whitespace: &tokens[consumed..consumed + trailing],
+            src: &tokens[..consumed],
+            kind,
+        };
+
+        (token, consumed + trailing)
+    }
+
+    fn consume_delim(tokens: &'a [SimpleToken<'a>]) -> (TokenKind<'a>, usize) {
+        use tokens::TokenKind::{
+            BlockComment, CloseCurly, CloseParen, CloseSquare, LineComment, OpenCurly, OpenParen,
+            OpenSquare, Whitespace,
+        };
+        use Delim::{Curlies, Parens, Squares};
+        use TokenKind::Tree;
+
+        assert!(tokens.len() >= 1);
+        let (delim, close) = match tokens[0].kind {
+            OpenParen => (Parens, CloseParen),
+            OpenSquare => (Squares, CloseSquare),
+            OpenCurly => (Curlies, CloseCurly),
+            _ => panic!("unexpected initial delim token {:?}", tokens[0]),
+        };
+
+        // We'll consume all leading whitespace to guarantee that `consume` is called where the
+        // first token isn't one
+        let n_leading = tokens[1..]
+            .iter()
+            .take_while(|t| match t.kind {
+                LineComment | BlockComment | Whitespace => true,
+                _ => false,
+            })
+            .count();
+
+        // All of the whitespace, +1 for the delimeter
+        let mut consumed = n_leading + 1;
+        let mut inner = Vec::new();
+        loop {
+            if consumed >= tokens.len() {
+                // This is an error; we got to EOF and the delimeter wasn't closed
+                todo!()
+            }
+
+            if tokens[consumed].kind == close {
+                // Increment to mark this token as consumed
+                consumed += 1;
+                break;
+            }
+
+            let (t, c) = Token::consume(&tokens[consumed..]);
+            inner.push(t);
+            consumed += c;
+        }
+
+        (
+            Tree {
+                delim,
+                leading_whitespace: &tokens[1..1 + n_leading],
+                inner,
+            },
+            consumed,
+        )
+    }
+}
+
+impl Kwd {
+    fn try_from(ident: &str) -> Option<Kwd> {
+        match ident {
+            _ => None,
+        }
+    }
+}

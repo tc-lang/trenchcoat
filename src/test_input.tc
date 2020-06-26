@@ -8,6 +8,7 @@ fn baz(x: int, y: bool) -> { z: Bar<int> } {
 	block comments and strings:
 	/* Inner block comment! */
 	"and in /* a string"
+	*/
 	
 	{ z: Baz.new(x) }
 }
