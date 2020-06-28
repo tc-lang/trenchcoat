@@ -1,3 +1,4 @@
+mod ast;
 mod error;
 mod files;
 mod token_tree;

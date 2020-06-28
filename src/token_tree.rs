@@ -63,7 +63,7 @@ pub struct Token<'a> {
 }
 
 #[derive(Debug, Clone)]
-enum TokenKind<'a> {
+pub enum TokenKind<'a> {
     Punctuation(Punc),
     Tree {
         delim: Delim,
