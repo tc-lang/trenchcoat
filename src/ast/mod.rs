@@ -453,10 +453,10 @@ macro_rules! make_macros {
         macro_rules! make_mtch {
             ($d:tt) => {
                 /// Match on the next TokenKind.
-                /// 
+                ///
                 /// Each arms pattern is a tuple, the first element is the pattern to match the
                 /// kind against and the left is an expression to generate the expected TokenKind.
-                /// 
+                ///
                 /// The default cases are handled implicitly and generate errors.
                 #[allow(unused)]
                 macro_rules! mtch {
@@ -501,9 +501,9 @@ macro_rules! make_macros {
                 }
 
                 /// Match on the next TokenKind.
-                /// 
+                ///
                 /// Each arms pattern is a Punc variant.
-                /// 
+                ///
                 /// The default cases are handled implicitly and generate errors.
                 #[allow(unused)]
                 macro_rules! mtch_punc {
@@ -524,9 +524,9 @@ macro_rules! make_macros {
                 }
 
                 /// Match on the next TokenKind.
-                /// 
+                ///
                 /// Each arms pattern is a Kwd variant.
-                /// 
+                ///
                 /// The default cases are handled implicitly and generate errors.
                 #[allow(unused)]
                 macro_rules! mtch_kwd {

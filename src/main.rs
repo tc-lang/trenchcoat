@@ -4,10 +4,10 @@ mod files;
 mod token_tree;
 mod tokens;
 
+use ast::readable::Readable;
 use files::Files;
 use token_tree::file_tree;
 use tokens::tokenize;
-use ast::readable::Readable;
 
 fn main() {
     let mut files = Files::new();

@@ -73,7 +73,7 @@ pub enum ExpectingContext {
     TupleExprComma,
 
     Type,
-    
+
     TypeDeclName,
 
     TupleCommaOrColon,
