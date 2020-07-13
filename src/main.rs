@@ -7,6 +7,7 @@ mod tokens;
 use files::Files;
 use token_tree::file_tree;
 use tokens::tokenize;
+use ast::readable::Readable;
 
 fn main() {
     let mut files = Files::new();
@@ -61,5 +62,10 @@ fn main() {
         return;
     }
 
-    println!("{:?}", tokens);
+    println!("TOKENS: {:?}", tokens);
+
+    match crate::ast::try_parse(&tokens.tokens).map(|ast| ast.readable()) {
+        Ok(readable) => println!("\n\nAST: {}", readable),
+        Err(errors) => println!("\n\nAST Errors: {:?}", errors),
+    }
 }

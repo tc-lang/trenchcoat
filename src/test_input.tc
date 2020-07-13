@@ -1,7 +1,8 @@
-use std.foo.Bar;
+//use std.foo.Bar;
 
 // It's a comment!
-fn baz(x: int, y: bool) -> { z: Bar<int> } {
+//fn baz(x: int, y: bool) -> { z: Bar<int> } {
+fn baz(x: int, y: bool) -> { z: Bar } {
 	/*
     Maybe someone implemented this, maybe they didn't.
 	either way, it serves as a nice place to put nested
@@ -11,4 +12,10 @@ fn baz(x: int, y: bool) -> { z: Bar<int> } {
 	*/
 	
 	{ z: Baz.new(x) }
+}
+
+fn foo() { nothing(); }
+
+fn complicated_expr(x: int, y: int, z: int) -> (int, int) {
+	(x + y*z - z, x - y - z + 2 - 3)
 }

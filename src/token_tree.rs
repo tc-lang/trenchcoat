@@ -18,7 +18,8 @@
 //! [`file_tree`]: fn.file_tree.html
 
 use crate::error::{self, Builder as ErrorBuilder, ToError};
-use crate::tokens::{self, LiteralKind, SimpleToken};
+use crate::tokens;
+pub use crate::tokens::{LiteralKind, SimpleToken};
 use std::ops::Range;
 
 // TODO: Document - gives the output of tokenizing the entire file.
@@ -51,7 +52,7 @@ pub fn file_tree<'a>(simple_tokens: &'a [SimpleToken<'a>]) -> FileTokenTree<'a> 
 #[derive(Debug, Clone)]
 pub struct FileTokenTree<'a> {
     pub leading_whitespace: &'a [SimpleToken<'a>],
-    pub tokens: Vec<Result<Token<'a>, Error<'a>>>,
+    pub tokens: Vec<Token<'a>>,
 }
 
 #[derive(Debug, Clone)]
@@ -59,7 +60,7 @@ pub struct Token<'a> {
     trailing_whitespace: &'a [SimpleToken<'a>],
     // Note: `src` doesn't contain leading or trailing whitespace
     src: &'a [SimpleToken<'a>],
-    kind: TokenKind<'a>,
+    pub kind: TokenKind<'a>,
 }
 
 #[derive(Debug, Clone)]
@@ -68,11 +69,12 @@ pub enum TokenKind<'a> {
     Tree {
         delim: Delim,
         leading_whitespace: &'a [SimpleToken<'a>],
-        inner: Vec<Result<Token<'a>, Error<'a>>>,
+        inner: Vec<Token<'a>>,
     },
     Keyword(Kwd),
     Literal(&'a str, LiteralKind),
     Ident(&'a str),
+    Err(Error<'a>),
 }
 
 #[derive(Debug, Copy, Clone)]
@@ -87,9 +89,6 @@ pub enum Error<'a> {
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum Kwd {}
-
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Delim {
     Parens,
     Squares,
@@ -98,34 +97,75 @@ pub enum Delim {
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum Punc {
-    Semi,   // ";"
-    Colon,  // ":"
-    Comma,  // ","
-    Dot,    // "."
-    EqEq,   // "=="
-    Eq,     // "="
-    Le,     // "<="
-    Lt,     // "<"
-    Ge,     // ">="
-    Gt,     // ">"
-    AndAnd, // "&&"
-    And,    // "&"
-    OrOr,   // "||"
-    Pipe,   // "|"
-    Not,    // "!"
-    Plus,   // "+"
-    Minus,  // "-"
-    Star,   // "*"
-    Slash,  // "/"
+    Semi,           // ";"
+    Colon,          // ":"
+    Comma,          // ","
+    Dot,            // "."
+    EqEq,           // "=="
+    Eq,             // "="
+    Le,             // "<="
+    Lt,             // "<"
+    Ge,             // ">="
+    Gt,             // ">"
+    AndAnd,         // "&&"
+    And,            // "&"
+    OrOr,           // "||"
+    Pipe,           // "|"
+    Not,            // "!"
+    Plus,           // "+"
+    Minus,          // "-"
+    Star,           // "*"
+    Slash,          // "/"
+    RightArrow,     // "=>"
+    ThinRightArrow, // "->"
+    Question,       // "?"
 }
 
-impl Kwd {
-    fn try_from(ident: &str) -> Option<Kwd> {
-        match ident {
-            _ => None,
+macro_rules! keywords {
+    (
+        $vis:vis enum Kwd {
+            $($str:literal => $variant:ident),* $(,)?
+        }
+    ) => {
+        #[derive(Debug, Copy, Clone, PartialEq, Eq)]
+        $vis enum Kwd {
+            $($variant,)*
+        }
+        impl Kwd {
+            fn try_from(ident: &str) -> Option<Kwd> {
+                match ident {
+                    $($str => Some(Kwd::$variant),)*
+                    _ => None,
+                }
+            }
+        }
+        impl ToString for Kwd {
+            fn to_string(&self) -> String {
+                match self {
+                    $(Kwd::$variant => $str.into(),)*
+                }
+            }
         }
     }
 }
+
+keywords!(pub enum Kwd {
+    "fn" => Fn,
+    "type" => Type,
+    "import" => Import,
+    "const" => Const,
+    "let" => Let,
+    "if" => If,
+    "else" => Else,
+    "for" => For,
+    "while" => While,
+    "match" => Match,
+    "in" => In,
+    "do" => Do,
+    "loop" => Loop,
+    "enum" => Enum,
+    "alias" => Alias,
+});
 
 impl Delim {
     fn open_char(&self) -> char {
@@ -149,7 +189,7 @@ impl<'a> Token<'a> {
     fn consume(
         tokens: &'a [SimpleToken<'a>],
         enclosing_delim: Option<SimpleToken<'a>>,
-    ) -> (Result<Token<'a>, Error<'a>>, usize) {
+    ) -> (Token<'a>, usize) {
         use tokens::TokenKind::*;
         use Error::{MismatchedCloseDelim, UnexpectedCloseDelim};
 
@@ -209,6 +249,7 @@ impl<'a> Token<'a> {
             [Comma, ..] => punc!(Comma, 1),
             [Dot, ..] => punc!(Dot, 1),
             [Eq, Eq, ..] => punc!(EqEq, 2),
+            [Eq, Gt, ..] => punc!(RightArrow, 2),
             [Eq, ..] => punc!(Eq, 1),
             [Lt, Eq, ..] => punc!(Le, 2),
             [Lt, ..] => punc!(Lt, 1),
@@ -220,9 +261,11 @@ impl<'a> Token<'a> {
             [Pipe, ..] => punc!(Pipe, 1),
             [Not, ..] => punc!(Not, 1),
             [Plus, ..] => punc!(Plus, 1),
+            [Minus, Gt, ..] => punc!(ThinRightArrow, 2),
             [Minus, ..] => punc!(Minus, 1),
             [Star, ..] => punc!(Star, 1),
             [Slash, ..] => punc!(Slash, 1),
+            [Question, ..] => punc!(Question, 1),
         };
 
         // We'll additionally consume any trailing whitespace.
@@ -234,13 +277,16 @@ impl<'a> Token<'a> {
             })
             .count();
 
-        let token_res = kind_res.map(|kind| Token {
+        let token = Token {
             trailing_whitespace: &tokens[consumed..consumed + trailing],
             src: &tokens[..consumed],
-            kind,
-        });
+            kind: match kind_res {
+                Ok(kind) => kind,
+                Err(err) => TokenKind::Err(err),
+            },
+        };
 
-        (token_res, consumed + trailing)
+        (token, consumed + trailing)
     }
 
     fn consume_delim(tokens: &'a [SimpleToken<'a>]) -> (TokenKind<'a>, usize) {
@@ -276,7 +322,12 @@ impl<'a> Token<'a> {
         loop {
             if consumed == tokens.len() {
                 // This is an error; we got to EOF and the delimeter wasn't closed
-                inner.push(Err(UnclosedDelim(delim, tokens)));
+                inner.push(Token {
+                    kind: TokenKind::Err(UnclosedDelim(delim, tokens)),
+                    // FIXME @max would you mind choosing sinsible values for these
+                    src: &[],
+                    trailing_whitespace: &[],
+                });
                 break;
             }
 
@@ -285,6 +336,11 @@ impl<'a> Token<'a> {
                 consumed += 1;
                 break;
             }
+
+            // TODO: Possibly handle mismatched closing delims better.
+            // We could break here without consuming a mismatched closing delim and let our
+            // container handle it. This makes errors in cases where a closing delim is missed much
+            // nicer.
 
             let (t, c) = Token::consume(&tokens[consumed..], Some(tokens[0]));
             inner.push(t);
@@ -302,11 +358,10 @@ impl<'a> Token<'a> {
     }
 
     fn collect_errors(&self, errors: &mut Vec<Error<'a>>) {
-        if let TokenKind::Tree { inner, .. } = &self.kind {
-            inner.iter().for_each(|res| match res {
-                Err(e) => errors.push(*e),
-                Ok(t) => t.collect_errors(errors),
-            });
+        if let TokenKind::Err(err) = &self.kind {
+            errors.push(*err);
+        } else if let TokenKind::Tree { inner, .. } = &self.kind {
+            inner.iter().for_each(|tok| tok.collect_errors(errors));
         }
     }
 }
@@ -314,11 +369,9 @@ impl<'a> Token<'a> {
 impl<'a> FileTokenTree<'a> {
     pub fn collect_errors(&self) -> Vec<Error<'a>> {
         let mut errors = Vec::new();
-        self.tokens.iter().for_each(|res| match res {
-            Err(e) => errors.push(*e),
-            Ok(t) => t.collect_errors(&mut errors),
-        });
-
+        self.tokens
+            .iter()
+            .for_each(|tok| tok.collect_errors(&mut errors));
         errors
     }
 }
