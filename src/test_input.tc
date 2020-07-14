@@ -10,6 +10,14 @@ fn baz(x: int, y: bool) -> { z: Bar } {
 	/* Inner block comment! */
 	"and in /* a string"
 	*/
+
+	{
+		a_block();
+		ooo_yay();
+		let foo = 2;
+		bar(foo);
+	}
+	let x = y;
 	
 	{ z: Baz.new(x) }
 }
@@ -25,6 +33,14 @@ fn match_example(my_enum: MyEnum) -> int {
 	match my_enum {
 		Foo => 2 + x,
 		Bar => 3,
+		Baz => {
+			x: 2,
+			y: 3,
+		},
+		FooBar => {
+			x: 2,
+			y: 3,
+		}
 		_ => x,
 	}
 }

@@ -55,6 +55,7 @@ macro_rules! parser {
             $inp:ident: ParseInp<$a:lifetime, $b:lifetime>
             // Optional extra params after a semi-colon
             $(; $($extra_param_name:ident: $extra_param_ty:ty),*)?
+            $(,)?
         ) -> ParseRet<$res:ty> {
             // Index counter
             let mut $tok_idx:ident = $start_idx:expr;
@@ -175,9 +176,30 @@ macro_rules! make_macros {
             ) => {
                 while has_next!() {
                     $block;
+
+                    // A final separator is not required.
                     if !has_next!() {
                         break;
                     }
+
+                    // A separator is optional after curlies with a trailing newline.
+                    if let TokenKind::Tree {
+                        delim: Delim::Curlies,
+                        ..
+                    } = last_token!().kind {
+                        if last_token!().trailing_whitespace.iter().any(
+                            |t| t.src.contains('\n')
+                        ) {
+                            maybe!($sep_pat);
+                            continue;
+                        }
+                    }
+
+                    // TODO - For better error messages, we could, in the case of not finding a
+                    // separator, push that as an unexpected tokens error and then scan ahead to
+                    // the next separator and continue parsing.
+
+                    // Otherwise, expect a separator.
                     expect!($sep_pat, $sep_kind, $context);
                 }
             };
