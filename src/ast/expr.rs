@@ -703,26 +703,23 @@ impl<'a, 'b> Expr<'a> {
                 }};
             }
 
-            punc_separated!(
-                Comma, TupleExprComma,
-                {
-                    if is_named!() {
-                        break;
-                    }
-                    unnamed_fields.push(call!(Expr::consume; true));
+            punc_separated!(Comma, TupleExprComma, {
+                if is_named!() {
+                    break;
                 }
-            );
-            punc_separated!(
-                Comma, TupleExprComma,
-                {
-                    let name = expect_ident!(TupleExprName);
-                    expect_punc!(Colon, TupleExprColon);
-                    let expr = call!(Expr::consume; true);
-                    named_fields.push((name, expr));
-                }
-            );
+                unnamed_fields.push(call!(Expr::consume; true));
+            });
+            punc_separated!(Comma, TupleExprComma, {
+                let name = expect_ident!(TupleExprName);
+                expect_punc!(Colon, TupleExprColon);
+                let expr = call!(Expr::consume; true);
+                named_fields.push((name, expr));
+            });
 
-            ret!(Struct { unnamed_fields, named_fields })
+            ret!(Struct {
+                unnamed_fields,
+                named_fields
+            })
         }
     );
 }
