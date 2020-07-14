@@ -1,54 +1,48 @@
-fn hi(x: int) -> int {
-	let x = 1 + foo(3, 2)
-	print x
-	x
-}
+//use std.foo.Bar;
 
-# require x >= 1
-# require y >= 0
-# x <= 2 && y <= 2 => _ <= 12
-fn foo(x: int, y: int) -> int {
-	bar(x, y, 3)
-}
+// It's a comment!
+//fn baz(x: int, y: bool) -> { z: Bar<int> } {
+fn baz(x: int, y: bool) -> { z: Bar } {
+	/*
+    Maybe someone implemented this, maybe they didn't.
+	either way, it serves as a nice place to put nested
+	block comments and strings:
+	/* Inner block comment! */
+	"and in /* a string"
+	*/
 
-# require y >= 0
-# require z >= 0
-# x <= 2 => _ <= 3*y+2*z
-fn bar(x: int, y: int, z: int) -> int {
-	# lemma x <= y ==> x*(y+z)+y <= 3*y + 2*z
-	x * (y + z) + y
-}
-
-fn main() {
-	let x = 3;
-	# lemma x >= 4
-	print foo(x, 2);
-}
-
-fn t(my_struct: { hello: int, world: {x: int, y: int, z: bool} }) -> {a: int, b: bool, c: int} {
 	{
-		a: 2,
-		b: my_struct.world.z,
-		c: my_struct.hello
+		a_block();
+		ooo_yay();
+		let foo = 2;
+		bar(foo);
 	}
+	let x = y;
+	foo { foo_field: 2 }
+	{ not_a_field_of_above: 3}
+	
+	{ z: Baz.new(x) }
 }
 
-fn u(ooo: {a: int, b: bool, c: int}) -> int {
-	ooo.a
+fn foo() { nothing(); }
+
+fn complicated_expr(x: int, y: int, z: int) -> (int, int) {
+	(x + y*z - z, x - y - z + 2 - 3)
 }
 
-fn v(z: bool) -> { hello: int, world: {x: int, y: int, z: bool} } {
-	{
-		hello: 5,
-		world: {
-			x: 6,
-			y: 7,
-			z: z,
+fn match_example(my_enum: MyEnum) -> int {
+	let x = 2;
+	match my_enum {
+		Foo => 2 + x,
+		Bar => 3,
+		Baz => {
+			x: 2,
+			y: 3,
+		},
+		FooBar => {
+			x: 2,
+			y: 3,
 		}
+		_ => x,
 	}
 }
-
-fn w(x: bool) -> int {
-	u(t(v(x)))
-}
-
