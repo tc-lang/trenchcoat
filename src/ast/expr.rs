@@ -1,5 +1,5 @@
 use super::{pat::Pat, prelude::*, stmt::Stmt};
-use crate::tokens::LiteralKind;
+use crate::tokens::{contains_newline, LiteralKind};
 
 #[derive(Debug, Clone)]
 pub struct Expr<'a> {
@@ -67,6 +67,11 @@ pub enum ExprKind<'a> {
     /// Curlies can be used to call type functions.
     /// Checking this should occur in verification, when the kinds of `func` are known.
     FnCall {
+        func: Box<Expr<'a>>,
+        arguments: Struct<'a>,
+    },
+
+    CurlyFnCall {
         func: Box<Expr<'a>>,
         arguments: Struct<'a>,
     },
@@ -262,7 +267,7 @@ impl<'a, 'b> Expr<'a> {
                     inner, ..
                 }) => Expr {
                     kind: ExprKind::Struct {
-                        fields: all!(Expr::parse_tuple_inner, inner; last_token_slice!()),
+                        fields: all!(Expr::parse_tuple_inner, inner),
                         delim: Delim::Parens,
                     },
                     src: last_token_slice!(),
@@ -324,17 +329,17 @@ impl<'a, 'b> Expr<'a> {
                         inner,
                         leading_whitespace: _,
                     }) => {
-                        if APPLY_BP < min_bp {
+                        if APPLY_BP < min_bp || contains_newline(last_token!().trailing_whitespace) {
                             return ret!(lhs);
                         }
 
                         let kind = match delim {
                             Delim::Parens => {
                                 skip!();
-                                let args = all!(Expr::parse_tuple_inner, inner; last_token_slice!());
+                                let arguments = all!(Expr::parse_tuple_inner, inner);
                                 ExprKind::FnCall {
                                     func: Box::new(lhs),
-                                    arguments: args,
+                                    arguments,
                                 }
                             }
                             Delim::Squares => {
@@ -346,7 +351,14 @@ impl<'a, 'b> Expr<'a> {
                                 }
                             },
                             Delim::Curlies if !allow_curly_call => return ret!(lhs),
-                            Delim::Curlies => todo!(),
+                            Delim::Curlies => {
+                                skip!();
+                                let arguments = all!(Expr::parse_struct_inner, inner);
+                                ExprKind::CurlyFnCall {
+                                    func: Box::new(lhs),
+                                    arguments,
+                                }
+                            },
                         };
 
                         lhs = Expr {
@@ -593,7 +605,13 @@ impl<'a, 'b> Expr<'a> {
             match [&inp.tokens[0].kind, &inp.tokens[1].kind] {
                 [TokenKind::Ident(_), TokenKind::Punctuation(Punc::Comma)] |
                 [TokenKind::Ident(_), TokenKind::Punctuation(Punc::Colon)] => {
-                    ret!(call!(Expr::consume_struct_inner; src))
+                    ret!(Expr {
+                        kind: ExprKind::Struct{
+                            fields: call!(Expr::parse_struct_inner),
+                            delim: Delim::Curlies,
+                        },
+                        src: src!(),
+                    })
                 }
 
                 _ => ret!(block!()),
@@ -622,9 +640,7 @@ impl<'a, 'b> Expr<'a> {
     );
 
     parser!(
-        pub(crate) fn consume_struct_inner(
-            inp: ParseInp<'a, 'b>; src: &'a [Token<'a>]
-        ) -> ParseRet<Expr<'a>> {
+        pub(crate) fn parse_struct_inner(inp: ParseInp<'a, 'b>) -> ParseRet<Struct<'a>> {
             let mut tok_idx = 0;
 
             let mut named_fields = Vec::new();
@@ -632,10 +648,13 @@ impl<'a, 'b> Expr<'a> {
                 let name = expect_ident!(StructExprName);
 
                 if !has_next!() {
-                    named_fields.push((name, Expr {
-                        kind: ExprKind::Name(name),
-                        src: last_token_slice!(),
-                    }));
+                    named_fields.push((
+                        name,
+                        Expr {
+                            kind: ExprKind::Name(name),
+                            src: last_token_slice!(),
+                        },
+                    ));
                     break;
                 }
 
@@ -658,23 +677,15 @@ impl<'a, 'b> Expr<'a> {
                 named_fields.push((name, expr));
             }
 
-            ret!(Expr {
-                kind: ExprKind::Struct {
-                    delim: Delim::Curlies,
-                    fields: Struct {
-                        named_fields,
-                        unnamed_fields: Vec::new(),
-                    }
-                },
-                src: src!(),
+            ret!(Struct {
+                named_fields,
+                unnamed_fields: Vec::new(),
             })
         }
     );
 
     parser!(
-        pub(crate) fn parse_tuple_inner(
-            inp: ParseInp<'a, 'b>; src: &'a [Token<'a>]
-        ) -> ParseRet<Struct<'a>> {
+        pub(crate) fn parse_tuple_inner(inp: ParseInp<'a, 'b>) -> ParseRet<Struct<'a>> {
             let mut tok_idx = 0;
 
             let mut unnamed_fields = Vec::new();

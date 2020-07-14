@@ -187,9 +187,8 @@ macro_rules! make_macros {
                         delim: Delim::Curlies,
                         ..
                     } = last_token!().kind {
-                        if last_token!().trailing_whitespace.iter().any(
-                            |t| t.src.contains('\n')
-                        ) {
+                        use crate::tokens::contains_newline;
+                        if contains_newline(last_token!().trailing_whitespace) {
                             maybe!($sep_pat);
                             continue;
                         }

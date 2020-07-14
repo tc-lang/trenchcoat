@@ -222,8 +222,11 @@ pub struct SimpleToken<'a> {
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub enum TokenKind {
     // Multi-character tokens:
-    LineComment,  // Two slashes, followed by anything until a newline
-    BlockComment, // Block comments allow nesting, and include string literals
+    /// Two slashes, followed by anything until a newline
+    /// When parsed from a file, the preceding token will be Whitespace, starting with a newline.
+    LineComment,
+    /// Block comments allow nesting, and include string literals
+    BlockComment,
     /// Any continued amount of whitespace
     Whitespace,
     Ident,
@@ -519,6 +522,18 @@ impl<F: Fn(&str) -> Range<usize>> ToError<(F, &str)> for Invalid<'_> {
                 .note("expected '\"', found EOF"),
         }
     }
+}
+
+impl<'a> SimpleToken<'a> {
+    /// Checks if the token contains semantically significant newlines.
+    pub fn contains_newline(&self) -> bool {
+        self.kind == TokenKind::Whitespace && self.src.contains('\n')
+    }
+}
+
+/// Checks if any of the token contains semantically significant newlines.
+pub fn contains_newline(tokens: &[SimpleToken]) -> bool {
+    tokens.iter().any(SimpleToken::contains_newline)
 }
 
 #[cfg(test)]

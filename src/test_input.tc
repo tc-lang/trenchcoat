@@ -18,6 +18,8 @@ fn baz(x: int, y: bool) -> { z: Bar } {
 		bar(foo);
 	}
 	let x = y;
+	foo { foo_field: 2 }
+	{ not_a_field_of_above: 3}
 	
 	{ z: Baz.new(x) }
 }

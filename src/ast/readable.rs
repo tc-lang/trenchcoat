@@ -158,6 +158,9 @@ impls!(
         ExprKind::FnCall { func, arguments } => {
             format!("({})({})", func.readable(), arguments.readable())
         },
+        ExprKind::CurlyFnCall { func, arguments } => {
+            format!("({}){{{}}}", func.readable(), arguments.readable())
+        },
         ExprKind::Index { expr, index } => {
             format!("({})[{}]", expr.readable(), index.readable())
         },
