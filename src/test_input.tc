@@ -19,3 +19,12 @@ fn foo() { nothing(); }
 fn complicated_expr(x: int, y: int, z: int) -> (int, int) {
 	(x + y*z - z, x - y - z + 2 - 3)
 }
+
+fn match_example(my_enum: MyEnum) -> int {
+	let x = 2;
+	match my_enum {
+		Foo => 2 + x,
+		Bar => 3,
+		_ => x,
+	}
+}

@@ -1,6 +1,6 @@
 //! Error types and messages for parsing into the AST
 
-use crate::token_tree::{Kwd, Punc, Token, TokenKind};
+use crate::token_tree::{Delim, Kwd, Punc, Token, TokenKind};
 
 #[derive(Debug, Clone)]
 pub struct Error<'a> {
@@ -31,6 +31,7 @@ pub enum Expecting<'a> {
     ElseExpr,
     Expr,
     Token(TokenKind<'a>),
+    Delim(Delim),
     OneOf(&'a [Expecting<'a>]),
 }
 
@@ -93,6 +94,7 @@ pub enum ExpectingContext {
     DoWhileWhile,
     DoWhileElseBlock,
 
+    MatchCurlies,
     MatchArrow,
     MatchComma,
 

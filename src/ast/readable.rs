@@ -146,6 +146,15 @@ impls!(
             }
             s
         },
+        ExprKind::Match { expr, arms } => {
+            let mut s = format!("match ({}) ", expr.readable());
+            s.push_str("{\n");
+            for arm in arms {
+                s.push_str(&format!("{} => ({})\n", arm.0.readable(), arm.1.readable()));
+            }
+            s.push_str("}");
+            s
+        },
         ExprKind::FnCall { func, arguments } => {
             format!("({})({})", func.readable(), arguments.readable())
         },

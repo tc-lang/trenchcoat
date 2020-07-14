@@ -37,7 +37,10 @@ pub enum ExprKind<'a> {
         expr: Box<Expr<'a>>,
     },
 
-    Match(Vec<(Pat<'a>, Expr<'a>)>),
+    Match {
+        expr: Box<Expr<'a>>,
+        arms: Vec<(Pat<'a>, Expr<'a>)>,
+    },
 
     /// A list of statements.
     /// The evaluated value is the evaluated value of the last statement.
@@ -197,12 +200,15 @@ impl<'a, 'b> Expr<'a> {
         src: &[],
     };
 
-    pub(crate) fn consume(inp: ParseInp<'a, 'b>) -> ParseRet<Expr<'a>> {
-        Expr::consume_with_min_bp(inp, 0)
+    pub(crate) fn consume(inp: ParseInp<'a, 'b>, allow_curly_call: bool) -> ParseRet<Expr<'a>> {
+        Expr::consume_with_min_bp(inp, 0, allow_curly_call)
     }
 
     parser!(
-        pub(crate) fn consume_with_min_bp(inp: ParseInp<'a, 'b>; min_bp: u8) -> ParseRet<Expr<'a>> {
+        pub(crate) fn consume_with_min_bp(
+            inp: ParseInp<'a, 'b>;
+            min_bp: u8, allow_curly_call: bool
+        ) -> ParseRet<Expr<'a>> {
             let mut tok_idx = 0;
 
             let mut lhs = match token!().kind() {
@@ -218,7 +224,10 @@ impl<'a, 'b> Expr<'a> {
                             src: last_token_slice!(),
                         }),
                     };
-                    let expr = call!(Expr::consume_with_min_bp; prefix_op.binding_power());
+                    let expr = call!(
+                        Expr::consume_with_min_bp;
+                        prefix_op.binding_power(), allow_curly_call
+                    );
                     Expr {
                         kind: ExprKind::PrefixOp {
                             op: prefix_op,
@@ -235,13 +244,13 @@ impl<'a, 'b> Expr<'a> {
                     kind: ExprKind::RawLiteral(*s, *literal_kind),
                     src: src!(),
                 },
-                Some(TokenKind::Keyword(Kwd::Let)) => call!(Expr::consume_let),
+                Some(TokenKind::Keyword(Kwd::Let)) => call!(Expr::consume_let; allow_curly_call),
                 Some(TokenKind::Keyword(Kwd::If)) => call!(Expr::consume_if),
                 Some(TokenKind::Keyword(Kwd::Loop)) => call!(Expr::consume_loop),
                 Some(TokenKind::Keyword(Kwd::While)) => call!(Expr::consume_while),
                 Some(TokenKind::Keyword(Kwd::Do)) => call!(Expr::consume_do_while),
                 Some(TokenKind::Keyword(Kwd::For)) => call!(Expr::consume_for),
-                Some(TokenKind::Keyword(Kwd::Match)) => todo!(),
+                Some(TokenKind::Keyword(Kwd::Match)) => call!(Expr::consume_match),
 
                 Some(TokenKind::Tree {
                     delim: Delim::Curlies,
@@ -282,7 +291,7 @@ impl<'a, 'b> Expr<'a> {
                             }
                             skip!();
 
-                            let rhs = call!(Expr::consume_with_min_bp; right_bp);
+                            let rhs = call!(Expr::consume_with_min_bp; right_bp, allow_curly_call);
 
                             lhs = Expr {
                                 kind: ExprKind::BinaryOp {
@@ -318,10 +327,10 @@ impl<'a, 'b> Expr<'a> {
                         if APPLY_BP < min_bp {
                             return ret!(lhs);
                         }
-                        skip!();
 
                         let kind = match delim {
                             Delim::Parens => {
+                                skip!();
                                 let args = all!(Expr::parse_tuple_inner, inner; last_token_slice!());
                                 ExprKind::FnCall {
                                     func: Box::new(lhs),
@@ -329,13 +338,15 @@ impl<'a, 'b> Expr<'a> {
                                 }
                             }
                             Delim::Squares => {
-                                let inner_expr = all!(Expr::consume, inner);
+                                skip!();
+                                let inner_expr = all!(Expr::consume, inner; true);
                                 ExprKind::Index {
                                     expr: Box::new(lhs),
                                     index: Box::new(inner_expr),
                                 }
                             },
-                            _ => todo!(),
+                            Delim::Curlies if !allow_curly_call => return ret!(lhs),
+                            Delim::Curlies => todo!(),
                         };
 
                         lhs = Expr {
@@ -367,7 +378,7 @@ impl<'a, 'b> Expr<'a> {
         pub(crate) fn consume_while(inp: ParseInp<'a, 'b>) -> ParseRet<Expr<'a>> {
             let mut tok_idx = 0;
 
-            let condition = call!(Expr::consume);
+            let condition = call!(Expr::consume; false);
             let block = curlies!(WhileBlock);
             let else_block = else_block!(WhileElseBlock);
 
@@ -388,7 +399,7 @@ impl<'a, 'b> Expr<'a> {
 
             let block = curlies!(DoWhileBlock);
             expect_kwd!(While, DoWhileWhile);
-            let condition = call!(Expr::consume);
+            let condition = call!(Expr::consume; true);
             let else_block = else_block!(DoWhileElseBlock);
 
             ret!(Expr {
@@ -408,7 +419,7 @@ impl<'a, 'b> Expr<'a> {
 
             let variable = expect_ident!(ForName);
             expect_kwd!(In, ForIn);
-            let expr = call!(Expr::consume);
+            let expr = call!(Expr::consume; false);
             let block = curlies!(ForBlock);
             let else_block = else_block!(ForElseBlock);
 
@@ -425,12 +436,12 @@ impl<'a, 'b> Expr<'a> {
     );
 
     parser!(
-        pub(crate) fn consume_let(inp: ParseInp<'a, 'b>) -> ParseRet<Expr<'a>> {
+        pub(crate) fn consume_let(inp: ParseInp<'a, 'b>; allow_curly_call: bool) -> ParseRet<Expr<'a>> {
             let mut tok_idx = 0;
 
             let pat = call!(Pat::consume);
             expect_punc!(Eq, LetEq);
-            let expr = call!(Expr::consume_with_min_bp; LET_BP);
+            let expr = call!(Expr::consume_with_min_bp; LET_BP, allow_curly_call);
 
             ret!(Expr {
                 kind: ExprKind::Let {
@@ -443,21 +454,38 @@ impl<'a, 'b> Expr<'a> {
     );
 
     parser!(
-        pub(crate) fn consume_match_arms(inp: ParseInp<'a, 'b>; src: &'a [Token<'a>]) -> ParseRet<Expr<'a>> {
+        pub(crate) fn consume_match(inp: ParseInp<'a, 'b>) -> ParseRet<Expr<'a>> {
+            let mut tok_idx = 0;
+
+            let expr = call!(Expr::consume; false);
+
+            let arms = all!(Expr::parse_match_arms, expect_delim!(Curlies, MatchCurlies));
+
+            ret!(Expr {
+                kind: ExprKind::Match {
+                    expr: Box::new(expr),
+                    arms,
+                },
+                src: src!(),
+            })
+        }
+    );
+
+    parser!(
+        pub(crate) fn parse_match_arms(
+            inp: ParseInp<'a, 'b>,
+        ) -> ParseRet<Vec<(Pat<'a>, Expr<'a>)>> {
             let mut tok_idx = 0;
 
             let mut arms = Vec::new();
-            loop {
+            punc_separated!(Comma, MatchComma, {
                 let pat = call!(Pat::consume);
-                expect_punc!(Eq, MatchArrow);
-                let expr = call!(Expr::consume_with_min_bp; LET_BP);
+                expect_punc!(RightArrow, MatchArrow);
+                let expr = call!(Expr::consume; true);
                 arms.push((pat, expr));
-            }
+            });
 
-            ret!(Expr {
-                kind: ExprKind::Match(arms),
-                src,
-            })
+            ret!(arms)
         }
     );
 
@@ -465,7 +493,7 @@ impl<'a, 'b> Expr<'a> {
         pub(crate) fn consume_if(inp: ParseInp<'a, 'b>) -> ParseRet<Expr<'a>> {
             let mut tok_idx = 0;
 
-            let condition = call!(Expr::consume);
+            let condition = call!(Expr::consume; false);
             let block = curlies!(DoWhileBlock);
             let else_block = match maybe_kwd!(Else) {
                 false => None,
@@ -579,31 +607,15 @@ impl<'a, 'b> Expr<'a> {
 
             let mut stmts = Vec::new();
 
-            loop {
-                if tok_idx >= inp.tokens.len() {
+            punc_separated!(Semi, StmtSep, {
+                if !has_next!() {
                     stmts.push(Stmt::EMPTY);
                     break;
                 }
 
                 let stmt = call!(Stmt::consume);
                 stmts.push(stmt);
-
-                if tok_idx >= inp.tokens.len() {
-                    break;
-                }
-
-                match last_token!().kind {
-                    // We don't require a semi-colon after a closing curly.
-                    TokenKind::Tree {
-                        delim: Delim::Curlies,
-                        ..
-                    } => {
-                        maybe_punc!(Semi); // this semi is required :(
-                    }
-
-                    _ => expect_punc!(Semi, StmtSep),
-                }
-            }
+            });
 
             ret!(stmts)
         }
@@ -616,19 +628,22 @@ impl<'a, 'b> Expr<'a> {
             let mut tok_idx = 0;
 
             let mut named_fields = Vec::new();
-            while tok_idx < inp.tokens.len() {
+            while has_next!() {
                 let name = expect_ident!(StructExprName);
-                if tok_idx == inp.tokens.len() {
+
+                if !has_next!() {
                     named_fields.push((name, Expr {
                         kind: ExprKind::Name(name),
                         src: last_token_slice!(),
                     }));
                     break;
                 }
+
                 let expr = mtch_punc!(
                     Colon => {
-                        let expr = call!(Expr::consume);
-                        if tok_idx < inp.tokens.len() {
+                        let expr = call!(Expr::consume; true);
+                        // Require a comma if there's more tokens
+                        if has_next!() {
                             expect_punc!(Comma, StructExprComma);
                         }
                         expr
@@ -665,6 +680,8 @@ impl<'a, 'b> Expr<'a> {
             let mut unnamed_fields = Vec::new();
             let mut named_fields = Vec::new();
 
+            /// Look ahead.
+            /// Evaluates to true iff the next field is a named field.
             macro_rules! is_named {
                 () => {{
                     use TokenKind::{Ident, Punctuation};
@@ -675,27 +692,24 @@ impl<'a, 'b> Expr<'a> {
                 }};
             }
 
-            while tok_idx < inp.tokens.len() {
-                if is_named!() {
-                    break;
+            punc_separated!(
+                Comma, TupleExprComma,
+                {
+                    if is_named!() {
+                        break;
+                    }
+                    unnamed_fields.push(call!(Expr::consume; true));
                 }
-                unnamed_fields.push(call!(Expr::consume));
-                if tok_idx == inp.tokens.len() {
-                    break;
+            );
+            punc_separated!(
+                Comma, TupleExprComma,
+                {
+                    let name = expect_ident!(TupleExprName);
+                    expect_punc!(Colon, TupleExprColon);
+                    let expr = call!(Expr::consume; true);
+                    named_fields.push((name, expr));
                 }
-                // TODO No comma after {}?
-                expect_punc!(Comma, TupleExprComma);
-            }
-            while tok_idx < inp.tokens.len() {
-                let name = expect_ident!(TupleExprName);
-                expect_punc!(Colon, TupleExprColon);
-                let expr = call!(Expr::consume);
-                if tok_idx == inp.tokens.len() {
-                    break;
-                }
-                expect_punc!(Comma, TupleExprComma);
-                named_fields.push((name, expr));
-            }
+            );
 
             ret!(Struct { unnamed_fields, named_fields })
         }

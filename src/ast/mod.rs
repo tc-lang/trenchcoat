@@ -153,6 +153,52 @@ macro_rules! make_macros {
             };
         }
 
+        /// Evaluates to true iff there is a token yet to be consumed.
+        #[allow(unused)]
+        macro_rules! has_next {
+            () => {
+                $tok_idx < $tokens.len()
+            };
+        }
+
+        /// Loops over $block, expecting $sep_pat between each iteration - apart from when there
+        /// are no more tokens, in which case it's optional.
+        #[allow(unused)]
+        macro_rules! separated {
+            (
+                separator: {
+                    pattern: $sep_pat:pat,
+                    kind: $sep_kind:expr,
+                    context: $context:ident,
+                }
+                block: $block:block
+            ) => {
+                while has_next!() {
+                    $block;
+                    if !has_next!() {
+                        break;
+                    }
+                    expect!($sep_pat, $sep_kind, $context);
+                }
+            };
+        }
+
+        /// Loops over $block, expecting $punc_variant between each iteration - apart from when
+        /// there are no more tokens, in which case it's optional.
+        #[allow(unused)]
+        macro_rules! punc_separated {
+            ($punc_variant:ident, $context:ident, $block:block) => {
+                separated!(
+                    separator: {
+                        pattern: TokenKind::Punctuation(Punc::$punc_variant),
+                        kind: TokenKind::Punctuation(Punc::$punc_variant),
+                        context: $context,
+                    }
+                    block: $block
+                )
+            };
+        }
+
         /// Push the given error to the $errors Vec and return from the parser with a None result.
         #[allow(unused)]
         macro_rules! error {
@@ -240,14 +286,15 @@ macro_rules! make_macros {
                         $parser:expr, $new_tokens:expr
                         $d(; $d($extra_param:expr),*)?
                     ) => {{
+                        let new_tokens = $new_tokens;
                         let (result, consumed) = call!(
-                            $parser, $new_tokens
+                            $parser, new_tokens
                             $d(; $d($extra_param),*)?
                         );
-                        if consumed < $new_tokens.len() {
+                        if consumed < new_tokens.len() {
                             $errors.push(Error {
                                 kind: ErrorKind::Unexpected,
-                                src: &$new_tokens[consumed..],
+                                src: &new_tokens[consumed..],
                             });
                         }
                         result
@@ -425,7 +472,7 @@ macro_rules! make_macros {
                     Some(_) => {
                         $errors.push(Error {
                             kind: ErrorKind::Expecting {
-                                expecting: Expecting::Ident,
+                                expecting: Expecting::Delim(Delim::$delim),
                                 found: token_kind_option.cloned(),
                                 context: ExpectingContext::$context,
                             },
@@ -436,7 +483,7 @@ macro_rules! make_macros {
                     None => {
                         $errors.push(Error {
                             kind: ErrorKind::Expecting {
-                                expecting: Expecting::Ident,
+                                expecting: Expecting::Delim(Delim::$delim),
                                 found: None,
                                 context: ExpectingContext::$context,
                             },
@@ -666,7 +713,7 @@ impl<'a, 'b> Item<'a> {
             use Punc::RightArrow;
             use TokenKind::{Punctuation, Tree};
             let body = match token!().kind() {
-                Some(Punctuation(RightArrow)) => call!(Expr::consume),
+                Some(Punctuation(RightArrow)) => call!(Expr::consume; true),
 
                 Some(Tree {
                     delim: Delim::Curlies,

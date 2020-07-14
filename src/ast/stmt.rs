@@ -45,7 +45,7 @@ impl<'a, 'b> Stmt<'a> {
                     ret!(Stmt {
                         kind: StmtKind::Assign {
                             target: name,
-                            expr: call!(Expr::consume),
+                            expr: call!(Expr::consume; true),
                             pointer: false,
                         },
                         src: src!(),
@@ -57,7 +57,7 @@ impl<'a, 'b> Stmt<'a> {
                     ret!(Stmt {
                         kind: StmtKind::Assign {
                             target: name,
-                            expr: call!(Expr::consume),
+                            expr: call!(Expr::consume; true),
                             pointer: true,
                         },
                         src: src!(),
@@ -65,7 +65,7 @@ impl<'a, 'b> Stmt<'a> {
                 }
 
                 _ => ret!(Stmt {
-                    kind: StmtKind::Expr(call!(Expr::consume).kind),
+                    kind: StmtKind::Expr(call!(Expr::consume; true).kind),
                     src: src!(),
                 }),
             }

@@ -121,7 +121,7 @@ impl<'a, 'b> Type<'a> {
 
             // while .. else would be so nice here!
             let named_fields = loop {
-                if tok_idx >= inp.tokens.len() {
+                if !has_next!() {
                     break Vec::new();
                 }
 
@@ -164,16 +164,14 @@ impl<'a, 'b> Type<'a> {
         pub(crate) fn parse_struct_fields(inp: ParseInp<'a, 'b>) -> ParseRet<Vec<NamedField<'a>>> {
             let mut tok_idx = 0;
             let mut fields = Vec::new();
-            while tok_idx < inp.tokens.len() {
+
+            punc_separated!(Comma, StructFieldComma, {
                 let name = expect_ident!(StructFieldName);
                 expect_punc!(Colon, StructFieldColon);
                 let typ = call!(Type::consume);
                 fields.push(NamedField { name, typ });
-                if tok_idx == inp.tokens.len() {
-                    break;
-                }
-                expect_punc!(Comma, StructFieldComma);
-            }
+            });
+
             ret!(fields)
         }
     );
