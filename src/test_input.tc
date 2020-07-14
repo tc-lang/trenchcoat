@@ -1,0 +1,48 @@
+//use std.foo.Bar;
+
+// It's a comment!
+//fn baz(x: int, y: bool) -> { z: Bar<int> } {
+fn baz(x: int, y: bool) -> { z: Bar } {
+	/*
+    Maybe someone implemented this, maybe they didn't.
+	either way, it serves as a nice place to put nested
+	block comments and strings:
+	/* Inner block comment! */
+	"and in /* a string"
+	*/
+
+	{
+		a_block();
+		ooo_yay();
+		let foo = 2;
+		bar(foo);
+	}
+	let x = y;
+	foo { foo_field: 2 }
+	{ not_a_field_of_above: 3}
+	
+	{ z: Baz.new(x) }
+}
+
+fn foo() { nothing(); }
+
+fn complicated_expr(x: int, y: int, z: int) -> (int, int) {
+	(x + y*z - z, x - y - z + 2 - 3)
+}
+
+fn match_example(my_enum: MyEnum) -> int {
+	let x = 2;
+	match my_enum {
+		Foo => 2 + x,
+		Bar => 3,
+		Baz => {
+			x: 2,
+			y: 3,
+		},
+		FooBar => {
+			x: 2,
+			y: 3,
+		}
+		_ => x,
+	}
+}
