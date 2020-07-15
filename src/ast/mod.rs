@@ -127,9 +127,14 @@ macro_rules! make_macros {
             }};
         }
 
-        /// Evaluates to the next token or None if there isn't one.
+        /// Peeks to the nth next token.
+        /// If no number is provided, defaults to the next token.
         #[allow(unused)]
         macro_rules! peek {
+            ($n:expr) => {
+                $tokens.get($tok_idx+$n)
+            };
+
             () => {
                 $tokens.get($tok_idx)
             };
@@ -534,7 +539,7 @@ macro_rules! make_macros {
                 #[allow(unused)]
                 macro_rules! mtch {
                     (
-                        $d(($pat:pat, $kind:expr) => $arm:expr),+;
+                        $d(($pat:pat, $expecting:expr) => $arm:expr),+;
                         context: $context:ident $d(,)?
                     ) => {{
                         let token_kind_option = peek!().kind();
@@ -547,7 +552,7 @@ macro_rules! make_macros {
                                 $errors.push(Error {
                                     kind: ErrorKind::Expecting {
                                         expecting: Expecting::OneOf(
-                                            &[$d(Expecting::Token($kind)),+],
+                                            &[$d($expecting),+],
                                         ),
                                         found: token_kind_option.cloned(),
                                         context: ExpectingContext::$context,
@@ -560,7 +565,7 @@ macro_rules! make_macros {
                                 $errors.push(Error {
                                     kind: ErrorKind::Expecting {
                                         expecting: Expecting::OneOf(
-                                            &[$d(Expecting::Token($kind)),+],
+                                            &[$d($expecting),+],
                                         ),
                                         found: None,
                                         context: ExpectingContext::$context,
@@ -588,7 +593,7 @@ macro_rules! make_macros {
                             $d(
                                 (
                                     TokenKind::Punctuation(Punc::$punc_variant),
-                                    TokenKind::Punctuation(Punc::$punc_variant)
+                                    Expecting::Token(TokenKind::Punctuation(Punc::$punc_variant))
                                 ) => $arm
                             ),+;
                             context: $context,
@@ -611,7 +616,7 @@ macro_rules! make_macros {
                             $d(
                                 (
                                     TokenKind::Keyword(Kwd::$kwd_variant),
-                                    TokenKind::Keyword(Kwd::$kwd_variant)
+                                    Expecting::Token(TokenKind::Keyword(Kwd::$kwd_variant))
                                 ) => $arm
                             ),+;
                             context: $context,

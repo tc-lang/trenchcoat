@@ -117,6 +117,12 @@ pub enum ExprKind<'a> {
         else_block: Option<Box<Expr<'a>>>,
     },
 
+    Closure {
+        params: Vec<NamedField<'a>>,
+        ret_typ: Type<'a>,
+        body: Box<Expr<'a>>,
+    },
+
     /// An empty expression, this evaluates to `{}`.
     Empty,
 }
@@ -216,74 +222,85 @@ impl<'a, 'b> Expr<'a> {
         ) -> ParseRet<Expr<'a>> {
             let mut tok_idx = 0;
 
-            let mut lhs = match token!().kind() {
-                Some(TokenKind::Punctuation(punc)) => {
-                    let prefix_op = match PrefixOp::try_from(punc) {
-                        Some(op) => op,
-                        None => error!(Error {
-                            kind: ErrorKind::Expecting {
-                                expecting: Expecting::Expr,
-                                found: Some(last_token!().kind.clone()),
-                                context: ExpectingContext::ExprPrefixOp,
-                            },
-                            src: last_token_slice!(),
-                        }),
-                    };
-                    let expr = call!(
-                        Expr::consume_with_min_bp;
-                        prefix_op.binding_power(), allow_curly_call
-                    );
-                    Expr {
-                        kind: ExprKind::PrefixOp {
-                            op: prefix_op,
-                            expr: Box::new(expr),
-                        },
-                        src: src!(),
+            use TokenKind::Punctuation;
+
+            let mut lhs = match peek!(1).kind() {
+                Some(Punctuation(Punc::RightArrow)) | Some(Punctuation(Punc::ThinRightArrow)) => {
+                    if min_bp <= 3 {
+                        call!(Expr::consume_closure; allow_curly_call)
+                    } else {
+                        todo!()
                     }
                 }
-                Some(TokenKind::Ident(name)) => Expr {
-                    kind: ExprKind::Name(name),
-                    src: src!(),
-                },
-                Some(TokenKind::Literal(s, literal_kind)) => Expr {
-                    kind: ExprKind::RawLiteral(*s, *literal_kind),
-                    src: src!(),
-                },
-                Some(TokenKind::Keyword(Kwd::Let)) => call!(Expr::consume_let; allow_curly_call),
-                Some(TokenKind::Keyword(Kwd::If)) => call!(Expr::consume_if),
-                Some(TokenKind::Keyword(Kwd::Loop)) => call!(Expr::consume_loop),
-                Some(TokenKind::Keyword(Kwd::While)) => call!(Expr::consume_while),
-                Some(TokenKind::Keyword(Kwd::Do)) => call!(Expr::consume_do_while),
-                Some(TokenKind::Keyword(Kwd::For)) => call!(Expr::consume_for),
-                Some(TokenKind::Keyword(Kwd::Match)) => call!(Expr::consume_match),
+                _ => match token!().kind() {
+                    Some(TokenKind::Punctuation(punc)) => {
+                        let prefix_op = match PrefixOp::try_from(punc) {
+                            Some(op) => op,
+                            None => error!(Error {
+                                kind: ErrorKind::Expecting {
+                                    expecting: Expecting::Expr,
+                                    found: Some(last_token!().kind.clone()),
+                                    context: ExpectingContext::ExprPrefixOp,
+                                },
+                                src: last_token_slice!(),
+                            }),
+                        };
+                        let expr = call!(
+                            Expr::consume_with_min_bp;
+                            prefix_op.binding_power(), allow_curly_call
+                        );
+                        Expr {
+                            kind: ExprKind::PrefixOp {
+                                op: prefix_op,
+                                expr: Box::new(expr),
+                            },
+                            src: src!(),
+                        }
+                    }
+                    Some(TokenKind::Ident(name)) => Expr {
+                        kind: ExprKind::Name(name),
+                        src: src!(),
+                    },
+                    Some(TokenKind::Literal(s, literal_kind)) => Expr {
+                        kind: ExprKind::RawLiteral(*s, *literal_kind),
+                        src: src!(),
+                    },
+                    Some(TokenKind::Keyword(Kwd::Let)) => call!(Expr::consume_let; allow_curly_call),
+                    Some(TokenKind::Keyword(Kwd::If)) => call!(Expr::consume_if),
+                    Some(TokenKind::Keyword(Kwd::Loop)) => call!(Expr::consume_loop),
+                    Some(TokenKind::Keyword(Kwd::While)) => call!(Expr::consume_while),
+                    Some(TokenKind::Keyword(Kwd::Do)) => call!(Expr::consume_do_while),
+                    Some(TokenKind::Keyword(Kwd::For)) => call!(Expr::consume_for),
+                    Some(TokenKind::Keyword(Kwd::Match)) => call!(Expr::consume_match),
 
-                Some(TokenKind::Tree {
-                    delim: Delim::Curlies,
-                    inner, ..
-                }) => all!(Expr::parse_curlies_inner, inner; last_token_slice!()),
+                    Some(TokenKind::Tree {
+                        delim: Delim::Curlies,
+                        inner, ..
+                    }) => all!(Expr::parse_curlies_inner, inner; last_token_slice!()),
 
-                Some(TokenKind::Tree {
-                    delim: Delim::Parens,
-                    inner, ..
-                }) => Expr {
-                    kind: ExprKind::Struct {
-                        fields: all!(Expr::parse_tuple_inner, inner),
+                    Some(TokenKind::Tree {
                         delim: Delim::Parens,
+                        inner, ..
+                    }) => Expr {
+                        kind: ExprKind::Struct {
+                            fields: all!(Expr::parse_tuple_inner, inner),
+                            delim: Delim::Parens,
+                        },
+                        src: last_token_slice!(),
                     },
-                    src: last_token_slice!(),
-                },
 
-                found => error!(Error {
-                    kind: ErrorKind::Expecting {
-                        expecting: Expecting::Expr,
-                        found: found.cloned(),
-                        context: ExpectingContext::Expr,
-                    },
-                    src: match found {
-                        Some(_) => last_token_slice!(),
-                        None => &[],
-                    },
-                }),
+                    found => error!(Error {
+                        kind: ErrorKind::Expecting {
+                            expecting: Expecting::Expr,
+                            found: found.cloned(),
+                            context: ExpectingContext::Expr,
+                        },
+                        src: match found {
+                            Some(_) => last_token_slice!(),
+                            None => &[],
+                        },
+                    }),
+                },
             };
 
             loop {
@@ -719,6 +736,49 @@ impl<'a, 'b> Expr<'a> {
             ret!(Struct {
                 unnamed_fields,
                 named_fields
+            })
+        }
+    );
+
+    parser!(
+        pub(crate) fn consume_closure(
+            inp: ParseInp<'a, 'b>;
+            allow_curly_call: bool,
+        ) -> ParseRet<Expr<'a>> {
+            let mut tok_idx = 0;
+
+            use TokenKind::{Ident, Tree};
+            let params = mtch!(
+                (Ident(name), Expecting::Ident) => vec![
+                    NamedField {
+                        name, typ: Type::OMMITED,
+                    },
+                ],
+
+                (Tree {
+                    delim: Delim::Parens,
+                    inner,
+                    ..
+                }, Expecting::Delim(Delim::Parens)) => all!(Type::parse_struct_fields, inner; true);
+
+                context: ClosureParams,
+            );
+
+            let ret_typ = if maybe_punc!(ThinRightArrow) {
+                call!(Type::consume)
+            } else {
+                Type::OMMITED
+            };
+
+            expect_punc!(RightArrow, ClosureArrow);
+
+            let body = call!(Expr::consume; allow_curly_call);
+
+            ret!(Expr {
+                kind: ExprKind::Closure {
+                    params, ret_typ, body: Box::new(body),
+                },
+                src: src!(),
             })
         }
     );

@@ -87,6 +87,7 @@ impls!(
             }
             s
         },
+        TypeKind::Ommited => "_".to_string(),
 
         _ => todo!(),
     }
@@ -169,6 +170,9 @@ impls!(
                 Some(else_block) => format!("if {} {} {}", condition.readable(), block.readable(), else_block.readable()),
                 None => format!("if {} {}", condition.readable(), block.readable()),
             }
+        },
+        ExprKind::Closure { params, ret_typ, body } => {
+            format!("({}) -> {} => ({})", params.readable(), ret_typ.readable(), body.readable())
         },
         ExprKind::Empty => "EMPTY".to_string(),
 

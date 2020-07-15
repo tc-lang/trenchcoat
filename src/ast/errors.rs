@@ -101,4 +101,7 @@ pub enum ExpectingContext {
     PatIdent,
 
     LetEq,
+
+    ClosureParams,
+    ClosureArrow,
 }

@@ -23,6 +23,7 @@ pub enum TypeKind<'a> {
         len: u64,
         typ: Box<Type<'a>>,
     },
+    Ommited,
 }
 
 #[derive(Debug, Clone)]
@@ -53,6 +54,11 @@ impl<'a> TypeKind<'a> {
 }
 
 impl<'a, 'b> Type<'a> {
+    pub const OMMITED: Type<'a> = Type {
+        kind: TypeKind::Ommited,
+        src: &[],
+    };
+
     parser!(
         pub(crate) fn consume(inp: ParseInp<'a, 'b>) -> ParseRet<Type<'a>> {
             let mut tok_idx = 0;
@@ -72,7 +78,7 @@ impl<'a, 'b> Type<'a> {
                     // {..}
                     Delim::Curlies => Type {
                         kind: TypeKind::Struct {
-                            named_fields: call!(Type::parse_struct_fields, inner.deref()).0,
+                            named_fields: call!(Type::parse_struct_fields, inner.deref(); false).0,
                             unnamed_fields: Vec::new(),
                             ordered: false,
                         },
@@ -135,7 +141,7 @@ impl<'a, 'b> Type<'a> {
                     Some(TokenKind::Punctuation(Punc::Colon)) => {
                         // Backtrack to the start of this field and try to parse struct fields.
                         tok_idx = loop_start_tok_idx;
-                        break call!(Type::parse_struct_fields);
+                        break call!(Type::parse_struct_fields; false);
                     }
 
                     Some(_) => error!(Error {
@@ -161,14 +167,25 @@ impl<'a, 'b> Type<'a> {
     );
 
     parser!(
-        pub(crate) fn parse_struct_fields(inp: ParseInp<'a, 'b>) -> ParseRet<Vec<NamedField<'a>>> {
+        pub(crate) fn parse_struct_fields(
+            inp: ParseInp<'a, 'b>;
+            allow_inferred_types: bool,
+        ) -> ParseRet<Vec<NamedField<'a>>> {
             let mut tok_idx = 0;
             let mut fields = Vec::new();
 
             punc_separated!(Comma, StructFieldComma, {
                 let name = expect_ident!(StructFieldName);
-                expect_punc!(Colon, StructFieldColon);
-                let typ = call!(Type::consume);
+                let typ = if allow_inferred_types {
+                    if maybe_punc!(Colon) {
+                        call!(Type::consume)
+                    } else {
+                        Type::OMMITED
+                    }
+                } else {
+                    expect_punc!(Colon, StructFieldColon);
+                    call!(Type::consume)
+                };
                 fields.push(NamedField { name, typ });
             });
 

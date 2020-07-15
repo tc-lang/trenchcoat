@@ -1,5 +1,11 @@
 //use std.foo.Bar;
 
+type World alias String
+
+type NewStruct {
+	hello: World,
+}
+
 // It's a comment!
 //fn baz(x: int, y: bool) -> { z: Bar<int> } {
 fn baz(x: int, y: bool) -> { z: Bar } {
@@ -20,6 +26,7 @@ fn baz(x: int, y: bool) -> { z: Bar } {
 	let x = y;
 	foo { foo_field: 2 }
 	{ not_a_field_of_above: 3}
+	let closure = (a, b) => a+b;
 	
 	{ z: Baz.new(x) }
 }

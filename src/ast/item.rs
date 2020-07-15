@@ -3,8 +3,8 @@ use std::ops::Deref;
 
 #[derive(Debug, Clone)]
 pub struct Item<'a> {
-    src: &'a [Token<'a>],
-    kind: ItemKind<'a>,
+    pub kind: ItemKind<'a>,
+    pub src: &'a [Token<'a>],
 }
 
 #[derive(Debug, Clone)]
@@ -16,17 +16,17 @@ pub enum ItemKind<'a> {
 }
 
 #[derive(Debug, Clone)]
-struct FnDecl<'a> {
-    name: &'a str,
-    params: Vec<NamedField<'a>>,
-    ret_typ: Type<'a>,
-    body: Expr<'a>,
+pub struct FnDecl<'a> {
+    pub name: &'a str,
+    pub params: Vec<NamedField<'a>>,
+    pub ret_typ: Type<'a>,
+    pub body: Expr<'a>,
 }
 #[derive(Debug, Clone)]
-struct TypeDecl<'a> {
-    name: &'a str,
-    alias: bool,
-    typ: Type<'a>,
+pub struct TypeDecl<'a> {
+    pub name: &'a str,
+    pub alias: bool,
+    pub typ: Type<'a>,
 }
 type ImportStmt<'a> = &'a str;
 type ConstDecl<'a> = &'a str;
@@ -74,7 +74,7 @@ impl<'a, 'b> Item<'a> {
 
             let name = expect_ident!(FnName);
 
-            let params = call!(Type::parse_struct_fields, expect_delim!(Parens, FnParams)).0;
+            let params = call!(Type::parse_struct_fields, expect_delim!(Parens, FnParams); false).0;
 
             let ret_typ = match maybe_punc!(ThinRightArrow) {
                 false => Type::PAREN_UNIT,
