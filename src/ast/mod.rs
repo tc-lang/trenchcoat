@@ -7,13 +7,10 @@
 //! simple parsing.
 
 pub mod errors;
-pub(crate) mod tools;
 
 use self::prelude::*;
 
 pub(crate) mod prelude {
-    // Provides the kind method :: Option<&Token> -> Option<&TokenKind>
-    pub(crate) use super::tools::KindOption;
     // Error types
     pub use crate::ast::errors::{Error, Expecting, ExpectingContext, Kind as ErrorKind};
     // Token types
@@ -40,6 +37,17 @@ pub(crate) mod prelude {
         pub result: Option<T>,
         /// The number of tokens (from ParseInp.tokens) consumed.
         pub consumed: usize,
+    }
+
+    /// Used to provide the `kind` method on Option<&Token> to produce an Option<&TokenKind>
+    pub(crate) trait KindOption<'a> {
+        fn kind(self) -> Option<&'a TokenKind<'a>>;
+    }
+
+    impl<'a> KindOption<'a> for Option<&'a Token<'a>> {
+        fn kind(self) -> Option<&'a TokenKind<'a>> {
+            self.map(|t| &t.kind)
+        }
     }
 }
 
