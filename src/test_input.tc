@@ -1,14 +1,25 @@
-//use std.foo.Bar;
-
 type World alias String
 
 type NewStruct {
 	hello: World,
 }
 
+type Solver<E : Expression> {
+	lhs: E,
+	relation: Relation,
+	rhs: E,
+}
+
+/*
+type Relation enum {
+	Ge,
+	Le,
+}
+*/
+
 // It's a comment!
-//fn baz(x: int, y: bool) -> { z: Bar<int> } {
-fn baz(x: int, y: bool) -> { z: Bar } {
+fn baz(x: int, y: bool) -> { z: Bar<int> } {
+//fn baz(x: int, y: bool) -> { z: Bar } {
 	/*
     Maybe someone implemented this, maybe they didn't.
 	either way, it serves as a nice place to put nested
@@ -33,9 +44,7 @@ fn baz(x: int, y: bool) -> { z: Bar } {
 
 fn foo() { nothing(); }
 
-fn complicated_expr(x: int, y: int, z: int) -> (int, int) {
-	(x + y*z - z, x - y - z + 2 - 3)
-}
+fn complicated_expr(x: int, y: int, z: int) -> (int, int) => (x + y*z - z, x - y - z + 2 - 3)
 
 fn match_example(my_enum: MyEnum) -> int {
 	let x = 2;
@@ -53,3 +62,6 @@ fn match_example(my_enum: MyEnum) -> int {
 		_ => x,
 	}
 }
+
+fn type_ommited() -> _ {}
+type TypeOmmited (_, _, xs: Vec<_>)

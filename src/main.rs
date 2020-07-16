@@ -64,8 +64,33 @@ fn main() {
 
     println!("TOKENS: {:?}", tokens);
 
+    use std::io::prelude::*;
     match crate::ast::try_parse(&tokens.tokens).map(|ast| ast.readable()) {
-        Ok(readable) => println!("\n\nAST: {}", readable),
-        Err(errors) => println!("\n\nAST Errors: {:?}", errors),
+        Ok(readable) => {
+            std::io::stdout().write(&readable.as_ref()).unwrap();
+        }
+        Err(errors) => println!(
+            "\n\nAST Errors:\n\n{:?}",
+            errors
+                .iter()
+                .map(|error| format!(
+                    "{:?}\n\n{}\n\n",
+                    error,
+                    error
+                        .src
+                        .first()
+                        .and_then(|token| token.src.first())
+                        .map(|st| quick_context(input_str, st.src))
+                        .unwrap_or("None")
+                ))
+                .collect::<Vec<_>>()
+        ),
     }
+}
+
+fn quick_context<'a>(file: &'a str, src: &'a str) -> &'a str {
+    let offset = src.as_ptr() as usize - file.as_ptr() as usize;
+    let start = offset.saturating_sub(10);
+    let end = offset.saturating_add(10).min(file.len());
+    &file[start..end]
 }

@@ -6,16 +6,12 @@
 //! Parsers are usually defined using the parse macro, which provides a rich set of macros for
 //! simple parsing.
 
-pub mod errors;
-
-use self::prelude::*;
-
 pub(crate) mod prelude {
     // Error types
     pub use crate::ast::errors::{Error, Expecting, ExpectingContext, Kind as ErrorKind};
     // Token types
     pub use crate::token_tree::{Delim, Kwd, LiteralKind, Punc, Token, TokenKind};
-
+    // AST types
     pub use super::{
         expr::{Expr, ExprKind},
         item::{Item, ItemKind},
@@ -180,63 +176,111 @@ macro_rules! make_macros {
             };
         }
 
-        /// Loops over $block, expecting $sep_pat between each iteration - apart from when there
-        /// are no more tokens, in which case it's optional.
-        #[allow(unused)]
-        macro_rules! separated {
-            (
-                separator: {
-                    pattern: $sep_pat:pat,
-                    kind: $sep_kind:expr,
-                    context: $context:ident,
-                }
-                block: $block:block
-            ) => {
-                while has_next!() {
-                    $block;
-
-                    // A final separator is not required.
-                    if !has_next!() {
-                        break;
-                    }
-
-                    // A separator is optional after curlies with a trailing newline.
-                    if let TokenKind::Tree {
-                        delim: Delim::Curlies,
-                        ..
-                    } = last_token!().kind {
-                        use crate::tokens::contains_newline;
-                        if contains_newline(last_token!().trailing_whitespace) {
-                            maybe!($sep_pat);
-                            continue;
+        macro_rules! make_separated {
+            ($d:tt) => {
+                /// Loops over $block, expecting $sep_pat between each iteration - apart from when there
+                /// are no more tokens, in which case it's optional.
+                #[allow(unused)]
+                macro_rules! separated {
+                    (
+                        separator: {
+                            pattern: $sep_pat:pat,
+                            kind: $sep_kind:expr,
+                            context: $context:ident,
                         }
-                    }
+                        terminators: [$d($term_pat:pat),*]
+                        block: $block:block
+                    ) => {
+                        while has_next!() {
+                            $block;
 
-                    // TODO - For better error messages, we could, in the case of not finding a
-                    // separator, push that as an unexpected tokens error and then scan ahead to
-                    // the next separator and continue parsing.
+                            // A final separator is not required.
+                            println!("Peeking {:?}", peek!().kind());
+                            match peek!().kind() {
+                                // So break if the next token kind matches a terminator
+                                // pattern.
+                                // This is likely to just be None - although may also be '>'
+                                // for example.
+                                $d($term_pat => {
+                                    maybe!($sep_pat);
+                                    break;
+                                },)*
+                                _ => (),
+                            }
+                            println!("Kk");
 
-                    // Otherwise, expect a separator.
-                    expect!($sep_pat, $sep_kind, $context);
+                            // A separator is optional after curlies with a trailing newline.
+                            if let TokenKind::Tree {
+                                delim: Delim::Curlies,
+                                ..
+                            } = last_token!().kind {
+                                use crate::tokens::contains_newline;
+                                if contains_newline(last_token!().trailing_whitespace) {
+                                    maybe!($sep_pat);
+                                    continue;
+                                }
+                            }
+
+                            // TODO - For better error messages, we could, in the case of not finding a
+                            // separator, push that as an unexpected tokens error and then scan ahead to
+                            // the next separator and continue parsing.
+
+                            // Otherwise, expect a separator.
+                            expect!($sep_pat, $sep_kind, $context);
+                        }
+                    };
+
+                    (
+                        separator: {
+                            pattern: $sep_pat:pat,
+                            kind: $sep_kind:expr,
+                            context: $context:ident,
+                        }
+                        block: $block:block
+                    ) => {
+                        separated!(
+                            separator: {
+                                pattern: $sep_pat,
+                                kind: $sep_kind,
+                                context: $context,
+                            }
+                            terminators: [None],
+                            block: $block:block
+                        );
+                    };
+                }
+
+                /// Loops over $block, expecting $punc_variant between each iteration - apart from when
+                /// there are no more tokens, in which case it's optional.
+                #[allow(unused)]
+                macro_rules! punc_separated {
+                    (
+                        $punc_variant:ident, $context:ident,
+                        terminators: [$d($term_pat:pat),*],
+                        $block:block
+                    ) => {
+                        separated!(
+                            separator: {
+                                pattern: TokenKind::Punctuation(Punc::$punc_variant),
+                                kind: TokenKind::Punctuation(Punc::$punc_variant),
+                                context: $context,
+                            }
+                            terminators: [$d($term_pat),*]
+                            block: $block
+                        )
+                    };
+
+                    ($punc_variant:ident, $context:ident, $block:block) => {
+                        punc_separated!(
+                            $punc_variant, $context,
+                            terminators: [None],
+                            $block
+                        )
+                    };
                 }
             };
         }
-
-        /// Loops over $block, expecting $punc_variant between each iteration - apart from when
-        /// there are no more tokens, in which case it's optional.
-        #[allow(unused)]
-        macro_rules! punc_separated {
-            ($punc_variant:ident, $context:ident, $block:block) => {
-                separated!(
-                    separator: {
-                        pattern: TokenKind::Punctuation(Punc::$punc_variant),
-                        kind: TokenKind::Punctuation(Punc::$punc_variant),
-                        context: $context,
-                    }
-                    block: $block
-                )
-            };
-        }
+        make_separated!($);
 
         /// Push the given error to the $errors Vec and return from the parser with a None result.
         #[allow(unused)]
@@ -648,12 +692,15 @@ macro_rules! make_macros {
     };
 }
 
+pub mod errors;
 pub mod expr;
 pub mod item;
 pub mod pat;
 pub mod readable;
 pub mod stmt;
 pub mod types;
+
+use self::prelude::*;
 
 pub fn try_parse<'a>(tokens: &'a [Token<'a>]) -> Result<Vec<Item<'a>>, Vec<Error<'a>>> {
     let mut errors = Vec::new();

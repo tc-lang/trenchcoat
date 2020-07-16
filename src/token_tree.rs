@@ -99,6 +99,7 @@ pub enum Delim {
 pub enum Punc {
     Semi,           // ";"
     Colon,          // ":"
+    ColonColon,     // "::"
     Comma,          // ","
     Dot,            // "."
     EqEq,           // "=="
@@ -245,6 +246,7 @@ impl<'a> Token<'a> {
 
             // And all of the punctuation
             [Semi, ..] => punc!(Semi, 1),
+            [Colon, Colon, ..] => punc!(ColonColon, 2),
             [Colon, ..] => punc!(Colon, 1),
             [Comma, ..] => punc!(Comma, 1),
             [Dot, ..] => punc!(Dot, 1),

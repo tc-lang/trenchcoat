@@ -1,4 +1,5 @@
 use super::prelude::*;
+use super::types::GenericParam;
 use std::ops::Deref;
 
 #[derive(Debug, Clone)]
@@ -25,6 +26,7 @@ pub struct FnDecl<'a> {
 #[derive(Debug, Clone)]
 pub struct TypeDecl<'a> {
     pub name: &'a str,
+    pub params: Vec<GenericParam<'a>>,
     pub alias: bool,
     pub typ: Type<'a>,
 }
@@ -114,6 +116,8 @@ impl<'a, 'b> Item<'a> {
 
             let name = expect_ident!(TypeDeclName);
 
+            let params = call!(Type::consume_generic_params);
+
             let alias = match peek!().kind() {
                 Some(TokenKind::Keyword(Kwd::Alias)) => {
                     skip!();
@@ -125,7 +129,12 @@ impl<'a, 'b> Item<'a> {
             let typ = call!(Type::consume);
 
             ret!(Item {
-                kind: ItemKind::Type(TypeDecl { name, alias, typ }),
+                kind: ItemKind::Type(TypeDecl {
+                    name,
+                    params,
+                    alias,
+                    typ,
+                }),
                 src: src!(),
             })
         }

@@ -5,7 +5,7 @@ use super::{
     pat::{Pat, PatKind},
     prelude::*,
     stmt::{Stmt, StmtKind},
-    types::{NamedField, Type, TypeKind},
+    types::{GenericArgs, NamedField, Type, TypeKind},
     Item, ItemKind,
 };
 
@@ -55,7 +55,7 @@ impls!(
         ItemKind::Fn(decl) => {
             format!(
                 "fn {}({}) -> {} {}",
-                decl.name, decl.params.readable(), decl.ret_typ.readable(), decl.body.readable(),
+                decl.name, intersperse(&decl.params, ", "), decl.ret_typ.readable(), decl.body.readable(),
             )
         },
         ItemKind::Type(decl) => {
@@ -69,18 +69,20 @@ impls!(
     }
 
     impl Readable for Type, TypeKind {
-        TypeKind::Name(name) => name.to_string(),
+        TypeKind::Name{name, args} => {
+            name.readable() + &args.readable()
+        },
         TypeKind::Struct { unnamed_fields, named_fields, ordered } => {
             let mut s = String::with_capacity(32);
             match ordered {
                 true => s.push_str("( "),
                 false => s.push_str("{ "),
             }
-            for field in unnamed_fields {
-                s.push_str(&field.readable());
+            s.push_str(&intersperse(&unnamed_fields, ", "));
+            if named_fields.len() != 0 {
                 s.push_str(", ");
+                s.push_str(&intersperse(&named_fields, ", "));
             }
-            s.push_str(&named_fields.readable());
             match ordered {
                 true => s.push_str(")"),
                 false => s.push_str("}"),
@@ -167,12 +169,12 @@ impls!(
         },
         ExprKind::If { condition, block, else_block } => {
             match else_block {
-                Some(else_block) => format!("if {} {} {}", condition.readable(), block.readable(), else_block.readable()),
+                Some(else_block) => format!("if {} {} else {}", condition.readable(), block.readable(), else_block.readable()),
                 None => format!("if {} {}", condition.readable(), block.readable()),
             }
         },
         ExprKind::Closure { params, ret_typ, body } => {
-            format!("({}) -> {} => ({})", params.readable(), ret_typ.readable(), body.readable())
+            format!("({}) -> {} => ({})", intersperse(params, ", "), ret_typ.readable(), body.readable())
         },
         ExprKind::Empty => "EMPTY".to_string(),
 
@@ -183,12 +185,10 @@ impls!(
 impl<'a> Readable for Struct<'a> {
     fn readable(&self) -> String {
         let mut s = String::with_capacity(64);
-        for field in self.unnamed_fields.iter() {
-            s.push_str(&field.readable());
+        s.push_str(&intersperse(&self.unnamed_fields, ", "));
+        if self.named_fields.len() != 0 {
             s.push_str(", ");
-        }
-        for field in self.named_fields.iter() {
-            s.push_str(&format!("{}: {}, ", field.0, field.1.readable()));
+            s.push_str(&intersperse(&self.named_fields, ", "));
         }
         s
     }
@@ -196,27 +196,49 @@ impl<'a> Readable for Struct<'a> {
 
 impl<'a> Readable for NamedField<'a> {
     fn readable(&self) -> String {
-        format!("{}: {}, ", self.name, self.typ.readable())
+        format!("{}: {}", self.name, self.typ.readable())
     }
 }
 
-impl<'a> Readable for Vec<NamedField<'a>> {
+impl<'a> Readable for GenericArgs<'a> {
     fn readable(&self) -> String {
-        let mut s = String::with_capacity(32);
-        for field in self {
-            s.push_str(&field.readable());
+        if self.named.len() != 0 {
+            todo!();
         }
-        s
+        if self.unnamed.len() == 0 {
+            return String::new();
+        }
+        format!("<{}>", intersperse(&self.unnamed, ", "))
     }
 }
 
 impl<'a> Readable for Vec<Item<'a>> {
     fn readable(&self) -> String {
-        let mut s = String::with_capacity(4096);
-        for item in self {
-            s.push_str(&item.readable());
-            s.push_str("\n\n");
-        }
-        s
+        intersperse(self, "\n\n")
     }
+}
+
+impl<T: Readable, U: Readable> Readable for (T, U) {
+    fn readable(&self) -> String {
+        format!("{}: {}", self.0.readable(), self.1.readable())
+    }
+}
+
+impl Readable for &str {
+    fn readable(&self) -> String {
+        self.to_string()
+    }
+}
+
+fn intersperse<T: Readable>(items: &[T], sep: &str) -> String {
+    if items.len() == 0 {
+        return String::new();
+    }
+    let mut s = String::with_capacity(8 * items.len());
+    for i in 0..items.len() - 1 {
+        s.push_str(&items[i].readable());
+        s.push_str(sep);
+    }
+    s.push_str(&items[items.len() - 1].readable());
+    s
 }

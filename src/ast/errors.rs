@@ -104,4 +104,14 @@ pub enum ExpectingContext {
 
     ClosureParams,
     ClosureArrow,
+
+    GenericParamComma,
+    GenericParamColon,
+    GenericParamName,
+
+    CloseGenericParams,
+
+    GenericArgComma,
+
+    CloseGenericArgs,
 }

@@ -1,6 +1,4 @@
-use super::errors::{Error, Expecting, ExpectingContext, Kind as ErrorKind};
-use super::{prelude::*, tools::KindOption};
-use crate::token_tree::{Delim, Kwd, Punc, Token, TokenKind};
+use super::prelude::*;
 use std::ops::Deref;
 
 #[derive(Debug, Clone)]
@@ -10,7 +8,10 @@ pub struct Type<'a> {
 }
 #[derive(Debug, Clone)]
 pub enum TypeKind<'a> {
-    Name(&'a str),
+    Name {
+        name: &'a str,
+        args: GenericArgs<'a>,
+    },
     Enum(Vec<EnumVariant<'a>>),
     Struct {
         unnamed_fields: Vec<Type<'a>>,
@@ -27,6 +28,16 @@ pub enum TypeKind<'a> {
 }
 
 #[derive(Debug, Clone)]
+pub struct Trait<'a> {
+    pub kind: TypeKind<'a>,
+    pub src: &'a [Token<'a>],
+}
+#[derive(Debug, Clone)]
+pub enum TraitKind<'a> {
+    Name { name: &'a str, path: Vec<&'a str> },
+}
+
+#[derive(Debug, Clone)]
 pub struct EnumVariant<'a> {
     pub name: &'a str,
     pub data: Option<Type<'a>>,
@@ -36,6 +47,24 @@ pub struct EnumVariant<'a> {
 pub struct NamedField<'a> {
     pub name: &'a str,
     pub typ: Type<'a>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GenericParam<'a> {
+    pub name: &'a str,
+    pub kind: GenericParamKind<'a>,
+}
+
+#[derive(Debug, Clone)]
+pub enum GenericParamKind<'a> {
+    Type(Type<'a>),
+    Trait(Trait<'a>),
+}
+
+#[derive(Debug, Clone)]
+pub struct GenericArgs<'a> {
+    pub unnamed: Vec<Type<'a>>,
+    pub named: Vec<(&'a str, Type<'a>)>,
 }
 
 impl<'a> TypeKind<'a> {
@@ -59,6 +88,15 @@ impl<'a, 'b> Type<'a> {
         src: &[],
     };
 
+    pub const CURLY_UNIT: Type<'a> = Type {
+        kind: TypeKind::CURLY_UNIT,
+        src: &[],
+    };
+    pub const PAREN_UNIT: Type<'a> = Type {
+        kind: TypeKind::PAREN_UNIT,
+        src: &[],
+    };
+
     parser!(
         pub(crate) fn consume(inp: ParseInp<'a, 'b>) -> ParseRet<Type<'a>> {
             let mut tok_idx = 0;
@@ -67,9 +105,11 @@ impl<'a, 'b> Type<'a> {
 
             ret!(match token!().kind() {
                 // Named type
-                // TODO - Generics
                 Some(Ident(name)) => Type {
-                    kind: TypeKind::Name(name),
+                    kind: TypeKind::Name {
+                        name,
+                        args: call!(Type::consume_generic_args),
+                    },
                     src: src!(),
                 },
 
@@ -193,12 +233,93 @@ impl<'a, 'b> Type<'a> {
         }
     );
 
-    pub const CURLY_UNIT: Type<'a> = Type {
-        kind: TypeKind::CURLY_UNIT,
-        src: &[],
-    };
-    pub const PAREN_UNIT: Type<'a> = Type {
-        kind: TypeKind::PAREN_UNIT,
-        src: &[],
-    };
+    parser!(
+        pub(crate) fn consume_generic_params(
+            inp: ParseInp<'a, 'b>,
+        ) -> ParseRet<Vec<GenericParam<'a>>> {
+            let mut tok_idx = 0;
+
+            if !maybe_punc!(Lt) {
+                ret!(Vec::new())
+            } else {
+                let params = call!(Type::consume_generic_params_inner);
+                expect_punc!(Gt, CloseGenericParams);
+                ret!(params)
+            }
+        }
+    );
+
+    parser!(
+        pub(crate) fn consume_generic_params_inner(
+            inp: ParseInp<'a, 'b>,
+        ) -> ParseRet<Vec<GenericParam<'a>>> {
+            let mut tok_idx = 0;
+
+            let mut params = Vec::new();
+            punc_separated!(
+                Comma,
+                GenericParamComma,
+                terminators: [Some(TokenKind::Punctuation(Punc::Gt))],
+                {
+                    let name = expect_ident!(GenericParamName);
+                    let kind = mtch_punc!(
+                        Colon => GenericParamKind::Type(call!(Type::consume)),
+                        ColonColon => GenericParamKind::Trait(call!(Trait::consume));
+                        context: GenericParamColon,
+                    );
+                    params.push(GenericParam { name, kind });
+                }
+            );
+            ret!(params)
+        }
+    );
+
+    parser!(
+        pub(crate) fn consume_generic_args(inp: ParseInp<'a, 'b>) -> ParseRet<GenericArgs<'a>> {
+            let mut tok_idx = 0;
+
+            if !maybe_punc!(Lt) {
+                ret!(GenericArgs {
+                    unnamed: Vec::new(),
+                    named: Vec::new(),
+                })
+            } else {
+                let params = call!(Type::consume_generic_args_inner);
+                expect_punc!(Gt, CloseGenericArgs);
+                ret!(params)
+            }
+        }
+    );
+
+    parser!(
+        pub(crate) fn consume_generic_args_inner(
+            inp: ParseInp<'a, 'b>,
+        ) -> ParseRet<GenericArgs<'a>> {
+            let mut tok_idx = 0;
+
+            let mut unnamed = Vec::new();
+            punc_separated!(
+                Comma,
+                GenericArgComma,
+                terminators: [Some(TokenKind::Punctuation(Punc::Gt))],
+                {
+                    unnamed.push(call!(Type::consume));
+                }
+            );
+            ret!(GenericArgs {
+                unnamed,
+                named: Vec::new(),
+            })
+        }
+    );
+}
+
+impl<'a, 'b> Trait<'a> {
+    parser!(
+        pub(crate) fn consume(inp: ParseInp<'a, 'b>) -> ParseRet<Trait<'a>> {
+            let mut tok_idx = 0;
+
+            todo!()
+        }
+    );
 }
