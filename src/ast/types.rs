@@ -112,7 +112,7 @@ impl<'a, 'b> Type<'a> {
                 Some(Ident(name)) => Type {
                     kind: TypeKind::Name {
                         name,
-                        args: call!(Type::consume_generic_args),
+                        args: call!(GenericArgs::consume),
                     },
                     src: src!(),
                 },
@@ -277,9 +277,28 @@ impl<'a, 'b> Type<'a> {
             ret!(params)
         }
     );
+}
 
+impl<'a, 'b> Trait<'a> {
     parser!(
-        pub(crate) fn consume_generic_args(inp: ParseInp<'a, 'b>) -> ParseRet<GenericArgs<'a>> {
+        pub(crate) fn consume(inp: ParseInp<'a, 'b>) -> ParseRet<Trait<'a>> {
+            let mut tok_idx = 0;
+
+            ret!(Trait {
+                kind: TraitKind::Name {
+                    name: expect_ident!(TraitName),
+                    path: Vec::new(),
+                    args: call!(GenericArgs::consume),
+                },
+                src: src!(),
+            })
+        }
+    );
+}
+
+impl<'a, 'b> GenericArgs<'a> {
+    parser!(
+        pub(crate) fn consume(inp: ParseInp<'a, 'b>) -> ParseRet<GenericArgs<'a>> {
             let mut tok_idx = 0;
 
             if !maybe_punc!(Lt) {
@@ -288,7 +307,7 @@ impl<'a, 'b> Type<'a> {
                     named: Vec::new(),
                 })
             } else {
-                let params = call!(Type::consume_generic_args_inner);
+                let params = call!(GenericArgs::consume_inner);
                 expect_punc!(Gt, CloseGenericArgs);
                 ret!(params)
             }
@@ -296,9 +315,26 @@ impl<'a, 'b> Type<'a> {
     );
 
     parser!(
-        pub(crate) fn consume_generic_args_inner(
+        pub(crate) fn consume_expr_args(
             inp: ParseInp<'a, 'b>,
-        ) -> ParseRet<GenericArgs<'a>> {
+        ) -> ParseRet<Option<GenericArgs<'a>>> {
+            let mut tok_idx = 0;
+
+            if !maybe_punc!(Tilda) {
+                return ret!(None);
+            }
+            if !maybe_punc!(Lt) {
+                tok_idx -= 1;
+                return ret!(None);
+            }
+            let params = call!(GenericArgs::consume_inner);
+            expect_punc!(Gt, CloseGenericArgs);
+            ret!(Some(params))
+        }
+    );
+
+    parser!(
+        pub(crate) fn consume_inner(inp: ParseInp<'a, 'b>) -> ParseRet<GenericArgs<'a>> {
             let mut tok_idx = 0;
 
             let mut unnamed = Vec::new();
@@ -313,23 +349,6 @@ impl<'a, 'b> Type<'a> {
             ret!(GenericArgs {
                 unnamed,
                 named: Vec::new(),
-            })
-        }
-    );
-}
-
-impl<'a, 'b> Trait<'a> {
-    parser!(
-        pub(crate) fn consume(inp: ParseInp<'a, 'b>) -> ParseRet<Trait<'a>> {
-            let mut tok_idx = 0;
-
-            ret!(Trait {
-                kind: TraitKind::Name {
-                    name: expect_ident!(TraitName),
-                    path: Vec::new(),
-                    args: call!(Type::consume_generic_args),
-                },
-                src: src!(),
             })
         }
     );

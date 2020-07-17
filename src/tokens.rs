@@ -185,6 +185,7 @@ pub fn tokenize<'a>(file_str: &'a str) -> Vec<Result<SimpleToken<'a>, Invalid<'a
             '*' => single!(Star),
             '/' => single!(Slash),
             '?' => single!(Question),
+            '~' => single!(Tilda),
 
             // Final case - if we couldn't match any of the characters we wanted, we'll mark this
             // as an invalid character
@@ -254,6 +255,7 @@ pub enum TokenKind {
     Star,        // "*"
     Slash,       // "/"
     Question,    // "?"
+    Tilda,       // "~"
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]

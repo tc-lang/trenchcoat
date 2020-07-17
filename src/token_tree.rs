@@ -120,6 +120,7 @@ pub enum Punc {
     RightArrow,     // "=>"
     ThinRightArrow, // "->"
     Question,       // "?"
+    Tilda,          // "~"
 }
 
 macro_rules! keywords {
@@ -268,6 +269,7 @@ impl<'a> Token<'a> {
             [Star, ..] => punc!(Star, 1),
             [Slash, ..] => punc!(Slash, 1),
             [Question, ..] => punc!(Question, 1),
+            [Tilda, ..] => punc!(Tilda, 1),
         };
 
         // We'll additionally consume any trailing whitespace.

@@ -1,4 +1,4 @@
-use super::{pat::Pat, prelude::*, stmt::Stmt};
+use super::{prelude::*, types::GenericArgs};
 use crate::tokens::{contains_newline, LiteralKind};
 
 #[derive(Debug, Clone)]
@@ -11,6 +11,11 @@ pub struct Expr<'a> {
 pub enum ExprKind<'a> {
     /// A name, just a string for now.
     Name(&'a str),
+
+    Type {
+        name: &'a str,
+        generic_args: GenericArgs<'a>,
+    },
 
     RawLiteral(&'a str, LiteralKind),
 
@@ -29,6 +34,11 @@ pub enum ExprKind<'a> {
         lhs: Box<Expr<'a>>,
         op: BinaryOp,
         rhs: Box<Expr<'a>>,
+    },
+
+    TypeHint {
+        expr: Box<Expr<'a>>,
+        typ: Type<'a>,
     },
 
     /// `let <pat> = <expr>`
@@ -181,6 +191,7 @@ opers!(
 
 /// The binding power of let
 const LET_BP: u8 = 3;
+/// The binding power of function application
 const APPLY_BP: u8 = 8;
 opers!(
     pub enum BinaryOp (bp (u8, u8)) {
@@ -257,9 +268,17 @@ impl<'a, 'b> Expr<'a> {
                             src: src!(),
                         }
                     }
-                    Some(TokenKind::Ident(name)) => Expr {
-                        kind: ExprKind::Name(name),
-                        src: src!(),
+                    Some(TokenKind::Ident(name)) => match call!(GenericArgs::consume_expr_args) {
+                        None => Expr {
+                            kind: ExprKind::Name(name),
+                            src: src!(),
+                        },
+                        Some(generic_args) => Expr {
+                            kind: ExprKind::Type {
+                                name, generic_args,
+                            },
+                            src: src!(),
+                        },
                     },
                     Some(TokenKind::Literal(s, literal_kind)) => Expr {
                         kind: ExprKind::RawLiteral(*s, *literal_kind),

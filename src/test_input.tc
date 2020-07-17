@@ -38,7 +38,8 @@ fn baz(x: int, y: bool) -> { z: Bar<int> } {
 	foo { foo_field: 2 }
 	{ not_a_field_of_above: 3}
 	let closure = (a, b) => a+b;
-	
+	let solver_with_param = Solver~<Expr>;
+
 	{ z: Baz.new(x) }
 }
 
