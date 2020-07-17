@@ -5,7 +5,9 @@ use super::{
     pat::{Pat, PatKind},
     prelude::*,
     stmt::{Stmt, StmtKind},
-    types::{GenericArgs, GenericParam, GenericParamKind, NamedField, Type, TypeKind},
+    types::{
+        GenericArgs, GenericParam, GenericParamKind, NamedField, Trait, TraitKind, Type, TypeKind,
+    },
     Item, ItemKind,
 };
 
@@ -74,8 +76,8 @@ impls!(
             },
             ItemKind::Type(decl) => {
                 match decl.alias {
-                    false => write!(f, "type {}{} {}", decl.name, intersperse(&decl.params, ", "), decl.typ),
-                    true => write!(f, "type {}{} alias {}", decl.name, intersperse(&decl.params, ", "), decl.typ),
+                    false => write!(f, "type {}<{}> {}", decl.name, intersperse(&decl.params, ", "), decl.typ),
+                    true => write!(f, "type {}<{}> alias {}", decl.name, intersperse(&decl.params, ", "), decl.typ),
                 }
             },
 
@@ -95,17 +97,30 @@ impls!(
                 }
                 intersperse(&unnamed_fields, ", ").fmt(f)?;
                 if named_fields.len() != 0 {
-                    f.write_str(", ")?;
+                    if unnamed_fields.len() != 0 {
+                        f.write_str(", ")?;
+                    }
                     intersperse(&named_fields, ", ").fmt(f)?;
                 }
                 match ordered {
-                    true => f.write_str(")"),
-                    false => f.write_str("}"),
+                    true => f.write_str(" )"),
+                    false => f.write_str(" }"),
                 }
             },
             TypeKind::Ommited => write!(f, "_"),
 
             _ => todo!(),
+        }
+    }
+
+    impl Display for Trait, TraitKind {
+        fn fmt(&self, f) -> Result {
+            TraitKind::Name{name, path, args} => {
+                if path.len() != 0 {
+                    todo!();
+                }
+                write!(f, "{}{}", name, args)
+            },
         }
     }
 
@@ -153,9 +168,9 @@ impls!(
                 }
                 write!(f, "{}", fields)?;
                 match delim {
-                    Delim::Curlies => f.write_str("}"),
-                    Delim::Parens => f.write_str(")"),
-                    Delim::Squares => f.write_str("]"),
+                    Delim::Curlies => f.write_str(" }"),
+                    Delim::Parens => f.write_str(" )"),
+                    Delim::Squares => f.write_str(" ]"),
                 }
             },
             ExprKind::Match { expr, arms } => {
@@ -194,7 +209,9 @@ impl<'a> Display for Struct<'a> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         intersperse(&self.unnamed_fields, ", ").fmt(f)?;
         if self.named_fields.len() != 0 {
-            f.write_str(", ")?;
+            if self.unnamed_fields.len() != 0 {
+                f.write_str(", ")?;
+            }
             intersperse(
                 unsafe { std::mem::transmute::<_, &[ExprNamedField]>(self.named_fields.deref()) },
                 ", ",
@@ -234,8 +251,8 @@ impl<'a> Display for GenericArgs<'a> {
 impl<'a> Display for GenericParam<'a> {
     fn fmt(&self, f: &mut Formatter) -> Result {
         match &self.kind {
-            GenericParamKind::Type(typ) => typ.fmt(f),
-            GenericParamKind::Trait(trt) => todo!(),
+            GenericParamKind::Type(typ) => write!(f, "{}: {}", self.name, typ),
+            GenericParamKind::Trait(trt) => write!(f, "{} :: {}", self.name, trt),
         }
     }
 }

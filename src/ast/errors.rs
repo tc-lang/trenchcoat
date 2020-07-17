@@ -114,4 +114,6 @@ pub enum ExpectingContext {
     GenericArgComma,
 
     CloseGenericArgs,
+
+    TraitName,
 }

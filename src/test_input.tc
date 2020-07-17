@@ -4,7 +4,7 @@ type NewStruct {
 	hello: World,
 }
 
-type Solver<E : Expression> {
+type Solver<E :: Expression> {
 	lhs: E,
 	relation: Relation,
 	rhs: E,

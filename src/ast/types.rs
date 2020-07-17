@@ -29,12 +29,16 @@ pub enum TypeKind<'a> {
 
 #[derive(Debug, Clone)]
 pub struct Trait<'a> {
-    pub kind: TypeKind<'a>,
+    pub kind: TraitKind<'a>,
     pub src: &'a [Token<'a>],
 }
 #[derive(Debug, Clone)]
 pub enum TraitKind<'a> {
-    Name { name: &'a str, path: Vec<&'a str> },
+    Name {
+        name: &'a str,
+        path: Vec<&'a str>,
+        args: GenericArgs<'a>,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -319,7 +323,14 @@ impl<'a, 'b> Trait<'a> {
         pub(crate) fn consume(inp: ParseInp<'a, 'b>) -> ParseRet<Trait<'a>> {
             let mut tok_idx = 0;
 
-            todo!()
+            ret!(Trait {
+                kind: TraitKind::Name {
+                    name: expect_ident!(TraitName),
+                    path: Vec::new(),
+                    args: call!(Type::consume_generic_args),
+                },
+                src: src!(),
+            })
         }
     );
 }
