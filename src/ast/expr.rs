@@ -178,11 +178,13 @@ opers!(
     pub enum PrefixOp (bp u8) {
         And => Ref (2),
         AndAnd => RefRef (2),
-        Minus => Neg (2),
+        Minus => Neg (4),
         Not => Not (2),
     }
 );
 
+/// Binding power of postfix type hints
+const TILDA_BP: u8 = 6;
 opers!(
     pub enum PostfixOp (bp u8) {
         Question => Try (6),
@@ -352,6 +354,19 @@ impl<'a, 'b> Expr<'a> {
                                 kind: ExprKind::PostfixOp {
                                     expr: Box::new(lhs),
                                     op: post_op,
+                                },
+                                src: src!(),
+                            };
+                        } else if *punc == Punc::Tilda {
+                            if TILDA_BP < min_bp {
+                                return ret!(lhs);
+                            }
+                            skip!();
+
+                            lhs = Expr {
+                                kind: ExprKind::TypeHint {
+                                    expr: Box::new(lhs),
+                                    typ: call!(Type::consume),
                                 },
                                 src: src!(),
                             };

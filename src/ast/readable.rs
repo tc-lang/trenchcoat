@@ -127,7 +127,8 @@ impls!(
     impl Display for Expr, ExprKind {
         fn fmt(&self, f) -> Result {
             ExprKind::Name(name) => f.write_str(&name),
-            ExprKind::Type {name, generic_args} => write!(f, "{}~{}", name, generic_args),
+            ExprKind::Type { name, generic_args } => write!(f, "{}~{}", name, generic_args),
+            ExprKind::TypeHint { expr, typ } => write!(f, "{} ~ {}", expr, typ),
             ExprKind::RawLiteral(src, kind) => write!(f, "{:?}({})", kind, src),
             ExprKind::PrefixOp { op, expr } => write!(f, "<{:?}>({})", op, expr),
             ExprKind::PostfixOp { expr, op } => write!(f, "({})<{:?}>", expr, op),

@@ -53,7 +53,7 @@ fn match_example(my_enum: MyEnum) -> int {
 		Foo => 2 + x,
 		Bar => 3,
 		Baz => {
-			x: 2,
+			x: (2 ~ uint + 3 ~ uint) ~ int,
 			y: 3,
 		},
 		FooBar => {
