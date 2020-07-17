@@ -5,30 +5,35 @@ use super::{
     pat::{Pat, PatKind},
     prelude::*,
     stmt::{Stmt, StmtKind},
-    types::{GenericArgs, NamedField, Type, TypeKind},
+    types::{GenericArgs, GenericParam, GenericParamKind, NamedField, Type, TypeKind},
     Item, ItemKind,
 };
 
-pub trait Readable {
-    fn readable(&self) -> String;
+use std::fmt::{Display, Error, Formatter, Result};
+use std::ops::Deref;
+
+fn intersperse<'a, T: Display, S: Display>(items: &'a [T], sep: S) -> Intersperse<'a, T, S> {
+    Intersperse::new(items, sep)
 }
 
 macro_rules! impls {
     (
         $(
-            impl Readable for $type:ident, $type_kind:ident {
-                $($pat:pat => $expr:expr),* $(,)?
+            impl Display for $type:ident, $type_kind:ident {
+                fn fmt(&self, $f:ident) -> Result {
+                    $($pat:pat => $expr:expr),* $(,)?
+                }
             }
         )*
     ) => {
         $(
-            impl<'a> Readable for $type<'a> {
-                fn readable(&self) -> String {
-                    self.kind.readable()
+            impl<'a> Display for $type<'a> {
+                fn fmt(&self, $f: &mut Formatter) -> Result {
+                    self.kind.fmt($f)
                 }
             }
-            impl<'a> Readable for $type_kind<'a> {
-                fn readable(&self) -> String {
+            impl<'a> Display for $type_kind<'a> {
+                fn fmt(&self, $f: &mut Formatter) -> Result {
                     match self {
                         $($pat => $expr),*
                     }
@@ -39,206 +44,230 @@ macro_rules! impls {
 }
 
 impls!(
-    impl Readable for Pat, PatKind {
-        PatKind::Ident(ident) => ident.to_string(),
+    impl Display for Pat, PatKind {
+        fn fmt(&self, f) -> Result {
+            PatKind::Ident(ident) => f.write_str(ident),
+        }
     }
 
-    impl Readable for Stmt, StmtKind {
-        StmtKind::Expr(expr) => expr.readable(),
-        StmtKind::Assign { target, expr, pointer } => match pointer {
-            false => format!("{} = ({})", target, expr.readable()),
-            true => format!("*{} = ({})", target, expr.readable()),
-        },
+    impl Display for Stmt, StmtKind {
+        fn fmt(&self, f) -> Result {
+            StmtKind::Expr(expr) => expr.fmt(f),
+            StmtKind::Assign { target, expr, pointer } => match pointer {
+                false => write!(f, "{} = ({})", target, expr),
+                true => write!(f, "*{} = ({})", target, expr),
+            },
+        }
     }
 
-    impl Readable for Item, ItemKind {
-        ItemKind::Fn(decl) => {
-            format!(
-                "fn {}({}) -> {} {}",
-                decl.name, intersperse(&decl.params, ", "), decl.ret_typ.readable(), decl.body.readable(),
-            )
-        },
-        ItemKind::Type(decl) => {
-            match decl.alias {
-                false => format!("type {} {}", decl.name, decl.typ.readable()),
-                true => format!("type {} alias {}", decl.name, decl.typ.readable()),
-            }
-        },
+    impl Display for Item, ItemKind {
+        fn fmt(&self, f) -> Result {
+            ItemKind::Fn(decl) => {
+                write!(
+                    f,
+                    "fn {name}({params}) -> {ret_typ} {body}",
+                    name = decl.name,
+                    params = intersperse(&decl.params, ", "),
+                    ret_typ = decl.ret_typ,
+                    body = decl.body,
+                )
+            },
+            ItemKind::Type(decl) => {
+                match decl.alias {
+                    false => write!(f, "type {}{} {}", decl.name, intersperse(&decl.params, ", "), decl.typ),
+                    true => write!(f, "type {}{} alias {}", decl.name, intersperse(&decl.params, ", "), decl.typ),
+                }
+            },
 
-        _ => todo!(),
+            _ => todo!(),
+        }
     }
 
-    impl Readable for Type, TypeKind {
-        TypeKind::Name{name, args} => {
-            name.readable() + &args.readable()
-        },
-        TypeKind::Struct { unnamed_fields, named_fields, ordered } => {
-            let mut s = String::with_capacity(32);
-            match ordered {
-                true => s.push_str("( "),
-                false => s.push_str("{ "),
-            }
-            s.push_str(&intersperse(&unnamed_fields, ", "));
-            if named_fields.len() != 0 {
-                s.push_str(", ");
-                s.push_str(&intersperse(&named_fields, ", "));
-            }
-            match ordered {
-                true => s.push_str(")"),
-                false => s.push_str("}"),
-            }
-            s
-        },
-        TypeKind::Ommited => "_".to_string(),
+    impl Display for Type, TypeKind {
+        fn fmt(&self, f) -> Result {
+            TypeKind::Name{name, args} => {
+                write!(f, "{}{}", name, args)
+            },
+            TypeKind::Struct { unnamed_fields, named_fields, ordered } => {
+                match ordered {
+                    true => f.write_str("( ")?,
+                    false => f.write_str("{ ")?,
+                }
+                intersperse(&unnamed_fields, ", ").fmt(f)?;
+                if named_fields.len() != 0 {
+                    f.write_str(", ")?;
+                    intersperse(&named_fields, ", ").fmt(f)?;
+                }
+                match ordered {
+                    true => f.write_str(")"),
+                    false => f.write_str("}"),
+                }
+            },
+            TypeKind::Ommited => write!(f, "_"),
 
-        _ => todo!(),
+            _ => todo!(),
+        }
     }
 
-    impl Readable for Expr, ExprKind {
-        ExprKind::Name(name) => name.to_string(),
-        ExprKind::RawLiteral(src, kind) => format!("{:?}({})", kind, src),
-        ExprKind::PrefixOp { op, expr } => format!("<{:?}>({})", op, expr.readable()),
-        ExprKind::PostfixOp { expr, op } => format!("({})<{:?}>", expr.readable(), op),
-        ExprKind::BinaryOp { lhs, op, rhs } => format!("({})<{:?}>({})", lhs.readable(), op, rhs.readable()),
-        ExprKind::Let { pat, expr } => format!("<let {} = {}>", pat.readable(), expr.readable()),
-        ExprKind::Block { stmts, delim } => {
-            let mut s = String::with_capacity(64);
-            match delim {
-                Delim::Curlies => s.push_str("{\n"),
-                Delim::Parens => s.push_str("(\n"),
-                Delim::Squares => s.push_str("[\n"),
-            }
-            for stmt in stmts {
-                s.push_str(&stmt.readable());
-                s.push_str(";\n");
-            }
-            match delim {
-                Delim::Curlies => s.push_str("}"),
-                Delim::Parens => s.push_str(")"),
-                Delim::Squares => s.push_str("]"),
-            }
-            s
-        },
-        ExprKind::BlockOrStruct { ident, delim } => {
-            let mut s = String::with_capacity(64);
-            match delim {
-                Delim::Curlies => s.push_str("{ "),
-                Delim::Parens => s.push_str("( "),
-                Delim::Squares => s.push_str("[ "),
-            }
-            s.push_str(ident);
-            match delim {
-                Delim::Curlies => s.push_str(" }"),
-                Delim::Parens => s.push_str(" )"),
-                Delim::Squares => s.push_str(" ]"),
-            }
-            s
-        },
-        ExprKind::Struct { fields, delim } => {
-            let mut s = String::with_capacity(64);
-            match delim {
-                Delim::Curlies => s.push_str("{ "),
-                Delim::Parens => s.push_str("( "),
-                Delim::Squares => s.push_str("[ "),
-            }
-            s.push_str(&fields.readable());
-            match delim {
-                Delim::Curlies => s.push_str("}"),
-                Delim::Parens => s.push_str(")"),
-                Delim::Squares => s.push_str("]"),
-            }
-            s
-        },
-        ExprKind::Match { expr, arms } => {
-            let mut s = format!("match ({}) ", expr.readable());
-            s.push_str("{\n");
-            for arm in arms {
-                s.push_str(&format!("{} => ({})\n", arm.0.readable(), arm.1.readable()));
-            }
-            s.push_str("}");
-            s
-        },
-        ExprKind::FnCall { func, arguments } => {
-            format!("({})({})", func.readable(), arguments.readable())
-        },
-        ExprKind::CurlyFnCall { func, arguments } => {
-            format!("({}){{{}}}", func.readable(), arguments.readable())
-        },
-        ExprKind::Index { expr, index } => {
-            format!("({})[{}]", expr.readable(), index.readable())
-        },
-        ExprKind::If { condition, block, else_block } => {
-            match else_block {
-                Some(else_block) => format!("if {} {} else {}", condition.readable(), block.readable(), else_block.readable()),
-                None => format!("if {} {}", condition.readable(), block.readable()),
-            }
-        },
-        ExprKind::Closure { params, ret_typ, body } => {
-            format!("({}) -> {} => ({})", intersperse(params, ", "), ret_typ.readable(), body.readable())
-        },
-        ExprKind::Empty => "EMPTY".to_string(),
+    impl Display for Expr, ExprKind {
+        fn fmt(&self, f) -> Result {
+            ExprKind::Name(name) => f.write_str(&name),
+            ExprKind::RawLiteral(src, kind) => write!(f, "{:?}({})", kind, src),
+            ExprKind::PrefixOp { op, expr } => write!(f, "<{:?}>({})", op, expr),
+            ExprKind::PostfixOp { expr, op } => write!(f, "({})<{:?}>", expr, op),
+            ExprKind::BinaryOp { lhs, op, rhs } => write!(f, "({})<{:?}>({})", lhs, op, rhs),
+            ExprKind::Let { pat, expr } => write!(f, "<let {} = {}>", pat, expr),
+            ExprKind::Block { stmts, delim } => {
+                match delim {
+                    Delim::Curlies => f.write_str("{\n")?,
+                    Delim::Parens => f.write_str("(\n")?,
+                    Delim::Squares => f.write_str("[\n")?,
+                }
+                for stmt in stmts {
+                    write!(f, "{};\n", stmt)?;
+                }
+                match delim {
+                    Delim::Curlies => f.write_str("}"),
+                    Delim::Parens => f.write_str(")"),
+                    Delim::Squares => f.write_str("]"),
+                }
+            },
+            ExprKind::BlockOrStruct { ident, delim } => {
+                match delim {
+                    Delim::Curlies => f.write_str("{ <ambiguous> ")?,
+                    Delim::Parens => f.write_str("( <ambiguous> ")?,
+                    Delim::Squares => f.write_str("[ <ambiguous> ")?,
+                }
+                f.write_str(ident)?;
+                match delim {
+                    Delim::Curlies => f.write_str(" }"),
+                    Delim::Parens => f.write_str(" )"),
+                    Delim::Squares => f.write_str(" ]"),
+                }
+            },
+            ExprKind::Struct { fields, delim } => {
+                match delim {
+                    Delim::Curlies => f.write_str("{ ")?,
+                    Delim::Parens => f.write_str("( ")?,
+                    Delim::Squares => f.write_str("[ ")?,
+                }
+                write!(f, "{}", fields)?;
+                match delim {
+                    Delim::Curlies => f.write_str("}"),
+                    Delim::Parens => f.write_str(")"),
+                    Delim::Squares => f.write_str("]"),
+                }
+            },
+            ExprKind::Match { expr, arms } => {
+                write!(f, "match ({}) {{\n", expr)?;
+                for arm in arms {
+                    write!(f, "{} => ({})\n", arm.0, arm.1)?;
+                }
+                f.write_str("}")
+            },
+            ExprKind::FnCall { func, arguments } => {
+                write!(f, "({})({})", func, arguments)
+            },
+            ExprKind::CurlyFnCall { func, arguments } => {
+                write!(f, "({}){{{}}}", func, arguments)
+            },
+            ExprKind::Index { expr, index } => {
+                write!(f, "({})[{}]", expr, index)
+            },
+            ExprKind::If { condition, block, else_block } => {
+                match else_block {
+                    Some(else_block) => write!(f, "if {} {} else {}", condition, block, else_block),
+                    None => write!(f, "if {} {}", condition, block),
+                }
+            },
+            ExprKind::Closure { params, ret_typ, body } => {
+                write!(f, "({}) -> {} => ({})", intersperse(params, ", "), ret_typ, body)
+            },
+            ExprKind::Empty => write!(f, "<EMPTY>"),
 
-        _ => todo!(),
+            _ => todo!(),
+        }
     }
 );
 
-impl<'a> Readable for Struct<'a> {
-    fn readable(&self) -> String {
-        let mut s = String::with_capacity(64);
-        s.push_str(&intersperse(&self.unnamed_fields, ", "));
+impl<'a> Display for Struct<'a> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        intersperse(&self.unnamed_fields, ", ").fmt(f)?;
         if self.named_fields.len() != 0 {
-            s.push_str(", ");
-            s.push_str(&intersperse(&self.named_fields, ", "));
+            f.write_str(", ")?;
+            intersperse(
+                unsafe { std::mem::transmute::<_, &[ExprNamedField]>(self.named_fields.deref()) },
+                ", ",
+            )
+            .fmt(f)?;
         }
-        s
+        Ok(())
     }
 }
 
-impl<'a> Readable for NamedField<'a> {
-    fn readable(&self) -> String {
-        format!("{}: {}", self.name, self.typ.readable())
+impl<'a> Display for NamedField<'a> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        write!(f, "{}: {}", self.name, self.typ)
     }
 }
 
-impl<'a> Readable for GenericArgs<'a> {
-    fn readable(&self) -> String {
+struct ExprNamedField<'a>((&'a str, Expr<'a>));
+
+impl<'a> Display for ExprNamedField<'a> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        write!(f, "{}: {}", (self.0).1, (self.0).1)
+    }
+}
+
+impl<'a> Display for GenericArgs<'a> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
         if self.named.len() != 0 {
             todo!();
         }
-        if self.unnamed.len() == 0 {
-            return String::new();
+        if self.unnamed.len() != 0 {
+            write!(f, "<{}>", intersperse(&self.unnamed, ", "))?;
         }
-        format!("<{}>", intersperse(&self.unnamed, ", "))
+        Ok(())
     }
 }
 
-impl<'a> Readable for Vec<Item<'a>> {
-    fn readable(&self) -> String {
-        intersperse(self, "\n\n")
+impl<'a> Display for GenericParam<'a> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        match &self.kind {
+            GenericParamKind::Type(typ) => typ.fmt(f),
+            GenericParamKind::Trait(trt) => todo!(),
+        }
     }
 }
 
-impl<T: Readable, U: Readable> Readable for (T, U) {
-    fn readable(&self) -> String {
-        format!("{}: {}", self.0.readable(), self.1.readable())
+pub(crate) struct FmtItems<'a>(pub(crate) Vec<Item<'a>>);
+
+impl<'a> Display for FmtItems<'a> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        intersperse(&self.0, "\n\n").fmt(f)
     }
 }
 
-impl Readable for &str {
-    fn readable(&self) -> String {
-        self.to_string()
+struct Intersperse<'a, T: Display, S: Display> {
+    items: &'a [T],
+    sep: S,
+}
+
+impl<'a, T: Display, S: Display> Intersperse<'a, T, S> {
+    fn new(items: &'a [T], sep: S) -> Self {
+        Self { items, sep }
     }
 }
 
-fn intersperse<T: Readable>(items: &[T], sep: &str) -> String {
-    if items.len() == 0 {
-        return String::new();
+impl<'a, T: Display, S: Display> Display for Intersperse<'a, T, S> {
+    fn fmt(&self, f: &mut Formatter) -> Result {
+        if self.items.len() == 0 {
+            return Ok(());
+        }
+        for i in 0..self.items.len() - 1 {
+            self.items[i].fmt(f)?;
+            self.sep.fmt(f)?;
+        }
+        self.items[self.items.len() - 1].fmt(f)
     }
-    let mut s = String::with_capacity(8 * items.len());
-    for i in 0..items.len() - 1 {
-        s.push_str(&items[i].readable());
-        s.push_str(sep);
-    }
-    s.push_str(&items[items.len() - 1].readable());
-    s
 }

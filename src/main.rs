@@ -4,7 +4,7 @@ mod files;
 mod token_tree;
 mod tokens;
 
-use ast::readable::Readable;
+use ast::readable::FmtItems;
 use files::Files;
 use token_tree::file_tree;
 use tokens::tokenize;
@@ -65,9 +65,9 @@ fn main() {
     println!("TOKENS: {:?}", tokens);
 
     use std::io::prelude::*;
-    match crate::ast::try_parse(&tokens.tokens).map(|ast| ast.readable()) {
-        Ok(readable) => {
-            std::io::stdout().write(&readable.as_ref()).unwrap();
+    match crate::ast::try_parse(&tokens.tokens) {
+        Ok(ast) => {
+            println!("{}", FmtItems(ast));
         }
         Err(errors) => println!(
             "\n\nAST Errors:\n\n{:?}",
